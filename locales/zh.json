@@ -11,6 +11,7 @@
   "menu.forget_all": "忘记所有会话",
   "menu.suggest": "建议改进…",
   "menu.delete_session": "删除会话…",
+  "menu.mark_read": "标记为已读",
   "menu.no_sessions": "最近 {duration} 内没有会话",
 
   "title.no_title": "(无标题)",

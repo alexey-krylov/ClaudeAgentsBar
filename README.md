@@ -86,6 +86,9 @@ the session in VSCode via
 
 Hover over a row to reveal the submenu (▸ on the right):
 
+- ✅ **Mark as read** *(🟢 fresh rows only)* — records a synthetic click
+  on this one session so it flips to 🔵 on the next tick, without
+  opening it in the editor.
 - 🗑 **Delete session…** — confirms with a native dialog, then deletes the
   JSONL transcript, the tool-results directory, and the row from the
   state TSV. VSCode's Claude Code sidebar refreshes via its own fs
@@ -128,6 +131,7 @@ sits a **Tools** submenu with two bulk actions:
 | `claude-agents.5s.py` | SwiftBar plugin. Runs every 5 s. Reads `~/.claude/projects/*/*.jsonl` for transcripts plus three sidecar files for live state. Renders the menu. Also exposes a `--ack-fresh` subcommand used by the *Tools → Acknowledge all* button. |
 | `hooks/agent-state.sh` | Bash script registered as a Claude Code hook on `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`. On each event, atomically updates one row in `~/.claude/agent-state.tsv`. |
 | `bin/open-session.sh` | Row click: records the click into `agent-state.clicks`, then opens the VSCode deeplink. Lets the plugin tell 🟢 fresh from 🔵 acknowledged. |
+| `bin/ack-session.sh` | *Mark as read* submenu action on a 🟢 row: records the click without opening the editor. |
 | `bin/delete-session.sh` | Confirm dialog + safe deletion of a session's files and sidecar row. |
 | `bin/ack-fresh.sh` | *Tools → Acknowledge all*: delegates to `claude-agents.5s.py --ack-fresh` to bulk-promote every 🟢 row to 🔵. |
 | `bin/forget-sessions.sh` | *Tools → Forget all sessions*: wipes the state TSV and the clicks TSV under their mutexes and writes a cutoff timestamp into `agent-state.dismiss`. |
@@ -214,6 +218,7 @@ ClaudeAgentsBar/
 │   └── agent-state.sh       ← Claude Code hook → state TSV
 ├── bin/
 │   ├── open-session.sh      ← row click: record click + open in VSCode
+│   ├── ack-session.sh       ← submenu action on 🟢 rows: mark one as read
 │   ├── delete-session.sh    ← submenu action: confirm + delete a session
 │   ├── ack-fresh.sh         ← Tools: bulk-acknowledge every 🟢 session
 │   └── forget-sessions.sh   ← Tools: wipe sidecars, set dismiss cutoff
@@ -234,7 +239,7 @@ scripts above:
 | File | Writer(s) | Purpose |
 |---|---|---|
 | `agent-state.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per session: latest hook state + cwd. |
-| `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
+| `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
 | `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
 
 ## Configuration
