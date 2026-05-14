@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh working", "async": true }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh working", "async": true }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh working", "async": true }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh working", "async": true }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh waiting", "async": true }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh idle", "async": true }
+        ]
+      }
+    ]
+  }
+}

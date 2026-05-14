@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "locale": "it",
+    "name": "Italiano (Italian)",
+    "fallback": "en"
+  },
+
+  "menu.refresh": "Aggiorna",
+  "menu.tools": "Strumenti",
+  "menu.ack_all": "Conferma tutto",
+  "menu.forget_all": "Dimentica tutte le sessioni",
+  "menu.suggest": "Suggerisci miglioramento…",
+  "menu.delete_session": "Elimina sessione…",
+  "menu.no_sessions": "Nessuna sessione negli ultimi {duration}",
+
+  "title.no_title": "(senza titolo)",
+
+  "right.working": "in corso",
+  "right.waiting": "serve te",
+
+  "error.plugin": "Errore del plug-in: {exc}",
+
+  "age.seconds": "{n}s",
+  "age.minutes": "{n}m",
+  "age.hours": "{n}h",
+  "age.hours_minutes": "{h}h {m}m",
+
+  "dialog.delete.title": "Elimina sessione",
+  "dialog.delete.body": "Eliminare questa sessione Claude Code?\n\n{title}\n\nQuesta operazione rimuove la trascrizione e i risultati degli strumenti da ~/.claude/projects/. La barra laterale di VSCode dovrebbe aggiornarsi automaticamente.",
+  "dialog.delete.confirm": "Elimina",
+  "dialog.delete.cancel": "Annulla",
+  "dialog.not_found.title": "Sessione non trovata",
+  "dialog.not_found.body": "Nessuna trascrizione per la sessione {sid}",
+  "dialog.no_sid.title": "ClaudeAgentsBar",
+  "dialog.no_sid.body": "Nessun ID di sessione passato a delete-session.sh."
+}

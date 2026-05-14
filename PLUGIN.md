@@ -1,0 +1,370 @@
+# Contributing to ClaudeAgentsBar
+
+This document is for anyone who wants to **hack on the plugin** — add a
+new submenu action, change the rendering, fix a bug, or write a similar
+SwiftBar plugin against Claude Code's data.
+
+If you only want to *install* and use it, see [README.md](./README.md).
+
+## Architecture in one diagram
+
+```
+            ┌─ ~/.claude/projects/<slug>/<sid>.jsonl ─┐   transcripts
+            │   (written by Claude Code itself)        │
+            ▼                                          │
+                                                       │
+  ┌────────────────────────┐    ┌─────────────────────┴────────┐
+  │  agent-state.sh        │    │  claude-agents.5s.py         │
+  │  (Claude Code hook)    │───▶│  (SwiftBar plugin, every 5s) │
+  │  writes one TSV row    │    │  reads ALL sources, renders  │
+  └────────────────────────┘    └──────────┬───────────────────┘
+            │                              │
+            ▼                              ▼
+   ~/.claude/agent-state.tsv         macOS menu bar  ──┐
+   (live state per session)                            │ user clicks/hovers
+            ▲                                          ▼
+            │                          ┌───────────────────────────┐
+            │                          │  bin/open-session.sh      │
+            │                          │  bin/delete-session.sh    │
+            │                          │  bin/forget-sessions.sh   │
+            └──────────────────────────┤  (actions triggered       │
+   ~/.claude/agent-state.clicks        │   from menu rows / Tools) │
+   ~/.claude/agent-state.dismiss       └───────────────────────────┘
+   (sidecars written by actions)
+```
+
+The plugin is **stateless** — every 5 s it rebuilds the entire menu from
+four sources:
+
+1. The JSONL transcripts Claude Code already writes (titles, cwd).
+2. `agent-state.tsv` that `agent-state.sh` maintains (live state, last event).
+3. `agent-state.clicks` that `open-session.sh` writes (which idle sessions
+   the user has opened from the menu — drives 🟢 FRESH → 🔵 ACKNOWLEDGED).
+4. `agent-state.dismiss`, a single-timestamp cutoff set by *Forget all
+   sessions* under Tools.
+
+There is no daemon, no IPC, no shared in-memory state. This makes the
+plugin trivial to test (just run the script) and trivial to reason about.
+
+## Project layout
+
+```
+ClaudeAgentsBar/
+├── claude-agents.5s.py      ← plugin entry point, all rendering logic
+├── hooks/agent-state.sh     ← hook: writes ~/.claude/agent-state.tsv
+├── bin/open-session.sh      ← row click: records click + opens in VSCode
+├── bin/delete-session.sh    ← submenu action: delete a session
+├── bin/forget-sessions.sh   ← Tools action: wipe TSV + clicks, set dismiss cutoff
+├── config.example.json      ← copy → ~/.config/claude-agents-bar/config.json
+├── settings-hooks.json      ← fragment merged into ~/.claude/settings.json
+├── install.sh / uninstall.sh
+├── tests/                   ← unittest suite for pure helpers + config
+├── docs/adr/                ← architecture decision records (MADR)
+├── CHANGELOG.md
+└── README.md / PLUGIN.md
+```
+
+When in doubt about *why* a structural choice was made, consult
+[docs/adr/](./docs/adr/) before changing it.
+
+### Why is the plugin called `claude-agents.5s.py`?
+
+SwiftBar uses the filename to learn the refresh cadence. `5s` means
+"refresh every 5 seconds". Don't rename without updating the README.
+
+### Why a separate `bin/` for `delete-session.sh`?
+
+`hooks/` are scripts Claude Code itself invokes. `bin/` are scripts the
+menu invokes. Keeping them in different directories prevents an
+accidental "treat this like a hook" registration.
+
+## Dev setup
+
+You don't need to reinstall anything to iterate on the plugin code —
+`install.sh` only creates symlinks, so editing files in the repo
+immediately reflects in the running plugin.
+
+```bash
+# Edit the script
+$EDITOR claude-agents.5s.py
+
+# Compile-check it (catches syntax errors against the same Python SwiftBar uses)
+/usr/bin/python3 -m py_compile claude-agents.5s.py
+
+# Run it standalone to see SwiftBar-format output
+/usr/bin/python3 claude-agents.5s.py | head -30
+
+# Force SwiftBar to refresh (otherwise it'll pick up the change in ≤5 s)
+open "swiftbar://refreshallplugins"
+```
+
+> ⚠️ **Always test under `/usr/bin/python3`** (the system Python — 3.9 on
+> recent macOS). That's what SwiftBar invokes via shebang. Your shell's
+> `python3` may be a newer Homebrew install that accepts syntax 3.9
+> rejects (we got bitten by `match-case` once).
+
+## Code style
+
+- **Python 3.9-compatible.** `from __future__ import annotations` is on,
+  so generic syntax in type hints (e.g. `list[Path]`) is fine; runtime
+  3.10+ features (`match`/`case`, `slots=True` on `@dataclass`) are not.
+- **Pure helpers first, I/O second, rendering last.** The file is
+  organised in that order — search for the section dividers.
+- **No external dependencies.** Standard library only. The plugin must
+  run with whatever ships on macOS.
+- **Fail soft.** A broken JSONL, a missing `.git/HEAD`, an unreadable
+  TSV row — every reader catches `OSError` / `json.JSONDecodeError`
+  and returns an empty value. The menu must always render *something*.
+- **One last-ditch try/except** in `main()` prints `⚠️` to the menu bar
+  rather than letting SwiftBar show a stack trace.
+
+## Adding a submenu action
+
+Each session row's submenu lives in `_print_session_row`; the
+footer-level *Tools* submenu lives in `_print_footer`. To add a new
+action, append a `--`-prefixed line under either. Three knobs you'll
+typically use:
+
+```python
+print(
+    f"--{label} | "                   # menu text (with leading "--" for submenu)
+    f"shell={_swiftbar_quote(...)} "  # binary to run
+    f"param1={_swiftbar_quote(...)} " # first arg
+    f"terminal=false "                # don't open Terminal
+    f"refresh=true "                  # refresh SwiftBar after the action finishes
+    f"sfimage={SF_SYMBOL_NAME}"       # leading icon (SF Symbol)
+)
+```
+
+If your action needs **confirmation**, model it on `bin/delete-session.sh`:
+shell wrapper with `osascript -e 'display dialog …'` for the prompt,
+followed by the real work behind a button-name check.
+
+### Conventions for new actions
+
+- **Use SF Symbols for icons.** Emoji works but inherits the size/quirks
+  of Apple Color Emoji; SF Symbols are crisp at any DPI and inherit the
+  menu colour. `sfimage=trash.fill sfcolor=systemRed` is the canonical
+  destructive style.
+- **End user-facing labels with `…` when the action opens a dialog.**
+  Native macOS HIG.
+- **Set `refresh=true`** when the action changes anything the plugin
+  reads — otherwise the menu is stale until the next 5 s tick.
+- **Quote every path/value** via `_swiftbar_quote`. SwiftBar's lexer
+  parses param values before they reach your script.
+
+## Adding a config knob
+
+User-tunable knobs live in `~/.config/claude-agents-bar/config.json` and
+are loaded once into the :class:`Config` dataclass at import time. To add
+a new field:
+
+1. Add the attribute (with a default) to `Config`.
+2. Document the JSON-friendly key in the docstring's *Field semantics*
+   section.
+3. Wire it up inside `Config._from_mapping` using the local `take()`
+   helper. Pass a `transform` if the JSON shape differs from the internal
+   one (e.g. `window_minutes` JSON → `window_sec` field).
+4. Replace any in-code constant referring to the value with
+   `CONFIG.<field>`.
+5. Add the field to `config.example.json` and the README's table.
+
+The `take()` helper is deliberately tolerant — an invalid value emits a
+warning to stderr (SwiftBar surfaces it under *Show Logs*) and keeps the
+default. Never raise from config parsing: a broken file shouldn't take
+the menu down.
+
+## Render groups
+
+The plugin partitions sessions into four buckets:
+
+| Group | Glyph | Meaning |
+|---|---|---|
+| `ACTIVE` | 🟡 | `working` or `waiting` per the state TSV |
+| `FRESH` | 🟢 | idle, no click after Stop, `now < stop_ts + fresh_sec` |
+| `ACKNOWLEDGED` | 🔵 | idle, either user clicked or the fresh timer expired; each click restarts the `ack_sec` countdown |
+| `STALE` | ⚪ | idle, past the ack window — out of sight, still in the dropdown until `window_sec` evicts it |
+
+The menu-bar title shows counters for ACTIVE / FRESH / ACKNOWLEDGED (in
+that order, see `_MENUBAR_COUNTER_ORDER`). STALE is intentionally
+omitted: it would be the largest number and would drown out the urgent
+buckets.
+
+### Adding a new state
+
+1. Add an enum member to `RenderGroup` with a 4-tuple
+   `(key, order, icon, color)`. Lower `order` = higher in the list.
+2. Update `_classify` to route the new condition into the group.
+3. Optionally add an ANSI variant in `right_label_ansi` for inline
+   colour on the timestamp.
+4. Decide whether the new group should appear in the menu-bar counter —
+   if yes, append it to `_MENUBAR_COUNTER_ORDER` (and to the per-group
+   `counts` dict in `render`).
+
+Sorting and section separators derive directly from the enum order.
+
+## Touching the hook
+
+`hooks/agent-state.sh` runs on every Claude Code event. It's a Bash
+script using a `mkdir`-based mutex (atomic on every POSIX filesystem,
+unlike `flock` which isn't on stock macOS) plus `awk` to atomically
+rewrite a single row of `agent-state.tsv`. The plugin uses the **same**
+mutex (`_sidecar_lock` in Python) when it garbage-collects stale rows,
+so concurrent hook writes and plugin cleanups can't race.
+
+The two action scripts that also write into `~/.claude/`
+(`bin/open-session.sh` against `agent-state.clicks`, `bin/forget-sessions.sh`
+against both TSVs) use the same `mkdir`-based scheme, each against its
+own lock directory (`<file>.lock.d`). The plugin acquires those locks
+through `_sidecar_lock` and `_clicks_lock` for its garbage collectors.
+
+Treat the hook as performance-sensitive (it runs many times per session)
+and keep dependencies to coreutils + `jq`. The payload is parsed by
+exactly one `jq` invocation — adding more would visibly slow hot paths.
+
+If you add new events:
+
+1. Add the matcher to `settings-hooks.json`.
+2. Re-run `bash install.sh` to merge it into `~/.claude/settings.json`.
+3. Check `tail -f ~/.claude/agent-state.tsv` to confirm rows update.
+
+## Tests
+
+A small `unittest` suite under `tests/` covers the pure helpers and the
+config loader — everything that doesn't depend on the user's filesystem
+state. Stdlib only, no external test runner needed.
+
+```bash
+# Run the suite under the same Python SwiftBar invokes.
+/usr/bin/python3 -m unittest discover -s tests -v
+```
+
+What's covered:
+
+| Area | Test class |
+|---|---|
+| Title truncation + whitespace collapse | `TestShorten` |
+| Duration formatting | `TestHumanizeAge` |
+| State → render group mapping (ACTIVE / FRESH / ACKNOWLEDGED / STALE) | `TestClassify` |
+| Slash-command / XML cleanup | `TestCleanText` |
+| Content flattening (string / list / mixed) | `TestContentToTitle` |
+| Project-name derivation (cwd vs slug fallback) | `TestProjectName` |
+| Interactive-entrypoint predicate | `TestPredicates` |
+| State TSV parsing (malformed rows skipped) | `TestParseSidecar` |
+| Clicks TSV parsing | `TestParseClicks` |
+| `ack_fresh` bulk-promote logic | `TestAckFresh` |
+| `read_dismiss_ts` (missing / valid / garbage file) | `TestReadDismissTs` |
+| Config defaults / overrides / coercion / bad values | `TestConfigLoad` |
+| `menubar_icon` prefix handling (plain / `sf:` / `template:` / `image:` / fallback) | `TestMenubarIconPieces` |
+| SwiftBar param quoting | `TestSwiftbarQuote` |
+
+Filesystem-bound paths (`read_transcript_meta`, `current_git_branch`,
+`gc_sidecar`, `gc_clicks`) aren't covered by unit tests — they're
+exercised by the smoke checks below and by everyday usage.
+
+## Smoke checklist before pushing
+
+```bash
+# 1. Syntax OK under SwiftBar's Python.
+/usr/bin/python3 -m py_compile claude-agents.5s.py
+
+# 2. Unit tests pass.
+/usr/bin/python3 -m unittest discover -s tests
+
+# 3. Plugin output is well-formed (first line is the title, then ---).
+/usr/bin/python3 claude-agents.5s.py | head -3
+
+# 4. No traceback in any rendering path. The catch-all in main() is a safety
+#    net, not a substitute for actually exercising the code.
+/usr/bin/python3 claude-agents.5s.py > /dev/null && echo OK
+
+# 5. Hook smoke test (writes a phantom row then strips it).
+echo '{"session_id":"_dev-test","cwd":"/tmp","hook_event_name":"SessionStart"}' \
+    | hooks/agent-state.sh working
+grep '^_dev-test' ~/.claude/agent-state.tsv && \
+    sed -i '' '/^_dev-test\t/d' ~/.claude/agent-state.tsv
+
+# 6. Live: trigger a refresh and click around in the menu.
+open "swiftbar://refreshallplugins"
+```
+
+If you're shipping a destructive action, also test the **cancel** path —
+osascript dialogs return non-zero on `Cancel`, which `set -e` will
+propagate unless wrapped in `|| true`.
+
+## SwiftBar cheat sheet
+
+Reference for the SwiftBar output conventions actually used in this
+plugin. Full docs: <https://github.com/swiftbar/SwiftBar/wiki/Plugin-API>.
+
+### Line shape
+
+```
+<text> | <param>=<value> <param>=<value> …
+```
+
+The first line of a plugin's output is the *menu-bar title*. Each
+subsequent line is one menu item. A literal line of three or more
+dashes (`---`) is a section separator. A line that starts with `--` is
+a **submenu item** for the most recent main row; `-- -----` is a
+separator inside a submenu.
+
+### Params used here
+
+| Param            | Effect                                                                  |
+|------------------|-------------------------------------------------------------------------|
+| `href=<url>`     | Click opens the URL via `open` (we use `vscode://…`)                    |
+| `shell=<cmd>`    | Click runs `<cmd>` with `paramN=<arg>` as argv[N+1]                     |
+| `param0`, `param1`, … | Positional arguments passed to `shell=`                            |
+| `terminal=false` | Don't open Terminal for the shell action                                |
+| `refresh=true`   | Refresh the plugin after the action completes                           |
+| `color=<hex>`    | Foreground colour of the whole row                                      |
+| `font=<name>`    | Font for the row (we use `Menlo` so the timestamps align)               |
+| `ansi=true`      | Honour ANSI SGR escapes inside the text                                 |
+| `sfimage=<sym>`  | Leading SF Symbol icon (e.g. `trash.fill`)                              |
+| `sfcolor=<col>`  | Tint colour for the SF Symbol (e.g. `systemRed`)                        |
+| `image=<b64>`    | Leading bitmap icon, base64 PNG — keep small; long titles get truncated |
+
+### Quoting
+
+Values containing spaces or special chars must be wrapped in
+`"double quotes"`. Embedded double quotes have to be neutralised
+because SwiftBar's lexer parses param values before the shell sees
+them. Use `_swiftbar_quote()`.
+
+### Tips that bit us
+
+* The menu-bar title (first line) silently truncates when too long;
+  keep base64 images out of it. SF Symbols + emoji are crisp at every
+  DPI.
+* `sfimage=` only renders in recent SwiftBar builds — older versions
+  show nothing.
+* ANSI escapes are printed literally unless the row also carries
+  `ansi=true`.
+* Submenu separators are `-- -----` (the `--` prefix keeps them inside
+  the submenu); a bare `-----` would land on the outer menu.
+
+## Common gotchas
+
+- **SwiftBar scans subdirectories of its plugin folder.** Don't keep this
+  project inside the plugins dir; `install.sh` refuses to run if you do.
+- **`sfimage=` works in submenu items but only in recent SwiftBar
+  versions.** If you see a blank glyph, fall back to an emoji or
+  Unicode glyph (`⎇` for branch, `🗑` for delete).
+- **Title-line length matters.** SwiftBar truncates very long menu-bar
+  titles silently — keep base64-encoded images out of the title. SF
+  Symbols and emoji are the right tool there.
+- **ANSI escapes need `ansi=true`** on the same menu item, otherwise
+  they're printed as literal `^[[33m…` text.
+- **Hooks must be fast.** They run inline with every Claude Code event.
+  `agent-state.sh` is ~5 ms; if you add work, keep that budget.
+
+## Compatibility matrix
+
+| Component | Tested with |
+|-----------|-------------|
+| macOS | Sequoia 15.x (Darwin 25) |
+| Python | 3.9.6 (system) — also runs on 3.10–3.14 |
+| SwiftBar | 1.5.x |
+| Claude Code | 2.1.139 (extension), 2.1.112 (CLI) |
+| `jq` | any |

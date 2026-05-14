@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "locale": "ru",
+    "name": "Русский (Russian)",
+    "fallback": "en"
+  },
+
+  "menu.refresh": "Обновить",
+  "menu.tools": "Инструменты",
+  "menu.ack_all": "Отметить все прочитанными",
+  "menu.forget_all": "Забыть все сессии",
+  "menu.suggest": "Предложить улучшение…",
+  "menu.delete_session": "Удалить сессию…",
+  "menu.no_sessions": "Нет сессий за последние {duration}",
+
+  "title.no_title": "(без названия)",
+
+  "right.working": "работает",
+  "right.waiting": "нужна реакция",
+
+  "error.plugin": "Ошибка плагина: {exc}",
+
+  "age.seconds": "{n}с",
+  "age.minutes": "{n}м",
+  "age.hours": "{n}ч",
+  "age.hours_minutes": "{h}ч {m}м",
+
+  "dialog.delete.title": "Удалить сессию",
+  "dialog.delete.body": "Удалить эту сессию Claude Code?\n\n{title}\n\nБудут удалены транскрипт и результаты инструментов из ~/.claude/projects/. Боковая панель VSCode обновится автоматически.",
+  "dialog.delete.confirm": "Удалить",
+  "dialog.delete.cancel": "Отмена",
+  "dialog.not_found.title": "Сессия не найдена",
+  "dialog.not_found.body": "Транскрипт для сессии {sid} не найден",
+  "dialog.no_sid.title": "ClaudeAgentsBar",
+  "dialog.no_sid.body": "В delete-session.sh не передан id сессии."
+}

@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "locale": "de",
+    "name": "Deutsch (German)",
+    "fallback": "en"
+  },
+
+  "menu.refresh": "Aktualisieren",
+  "menu.tools": "Werkzeuge",
+  "menu.ack_all": "Alle bestätigen",
+  "menu.forget_all": "Alle Sitzungen vergessen",
+  "menu.suggest": "Verbesserung vorschlagen…",
+  "menu.delete_session": "Sitzung löschen…",
+  "menu.no_sessions": "Keine Sitzungen in den letzten {duration}",
+
+  "title.no_title": "(ohne Titel)",
+
+  "right.working": "läuft",
+  "right.waiting": "braucht dich",
+
+  "error.plugin": "Plug-in-Fehler: {exc}",
+
+  "age.seconds": "{n}s",
+  "age.minutes": "{n}m",
+  "age.hours": "{n}h",
+  "age.hours_minutes": "{h}h {m}m",
+
+  "dialog.delete.title": "Sitzung löschen",
+  "dialog.delete.body": "Diese Claude-Code-Sitzung löschen?\n\n{title}\n\nDies entfernt das Transkript und die Tool-Ergebnisse aus ~/.claude/projects/. Die VSCode-Seitenleiste sollte sich automatisch aktualisieren.",
+  "dialog.delete.confirm": "Löschen",
+  "dialog.delete.cancel": "Abbrechen",
+  "dialog.not_found.title": "Sitzung nicht gefunden",
+  "dialog.not_found.body": "Kein Transkript für Sitzung {sid}",
+  "dialog.no_sid.title": "ClaudeAgentsBar",
+  "dialog.no_sid.body": "Keine Sitzungs-ID an delete-session.sh übergeben."
+}

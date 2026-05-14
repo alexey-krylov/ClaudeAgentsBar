@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "locale": "en",
+    "name": "English",
+    "note": "Source-of-truth locale. Every other file falls back here for missing keys. Placeholders use Python str.format syntax — keep {n}, {h}, {m}, {title}, {sid}, {duration}, {exc} identical across locales."
+  },
+
+  "menu.refresh": "Refresh",
+  "menu.tools": "Tools",
+  "menu.ack_all": "Acknowledge all",
+  "menu.forget_all": "Forget all sessions",
+  "menu.suggest": "Suggest improvement…",
+  "menu.delete_session": "Delete session…",
+  "menu.no_sessions": "No sessions in the last {duration}",
+
+  "title.no_title": "(no title)",
+
+  "right.working": "working",
+  "right.waiting": "needs you",
+
+  "error.plugin": "Plugin error: {exc}",
+
+  "age.seconds": "{n}s",
+  "age.minutes": "{n}m",
+  "age.hours": "{n}h",
+  "age.hours_minutes": "{h}h {m}m",
+
+  "dialog.delete.title": "Delete session",
+  "dialog.delete.body": "Delete this Claude Code session?\n\n{title}\n\nThis removes the transcript and tool-results from ~/.claude/projects/. VSCode's sidebar should refresh automatically.",
+  "dialog.delete.confirm": "Delete",
+  "dialog.delete.cancel": "Cancel",
+  "dialog.not_found.title": "Session not found",
+  "dialog.not_found.body": "No transcript for session {sid}",
+  "dialog.no_sid.title": "ClaudeAgentsBar",
+  "dialog.no_sid.body": "No session id passed to delete-session.sh."
+}

@@ -1,0 +1,49 @@
+{
+  "//": "ClaudeAgentsBar configuration. Copy this file to:",
+  "//1": "    $XDG_CONFIG_HOME/claude-agents-bar/config.json",
+  "//2": "    ~/.config/claude-agents-bar/config.json",
+  "//3": "  or any path pointed to by $CLAUDE_AGENTS_BAR_CONFIG",
+  "//meta": "All fields are optional. Missing or invalid values fall back to defaults.",
+  "//meta1": "Keys starting with '//' are ignored — use them as comments.",
+
+  "// window_minutes": "How far back the dropdown lists sessions. Anything older is hidden. Default: 180 (3h).",
+  "window_minutes": 180,
+
+  "// fresh_minutes": "How long an idle session stays 🟢 FRESH after Stop without any click. After this it auto-promotes to 🔵 ACKNOWLEDGED. A click before the timer expires promotes it immediately. Default: 60.",
+  "fresh_minutes": 60,
+
+  "// ack_minutes": "How long an idle session stays 🔵 ACKNOWLEDGED before fading to ⚪ STALE. Each new click while ACKNOWLEDGED restarts this timer. Default: 60.",
+  "ack_minutes": 60,
+
+  "// watchdog_seconds": "A 'working' session whose last event is older than this is treated as 'idle' — covers sessions that crashed mid-tool and never emitted Stop. Default: 90.",
+  "watchdog_seconds": 90,
+
+  "// title_max": "Max length of a session title on a row, with an ellipsis appended on overflow. Default: 60.",
+  "title_max": 60,
+
+  "// menubar_icon": "Icon drawn before the counters. Prefixes:",
+  "// menubar_icon.1": "  • plain glyph    — '🤖', '✨', '🪄', '🧠' (Apple Color Emoji, won't match SF Pro baselines)",
+  "// menubar_icon.2": "  • 'sf:<name>'    — SF Symbol ('sf:bubble.left.fill', 'sf:sparkles', 'sf:terminal.fill')",
+  "// menubar_icon.3": "  • 'template:<path>' — monochrome PNG, macOS auto-tints to match the menu bar (recommended)",
+  "// menubar_icon.4": "  • 'image:<path>'  — full-colour PNG (no dark/light adaptation)",
+  "// menubar_icon.5": "Paths may be absolute or relative to the plugin directory.",
+  "// menubar_icon.6": "Template/image sources are auto-resized to fit the menu bar height; the resized copy is cached under $XDG_CACHE_HOME/claude-agents-bar/.",
+  "// menubar_icon.7": "Default points at Claude.app's tray icon — shows the Claude mark when Claude.app is installed.",
+  "menubar_icon": "template:/Applications/Claude.app/Contents/Resources/TrayIconTemplate@2x.png",
+
+  "// menubar_icon_fallback": "Glyph used when 'menubar_icon' points at a missing file (e.g. Claude.app not installed). Default: '🤖'.",
+  "menubar_icon_fallback": "🤖",
+
+  "// editor_url_scheme": "URL scheme prefix used to build the per-row deeplink that opens a session in your editor.",
+  "// editor_url_scheme.1": "Full URL: '<editor_url_scheme>anthropic.claude-code/open?session=<uuid>'.",
+  "// editor_url_scheme.2": "Default: 'vscode://' — works for stock Visual Studio Code.",
+  "// editor_url_scheme.3": "VSCodium users: set this to 'vscodium://'. macOS does not register the 'vscode://' scheme for VSCodium, so clicks on rows do nothing until this is changed.",
+  "// editor_url_scheme.4": "Other Code-OSS forks may register their own scheme. Must include the trailing '://'.",
+  "editor_url_scheme": "vscode://",
+
+  "// language": "UI language for menu labels, dialogs, and 'X ago' strings.",
+  "// language.1": "Supported codes: 'en', 'ru', 'zh', 'fr', 'de', 'it'. Unknown codes fall back to 'en'.",
+  "// language.2": "Default '' (or 'auto') detects from macOS AppleLocale, falling back to $LANG.",
+  "// language.3": "Plugin metadata (About box) is localized by SwiftBar itself via <xbar.title.<lang>> headers in the plugin file.",
+  "language": "auto"
+}
