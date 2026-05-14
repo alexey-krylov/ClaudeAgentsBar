@@ -256,6 +256,7 @@ or restart needed.
 | `title_max` | `60` | Max length of a session title shown on a row. |
 | `menubar_icon` | Claude.app tray icon | Icon drawn before the counters. Accepts a plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>` — see *Menu-bar icon* below. |
 | `menubar_icon_fallback` | `"🤖"` | Glyph used when `menubar_icon` points at a missing file (e.g. Claude.app not installed). |
+| `compact` | `false` | When `true`, drops the icon and replaces the 🟡🟢🔵 emoji counters with ANSI-coloured `●` bullets (`●2 ●1 ●3`). Saves ~30 px on the menu bar — useful on notched MacBooks. See *Compact mode* below. |
 
 Fractional values are accepted where they make sense — e.g.
 `"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`
@@ -293,6 +294,30 @@ when e.g. Claude.app isn't installed.
 ```json
 { "menubar_icon": "sf:bubble.left.fill", "fresh_minutes": 30, "ack_minutes": 90 }
 ```
+
+### Compact mode
+
+Setting `"compact": true` collapses the menu-bar title to its narrowest
+form:
+
+```
+●2 ●1 ●3        ← compact: true   (ANSI-coloured bullets, no icon)
+◐ 🟡2 🟢1 🔵3   ← compact: false  (default)
+```
+
+The icon is suppressed and `🟡🟢🔵` are replaced with `●` rendered
+through SwiftBar's `ansi=true`, picking up the same yellow / green /
+cyan tones as the dropdown rows. Empty buckets are still omitted; if
+nothing is active, a single dim `●` keeps the slot occupied so the
+plugin doesn't disappear from the bar entirely.
+
+The trade-off is loss of branding (no Claude mark) in exchange for
+roughly 30 px of horizontal space. Recommended only on notched
+MacBooks where the bar is contended (see *MacBook notch* below); on a
+roomy external display the default is easier to read at a glance.
+
+Rationale for picking ANSI bullets over SF Symbols, narrower emoji, or
+plain numbers lives in [ADR-0010](./docs/adr/0010-compact-menubar-ansi-bullets.md).
 
 ### Changing the refresh rate
 
@@ -337,6 +362,10 @@ correctly — only the menu-bar rendering is hiding it.
 
 Fixes (in order of effort):
 
+- **Turn on compact mode** (`"compact": true` — see *Compact mode*
+  above). Drops ~30 px from the plugin's footprint by hiding the icon
+  and swapping `🟡🟢🔵` for narrow ANSI `●` bullets. Cheapest fix; only
+  costs you the Claude mark on the bar.
 - **System Settings → Control Center.** Set indicators you don't use
   (Spotlight, Stage Manager, Screen Mirroring, Focus, Bluetooth, AirDrop,
   Sound, Now Playing, Fast User Switching, etc.) to *Don't Show in Menu

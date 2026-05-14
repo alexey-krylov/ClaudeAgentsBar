@@ -578,6 +578,24 @@ class TestConfigLoad(unittest.TestCase):
         )
         self.assertEqual(config.window_sec, 1800)
 
+    def test_compact_default_false(self):
+        self.assertFalse(plugin.Config().compact)
+
+    def test_compact_bool_override(self):
+        config = plugin.Config._from_mapping({"compact": True})
+        self.assertTrue(config.compact)
+
+    def test_compact_non_bool_ignored(self):
+        # ``bool("false") == True`` — the generic coercion path would
+        # silently accept the wrong type, so the loader requires a real
+        # JSON boolean. Strings, ints, etc. fall back to the default.
+        for bogus in ("true", "false", 1, 0, None):
+            config = plugin.Config._from_mapping({"compact": bogus})
+            self.assertFalse(
+                config.compact,
+                f"non-bool compact={bogus!r} must not enable compact mode",
+            )
+
 
 # --------------------------------------------------------------------------- #
 # Menubar icon resolution                                                      #

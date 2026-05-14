@@ -215,6 +215,13 @@ class Config:
         or ``"auto"`` (the default) detects from macOS ``AppleLocale``
         falling back to ``$LANG``. Supported codes: ``en``, ``ru``, ``zh``,
         ``fr``, ``de``, ``it``. Unknown codes fall back to ``en``.
+    ``compact``
+        When ``True``, the menu-bar title is rendered in a narrower form:
+        the icon is suppressed and the wide emoji circles 🟡🟢🔵 are
+        replaced with ANSI-coloured ``●`` bullets (``●2 ●1 ●3``). Saves
+        roughly 30 px — meant for notched MacBooks where every menu-bar
+        slot counts. Default ``False``. See ADR-0010 for the rationale
+        behind ANSI bullets vs the alternatives.
     """
 
     window_sec: int = 3 * 3600
@@ -228,6 +235,7 @@ class Config:
     menubar_icon_fallback: str = "🤖"
     editor_url_scheme: str = "vscode://"
     language: str = ""
+    compact: bool = False
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -278,6 +286,10 @@ class Config:
         take("menubar_icon_fallback", "menubar_icon_fallback", str)
         take("editor_url_scheme", "editor_url_scheme", str)
         take("language", "language", str)
+        # JSON booleans are native Python bool after json.loads; bool("false")
+        # == True so we can't use the generic take() helper here.
+        if "compact" in data and isinstance(data["compact"], bool):
+            coerced["compact"] = data["compact"]
 
         # Drop unknown keys silently — they're forward-compatibility hooks.
         valid_names = {f.name for f in fields(cls)}
@@ -1257,13 +1269,36 @@ _MENUBAR_COUNTER_ORDER: tuple[RenderGroup, ...] = (
 )
 
 
+_COMPACT_ANSI: dict[RenderGroup, str] = {
+    RenderGroup.ACTIVE: _ANSI_WORKING,
+    RenderGroup.FRESH: _ANSI_FRESH,
+    RenderGroup.ACKNOWLEDGED: _ANSI_ACK,
+}
+
+
 def _print_menubar(counts: dict[RenderGroup, int]) -> None:
     """Emit the menu-bar title line: icon plus coloured counters.
 
     Counters are omitted when zero so the bar doesn't carry empty labels.
     When nothing is active we dim the entire title so it visually recedes
     on the bar instead of demanding attention.
+
+    In compact mode (``CONFIG.compact``) the Claude icon is suppressed and
+    the wide emoji circles (🟡🟢🔵) are replaced with ANSI-coloured ``●``
+    bullets — e.g. ``●2 ●1 ●3`` — roughly halving the menu-bar footprint.
     """
+    if CONFIG.compact:
+        parts: list[str] = []
+        for group in _MENUBAR_COUNTER_ORDER:
+            n = counts.get(group, 0)
+            if n:
+                parts.append(f"{_COMPACT_ANSI[group]}●{_ANSI_RESET}{n}")
+        if parts:
+            print(f"{' '.join(parts)} | ansi=true")
+        else:
+            print("● | color=#888888")
+        return
+
     counter_parts: list[str] = []
     for group in _MENUBAR_COUNTER_ORDER:
         n = counts.get(group, 0)
