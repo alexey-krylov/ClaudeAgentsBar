@@ -1,12 +1,10 @@
 # ClaudeAgentsBar
 
-A macOS menu-bar widget that shows live status of every running Claude Code
-session — across all your projects, worktrees, and background agents — in one
-glanceable place. Built as a [SwiftBar](https://github.com/swiftbar/SwiftBar)
-plugin.
+Menu-bar widget for tracking parallel Claude Code sessions on macOS.
+Built as a [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin.
 
 ```
-   ◐ 🟡1 🟢2 🔵1        ← menu bar: app icon + colour counters
+   ◐ 🟡1 🟢2 🔵1        ← menu bar: icon + colour counters
    ┌───────────────────────────────────────────────────────────┐
    │ 🟡 Refactor authentication middleware · working           │
    ├───────────────────────────────────────────────────────────┤
@@ -20,188 +18,22 @@ plugin.
    └───────────────────────────────────────────────────────────┘
 ```
 
-## Why I built this
+## The problem
 
-I run a handful of Claude Code sessions in parallel — background agents,
-worktrees, the occasional long-running investigation — and kept losing
-track of which one had just finished, which one was sitting on a
-permission prompt, and which one I'd already triaged. The VSCode sidebar
+If you run more than one Claude Code session in parallel — background
+agents, worktrees, long investigations — you lose track of which one
+needs you. The Claude Code sidebar (in VSCode, VSCodium, or Cursor)
 only sees the active workspace; ⌘-tabbing through windows to find the
-yellow dot got old fast, and I didn't want another floating panel
-stealing screen real estate. A menu-bar widget was the smallest thing
-that could answer *"which agent needs me right now?"* without pulling
-focus from whatever I was actually doing, so I wrote one for myself and
-then cleaned it up enough to share.
-
-## What you see
-
-### In the menu bar
-
-A configurable icon (by default the Claude.app tray glyph) followed by
-coloured counters, **no text labels**:
-
-| Glyph | Meaning |
-|-------|---------|
-| 🟡 N  | N sessions are **active** right now — model is running a tool call, or a permission prompt / `AskUserQuestion` is open waiting for you |
-| 🟢 M  | M sessions **finished and you haven't opened them yet** (fresh, within the configured fresh window) |
-| 🔵 K  | K sessions you've **opened from the menu but haven't dismissed** — still in active follow-up |
-| (dim icon) | nothing urgent — title fades out so it doesn't shout at you |
-
-The ⚪ stale bucket is intentionally **not** counted in the menu bar — it
-would always be the largest number and would drown out the urgent ones.
-
-### When you click the icon
-
-A dropdown of every session that's been active in the last 3 hours, sorted:
-
-1. **Active** (🟡, top) — newest first
-2. **Fresh** (🟢) — idle and not yet opened from the menu
-3. **Acknowledged** (🔵) — idle, you opened it (or it auto-promoted from
-   fresh after the fresh window elapsed); each click restarts the
-   acknowledgement timer
-4. **Stale** (⚪, bottom) — past the acknowledgement window, still within
-   the 3 h dropdown window
-
-Each row shows:
-
-```
-{state-icon} {ai-generated session title} · {right label}
-```
-
-The right label is the part that's coloured independently of the row (via
-ANSI escapes):
-
-- 🟡 `working` (bold yellow) — a tool call is in flight
-- 🟡 `needs you` (bold red) — permission prompt / question open
-- 🟢 `Xm ago` (bold cyan) — fresh, unopened
-- 🔵 `Xm ago` (green) — acknowledged
-- ⚪ `Xh Xm ago` (dim grey) — stale
-
-**Click a row** → records the click into the click sidecar (which moves
-the row from 🟢 to 🔵 and restarts the acknowledgement timer) and opens
-the session in VSCode via
-`vscode://anthropic.claude-code/open?session=<uuid>`.
-
-### Submenu on each row
-
-Hover over a row to reveal the submenu (▸ on the right):
-
-- ✅ **Mark as read** *(🟢 fresh rows only)* — records a synthetic click
-  on this one session so it flips to 🔵 on the next tick, without
-  opening it in the editor.
-- 🟠 **Forget** — hides this row from the menu without touching anything
-  on disk. Same cutoff semantics as *Forget all sessions* but scoped to a
-  single session: a fresh hook event or click pushes the session's
-  `last_event_ts` past the recorded cutoff and brings the row back.
-  Use this when you want a row out of your eyeline but don't want to
-  lose the transcript — and to bring the menu in sync after VSCode's own
-  *Delete* (which also just hides, see below).
-- 🗑 **Delete…** — confirms with a native dialog, then **physically
-  deletes** the JSONL transcript, the tool-results directory, and the row
-  from the state TSV. VSCode's Claude Code sidebar refreshes via its own
-  fs watcher. Note: *Delete* inside the VSCode extension only hides the
-  session from the VSCode sidebar (it writes the id to its `hiddenSessionIds`
-  globalState) — the transcript stays on disk, which is why the row keeps
-  showing up here until you use **Forget** or **Delete…** from this menu.
-- ⎇ **`{git branch}`** — read-only, the current branch of `<cwd>/.git/HEAD`
-  (not the stale value from session start). The full project `cwd` is
-  attached as a hover tooltip, so the path is one second of dwell time
-  away without claiming a permanent line in the submenu. When the cwd
-  isn't a git repository at all, this line falls back to showing the
-  cwd itself (with the folder icon) so the path stays visible.
-- ⏱ **`{N}% — {used}k/{total}k`** — context-window indicator. Percent
-  is how much room is left before the model auto-compacts; absolute
-  numbers show consumed-vs-total. Computed from the freshest `usage`
-  block in the JSONL (`input_tokens + cache_creation_input_tokens +
-  cache_read_input_tokens`), so it stays in lock-step with what Claude
-  Code itself reports. Hidden on sessions too young to have an
-  assistant reply yet. The denominator defaults to **1M** — matches
-  Claude Opus 4.7 / Opus 4.6 / Sonnet 4.6, which has been Anthropic's
-  API default since 2026-04-23. Override down to `200000` via
-  `"context_window_tokens"` in `config.json` when running Haiku 4.5 or
-  Sonnet 4.5. The Anthropic API doesn't surface the window size in
-  responses, so this stays a manual setting — see
-  [ADR-0011](./docs/adr/0011-configurable-context-window.md) for the
-  alternatives we considered.
-
-### Tools submenu (in the footer)
-
-Below the session list, between *Refresh* and the SwiftBar plugin menu,
-sits a **Tools** submenu with two bulk actions, followed by an action
-group for feedback and configuration:
-
-- 🔵 **Acknowledge all** — flips every currently-🟢 row to 🔵 in one shot
-  (records a synthetic click for each). Useful when you've already
-  triaged a batch out-of-band and just want the counter to stop nagging.
-- 🟠 **Forget all sessions** — wipes the state TSV and the clicks TSV
-  and writes a dismissal cutoff so anything that exists only as a JSONL
-  on disk is hidden too. Live sessions reappear on their next hook
-  event; nothing under `~/.claude/projects/` is touched.
-- 💡 **Suggest improvement…** — opens the issue tracker on GitHub in
-  your browser.
-- ⚙️ **Configuration…** — opens `config.json` in the system default
-  text editor (`open -t`). On first click the bundled
-  `config.example.json` is copied to the resolved location so you land
-  in a documented starter file; subsequent clicks just open whatever's
-  there. Same resolution rules as the plugin (`$CLAUDE_AGENTS_BAR_CONFIG`
-  → `$XDG_CONFIG_HOME/claude-agents-bar/config.json` →
-  `~/.config/claude-agents-bar/config.json`).
-
-## How it works
-
-| Piece | Role |
-|-------|------|
-| `claude-agents.5s.py` | SwiftBar plugin. Runs every 5 s. Reads `~/.claude/projects/*/*.jsonl` for transcripts plus three sidecar files for live state. Renders the menu. Also exposes a `--ack-fresh` subcommand used by the *Tools → Acknowledge all* button. |
-| `hooks/agent-state.sh` | Bash script registered as a Claude Code hook on `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`. On each event, atomically updates one row in `~/.claude/agent-state.tsv`. |
-| `bin/open-session.sh` | Row click: records the click into `agent-state.clicks`, then opens the VSCode deeplink. Lets the plugin tell 🟢 fresh from 🔵 acknowledged. |
-| `bin/ack-session.sh` | *Mark as read* submenu action on a 🟢 row: records the click without opening the editor. |
-| `bin/forget-session.sh` | Per-row *Forget*: writes a `{sid → forget_ts}` entry into `agent-state.forget`. The plugin then hides that row until a fresh event pushes its `last_event_ts` past the cutoff. |
-| `bin/delete-session.sh` | Confirm dialog + safe deletion of a session's files and sidecar row. |
-| `bin/ack-fresh.sh` | *Tools → Acknowledge all*: delegates to `claude-agents.5s.py --ack-fresh` to bulk-promote every 🟢 row to 🔵. |
-| `bin/forget-sessions.sh` | *Tools → Forget all sessions*: wipes the state TSV and the clicks TSV under their mutexes and writes a cutoff timestamp into `agent-state.dismiss`. |
-| `bin/open-config.sh` | *Tools → Configuration…*: bootstraps `config.json` from the bundled example on first run, then opens it via `open -t` (system default text editor). |
-| `settings-hooks.json` | Fragment merged into `~/.claude/settings.json` by the installer. |
-| `install.sh` / `uninstall.sh` | Manage symlinks + the `settings.json` merge. |
-
-State derivation:
-- **`waiting`** — `Notification` hook fired most recently (permission prompt
-  or `AskUserQuestion`).
-- **`working`** — `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
-  `PostToolUse` fired most recently.
-- **`idle`** — `Stop` fired most recently, or the watchdog demoted a
-  `working` entry that hasn't emitted a hook in `watchdog_seconds`
-  (90 s by default — handles crashed sessions).
-
-An idle session is then placed into one of three buckets:
-
-- 🟢 **Fresh** — Stop happened, no click on the row since. Stays fresh
-  for `fresh_minutes` (default 60).
-- 🔵 **Acknowledged** — either a click landed after Stop, or the fresh
-  timer expired on its own. Each subsequent click restarts the
-  `ack_minutes` (default 60) countdown.
-- ⚪ **Stale** — past the acknowledgement window. Still in the dropdown
-  until the global `window_minutes` evicts it.
-
-Without the hooks the plugin still works, but every session looks `idle` —
-the state TSV is what distinguishes `waiting` / `working` from idle.
-
-Sessions whose transcript has been deleted, or whose last activity has
-fallen out of the dropdown window, are garbage-collected from both the
-state TSV and the clicks TSV on the next plugin tick, under the same
-locks the writers use.
-
-Sessions whose `entrypoint` indicates a scripted runtime (`sdk-cli` —
-i.e. anything launched via `claude -p`, the Python SDK, or a scheduled
-job) are skipped: only interactive sessions (`claude-vscode`, `cli`) make
-it into the dropdown.
+yellow dot is slow. ClaudeAgentsBar puts every session's state in
+your menu bar, in one glance, without pulling focus from whatever
+you're actually doing.
 
 ## Install
 
-> ⚠️ **Do not place this project inside the SwiftBar plugins folder.**
-> SwiftBar recursively scans its plugins directory with
-> `MakePluginExecutable=1` and will run `install.sh` / `uninstall.sh` as
-> plugins. Keep the project anywhere else (we use `~/Projects/ClaudeAgentsBar`).
-> The installer refuses to run if it detects this misconfiguration.
+> ⚠️ **Don't place this project inside the SwiftBar plugins folder.**
+> SwiftBar would run `install.sh` / `uninstall.sh` as plugins. Anywhere
+> else is fine (we use `~/Projects/ClaudeAgentsBar`). The installer
+> refuses to run if it detects this misconfiguration.
 
 ```bash
 brew install --cask swiftbar      # if not already installed
@@ -209,79 +41,50 @@ brew install jq                   # if not already installed
 bash install.sh
 ```
 
-The installer auto-detects the SwiftBar plugins folder via
-`defaults read com.ameba.SwiftBar PluginDirectory`. It then:
+The installer symlinks the plugin into SwiftBar, registers the Claude
+Code hook, and merges (with backup) hook entries into
+`~/.claude/settings.json`. Sessions started **after** install show live
+state; older ones appear as plain `idle` until they emit their next
+hook event.
 
-1. Symlinks `claude-agents.5s.py` into the SwiftBar plugins dir.
-2. Symlinks `hooks/agent-state.sh` into `~/.claude/hooks/`.
-3. Backs up `~/.claude/settings.json` and **merges** the hook
-   registrations into it (existing hooks are preserved).
-4. Runs a smoke test through the hook.
-5. Pings SwiftBar to refresh.
+Uninstall with `bash uninstall.sh` — symlinks are removed, the hook
+entries are stripped from `settings.json` (with a fresh backup taken
+first), the four sidecar files under `~/.claude/` are left in place.
 
-Sessions started **after** install populate the sidecar TSV and show
-live state. Sessions started before will appear (from JSONL mtime) but
-as plain `idle` until they emit their next hook event.
+## What it shows
 
-## Uninstall
+In the menu bar — counters only, no text labels:
 
-```bash
-bash uninstall.sh
-```
+| Glyph | Meaning |
+|---|---|
+| 🟡 N | N sessions are **working** or **waiting on a permission prompt** |
+| 🟢 M | M sessions **finished, you haven't seen them yet** |
+| 🔵 K | K sessions you've **opened, still in active follow-up** |
+| (dim) | nothing urgent — the title fades so it doesn't shout |
 
-Removes both symlinks and strips our hook entries from `settings.json`
-(a fresh timestamped backup is taken first). The four sidecar files
-(`agent-state.tsv`, `agent-state.clicks`, `agent-state.dismiss`,
-`agent-state.forget`) are left behind — delete them manually if you want.
+Click the icon for the full dropdown — every session active in the
+last 3 hours, sorted by urgency (active → fresh → acknowledged →
+stale). Each row shows the AI-generated title and a coloured right
+label: `working`, `needs you`, or `Xm ago`. Click a row to open the
+session in your editor — VSCode by default, VSCodium and Cursor work
+too (one-line `editor_url_scheme` change, see
+[docs/configuration.md](./docs/configuration.md#all-fields)).
 
-## Files
+Hover a row for its submenu:
 
-```
-ClaudeAgentsBar/
-├── claude-agents.5s.py      ← SwiftBar plugin (Python 3.9-compatible)
-├── hooks/
-│   └── agent-state.sh       ← Claude Code hook → state TSV
-├── bin/
-│   ├── open-session.sh      ← row click: record click + open in VSCode
-│   ├── ack-session.sh       ← submenu action on 🟢 rows: mark one as read
-│   ├── forget-session.sh    ← submenu action: hide one row (cutoff-based)
-│   ├── delete-session.sh    ← submenu action: confirm + delete a session
-│   ├── ack-fresh.sh         ← Tools: bulk-acknowledge every 🟢 session
-│   ├── forget-sessions.sh   ← Tools: wipe sidecars, set dismiss cutoff
-│   └── open-config.sh       ← Tools: seed + open config.json in $EDITOR
-├── tests/                   ← unittest suite (stdlib only)
-├── docs/adr/                ← architecture decision records
-├── config.example.json      ← copy to ~/.config/claude-agents-bar/config.json
-├── settings-hooks.json      ← settings.json patch
-├── install.sh
-├── uninstall.sh
-├── CHANGELOG.md
-├── README.md
-└── PLUGIN.md                ← contributor / hacking guide
-```
+- **Mark as read** (🟢 rows) — flip to 🔵 without opening the editor.
+- **Forget** — hide this row without deleting anything.
+- **Delete…** — confirm + physically remove the JSONL transcript and
+  state.
+- Read-only context-window % and current git branch.
 
-Three sidecar files live under `~/.claude/`, all maintained by the
-scripts above:
-
-| File | Writer(s) | Purpose |
-|---|---|---|
-| `agent-state.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per session: latest hook state + cwd. |
-| `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
-| `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
-| `agent-state.forget` | `bin/forget-session.sh`, plugin (gc) | `{session_id: forget_ts}` — per-row cutoff. Same semantics as `agent-state.dismiss`, just scoped to one session at a time. |
+The footer **Tools** submenu has bulk actions (acknowledge all / forget
+all), a feedback link, and a one-click jump to your `config.json`.
 
 ## Configuration
 
-User-tunable knobs live in an **optional JSON config file**. Defaults are
-applied for any field you don't set, so the file is entirely optional.
-
-Search order (first match wins):
-
-1. `$CLAUDE_AGENTS_BAR_CONFIG` (explicit path)
-2. `$XDG_CONFIG_HOME/claude-agents-bar/config.json`
-3. `~/.config/claude-agents-bar/config.json`
-
-To start from a working example:
+All knobs are optional — defaults work. To customise, click
+**Tools → Configuration…** in the menu, or:
 
 ```bash
 mkdir -p ~/.config/claude-agents-bar
@@ -289,150 +92,73 @@ cp config.example.json ~/.config/claude-agents-bar/config.json
 $EDITOR ~/.config/claude-agents-bar/config.json
 ```
 
-…or just click **Tools → Configuration…** in the menu — the plugin
-seeds the file from `config.example.json` on first click and hands it
-to your default text editor.
+SwiftBar picks up new values on the next 5 s tick — no reinstall or
+restart needed.
 
-SwiftBar will pick up the new values on the next 5 s tick — no install
-or restart needed.
-
-### Fields
+The three fields you're most likely to touch:
 
 | Key | Default | Meaning |
-|-----|---------|---------|
-| `window_minutes` | `180` | Hide sessions inactive longer than this from the dropdown. |
-| `fresh_minutes` | `60` | An idle session stays 🟢 fresh for this long after Stop. A click before the timer expires promotes it to 🔵 immediately; otherwise it auto-promotes when the window elapses. |
-| `ack_minutes` | `60` | An acknowledged session (🔵) fades to ⚪ stale after this long without a new click. Each click restarts the timer. |
-| `watchdog_seconds` | `90` | `working` entries older than this get demoted to `idle` (handles crashed sessions). |
-| `title_max` | `60` | Max length of a session title shown on a row. |
-| `menubar_icon` | Claude.app tray icon | Icon drawn before the counters. Accepts a plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>` — see *Menu-bar icon* below. |
-| `menubar_icon_fallback` | `"🤖"` | Glyph used when `menubar_icon` points at a missing file (e.g. Claude.app not installed). |
-| `compact` | `false` | When `true`, drops the icon and replaces the 🟡🟢🔵 emoji counters with ANSI-coloured `●` bullets (`●2 ●1 ●3`). Saves ~30 px on the menu bar — useful on notched MacBooks. See *Compact mode* below. |
-
-Fractional values are accepted where they make sense — e.g.
-`"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`
-for thirty-second granularity. Keys starting with `//` are ignored, so
-JSON-style "comments" in the file are fine. Unknown keys are ignored too:
-forward-compatible config files don't error.
-
-### Menu-bar icon
-
-`menubar_icon` accepts four shapes:
-
-| Prefix | Example | Effect |
 |---|---|---|
-| *(none)* | `"✱"`, `"🤖"` | Embedded as an inline glyph. Apple Color Emoji won't line up with SF Pro baselines — use sparingly. |
-| `sf:` | `"sf:bubble.left.fill"` | Rendered as an SF Symbol via SwiftBar's `sfimage=`. |
-| `template:` | `"template:/Applications/Claude.app/Contents/Resources/TrayIconTemplate@2x.png"` | A monochrome PNG. macOS auto-tints it for the current menu-bar appearance (light / dark / active). **Default.** |
-| `image:` | `"image:~/Pictures/my-icon.png"` | A full-colour PNG, no theme adaptation. |
+| `fresh_minutes` | `60` | How long a finished session stays 🟢 before auto-promoting to 🔵. |
+| `ack_minutes` | `60` | How long an acknowledged 🔵 session stays before fading to ⚪. |
+| `menubar_icon` | Claude.app glyph | Plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>`. |
 
-Paths may be absolute or relative to the plugin directory. For
-`template:` and `image:` sources the plugin auto-resizes to fit the menu
-bar height and stitches the 1× / 2× / 3× variants into a multi-rep TIFF
-so retina displays render crisply. The cached output lives under
-`$XDG_CACHE_HOME/claude-agents-bar/` (or `~/.cache/claude-agents-bar/`).
+Full reference (all 11 fields, icon formats, compact mode for notched
+MacBooks, refresh cadence, sidecar files on disk):
+[docs/configuration.md](./docs/configuration.md).
 
-If the configured file is missing the plugin falls back to
-`menubar_icon_fallback` (default `"🤖"`), keeping the bar populated even
-when e.g. Claude.app isn't installed.
+## Troubleshooting
 
-### Examples
+**Icon not showing on a notched MacBook.** macOS clips menu-bar items
+behind the notch when the bar fills up. Cheapest fix: enable compact
+mode (`"compact": true` in `config.json`) — drops ~30 px from the
+plugin's footprint by hiding the icon and swapping `🟡🟢🔵` for
+narrow ANSI `●` bullets. Other fixes (Control Center, menu-bar
+managers): [docs/troubleshooting.md](./docs/troubleshooting.md).
 
-```json
-{ "window_minutes": 720, "watchdog_seconds": 45 }
-```
-
-```json
-{ "menubar_icon": "sf:bubble.left.fill", "fresh_minutes": 30, "ack_minutes": 90 }
-```
-
-### Compact mode
-
-Setting `"compact": true` collapses the menu-bar title to its narrowest
-form:
-
-```
-●2 ●1 ●3        ← compact: true   (ANSI-coloured bullets, no icon)
-◐ 🟡2 🟢1 🔵3   ← compact: false  (default)
-```
-
-The icon is suppressed and `🟡🟢🔵` are replaced with `●` rendered
-through SwiftBar's `ansi=true`, in a brighter palette than the
-dropdown rows (the 9 px glyph competes with the wallpaper). Colour
-semantics line up: yellow = active, green = fresh, blue =
-acknowledged. Empty buckets are omitted; if nothing is active, a
-single dim `●` keeps the slot occupied so the plugin doesn't
-disappear from the bar entirely.
-
-The trade-off is loss of branding (no Claude mark) in exchange for
-roughly 30 px of horizontal space. Recommended only on notched
-MacBooks where the bar is contended (see *MacBook notch* below); on a
-roomy external display the default is easier to read at a glance.
-
-Rationale for picking ANSI bullets over SF Symbols, narrower emoji, or
-plain numbers lives in [ADR-0010](./docs/adr/0010-compact-menubar-ansi-bullets.md).
-
-### Changing the refresh rate
-
-SwiftBar derives the polling cadence from the filename — `claude-agents.5s.py`
-means *every 5 seconds*. To poll every 10 seconds, rename the file (and the
-symlink) to `claude-agents.10s.py`.
-
-## Known limits
-
-- Sessions started before the hooks were installed have no precise state —
-  they show as `idle` from JSONL mtime only.
-- SwiftBar uses native `NSMenu`; rows have no inline buttons. Actions live
-  in the per-row submenu (revealed by hovering the row arrow).
-- The plugin polls every 5 s — that's SwiftBar's minimum useful cadence.
-
-## MacBook notch: icon not showing
-
-On notched MacBooks (14"/16" Pro, the redesigned Air) the menu bar is split
-in two by the camera housing. Only the strip to the **right of the notch**
-is available for status items, and macOS lays them out right-to-left. When
-you have many third-party menu-bar apps installed, the bar fills up and
-items that don't fit are silently clipped behind the notch — they're still
-running, just not drawn. ClaudeAgentsBar is a normal SwiftBar item and is
-subject to the same clipping.
-
-Symptoms:
-
-- The plugin appears to "do nothing" — no icon, no counters.
-- Other menu-bar apps you've added recently are also missing or only
-  partially visible.
-- Quitting one of those apps suddenly makes the ClaudeAgentsBar icon
-  reappear on the right.
-
-Confirm the plugin itself is healthy before chasing display issues:
+**Plugin appears stuck or empty.** Run it standalone:
 
 ```bash
-/usr/bin/python3 ~/Projects/ClaudeAgentsBar/claude-agents.5s.py | head -40
+/usr/bin/python3 claude-agents.5s.py | head -40
 ```
 
-If that prints the icon line and a session list, the plugin is working
-correctly — only the menu-bar rendering is hiding it.
+If that prints the icon line and a session list, the plugin is healthy
+and only the menu-bar rendering is hiding it. Otherwise see
+[docs/troubleshooting.md](./docs/troubleshooting.md).
 
-Fixes (in order of effort):
+## Why I built this
 
-- **Turn on compact mode** (`"compact": true` — see *Compact mode*
-  above). Drops ~30 px from the plugin's footprint by hiding the icon
-  and swapping `🟡🟢🔵` for narrow ANSI `●` bullets. Cheapest fix; only
-  costs you the Claude mark on the bar.
-- **System Settings → Control Center.** Set indicators you don't use
-  (Spotlight, Stage Manager, Screen Mirroring, Focus, Bluetooth, AirDrop,
-  Sound, Now Playing, Fast User Switching, etc.) to *Don't Show in Menu
-  Bar*. Each removed icon frees one slot to the right of the notch.
-- **Quit or uninstall menu-bar apps you no longer need.** Cloud-sync
-  clients, screenshot utilities, and update agents are common offenders.
-- **Use a menu-bar manager** to hide overflow items behind a toggle:
-  [Ice](https://github.com/jordanbaird/Ice) (free, open source),
-  [Bartender](https://www.macbartender.com/), or
-  [Hidden Bar](https://github.com/dwarvesf/hidden-bar). Pin
-  ClaudeAgentsBar to the always-visible group so it never falls into the
-  hidden bucket.
+I run a handful of Claude Code sessions in parallel — background
+agents, worktrees, the occasional long-running investigation — and
+kept losing track of which one had just finished, which one was
+sitting on a permission prompt, and which one I'd already triaged.
+The Claude Code sidebar (same in VSCode, VSCodium, and Cursor — they
+share the `anthropic.claude-code` extension) only sees the active
+workspace; ⌘-tabbing through windows to find the yellow dot got old
+fast, and I didn't want another floating panel stealing screen real
+estate. A menu-bar widget was the smallest thing that could answer
+*"which agent needs me right now?"* without pulling focus, so I wrote
+one for myself and then cleaned it up enough to share.
+
+## How it works
+
+A Python script polls every 5 seconds. It reads
+`~/.claude/projects/*/*.jsonl` (the transcripts Claude Code already
+writes — for titles and `cwd`) plus a small sidecar TSV that a Claude
+Code hook (`hooks/agent-state.sh`) updates on every session event
+(`SessionStart`, `PreToolUse`, `Stop`, …). No daemon, no IPC — the
+plugin is stateless and rebuilds the menu from disk on every tick.
+
+Without the hooks the plugin still works, but every session looks
+`idle` — the state TSV is what distinguishes `working` / `waiting`
+from idle.
+
+Architecture, dev workflow, code style, and how to add submenu actions
+or new states: [PLUGIN.md](./PLUGIN.md). Design rationale for the
+structural choices: [docs/adr/](./docs/adr/).
 
 ## Contributing
 
-See [PLUGIN.md](./PLUGIN.md) for architecture, dev workflow, code style
-notes, and how to add new submenu actions or icons.
+[PLUGIN.md](./PLUGIN.md) has everything for hackers. User-visible
+changes go in [CHANGELOG.md](./CHANGELOG.md). For installing or
+upgrading via a Claude Code agent, see [CLAUDE.md](./CLAUDE.md).

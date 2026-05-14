@@ -37,8 +37,9 @@
   "// editor_url_scheme": "URL scheme prefix used to build the per-row deeplink that opens a session in your editor.",
   "// editor_url_scheme.1": "Full URL: '<editor_url_scheme>anthropic.claude-code/open?session=<uuid>'.",
   "// editor_url_scheme.2": "Default: 'vscode://' — works for stock Visual Studio Code.",
-  "// editor_url_scheme.3": "VSCodium users: set this to 'vscodium://'. macOS does not register the 'vscode://' scheme for VSCodium, so clicks on rows do nothing until this is changed.",
+  "// editor_url_scheme.3": "VSCodium: set to 'vscodium://'. Cursor: set to 'cursor://'. macOS does not register the 'vscode://' scheme for these forks, so clicks on rows do nothing until this is changed.",
   "// editor_url_scheme.4": "Other Code-OSS forks may register their own scheme. Must include the trailing '://'.",
+  "// editor_url_scheme.5": "The editor must also have the 'anthropic.claude-code' extension installed for the deeplink to land on a session.",
   "editor_url_scheme": "vscode://",
 
   "// language": "UI language for menu labels, dialogs, and 'X ago' strings.",
