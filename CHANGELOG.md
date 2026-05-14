@@ -7,6 +7,21 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Per-session context-window indicator
+
+Each row's hover submenu gained a fourth line under the git branch:
+`{N}% — {used}k/200k`, marked with the `gauge.medium` SF Symbol. Percent
+is how much room is left in the context window before auto-compact;
+absolute numbers show used-vs-total. The figure is parsed from the most
+recent `usage` block in the session's JSONL transcript (`input_tokens +
+cache_creation_input_tokens + cache_read_input_tokens`) by scanning only
+the trailing 64 KB, so the cost is O(1) regardless of transcript size.
+Rows are hidden on transcripts too young to have an assistant reply yet.
+Window total is hard-coded at 200K — close enough to Claude 4.x's default
+that the indicator matches Claude Code's own "context left" readout within
+a few percent. Five new tests in `TestFormatContextLeft` and
+`TestLastUsageTokens`; total is now 80.
+
 ### Compact menu-bar mode
 
 New optional config knob `"compact": true` switches the menu-bar title

@@ -104,7 +104,19 @@ _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 
 #: Bytes mmap'd from the JSONL tail when searching for the most recent
 #: ``gitBranch`` — bounded so huge transcripts (base64 attachments) stay cheap.
+#: The same window is used by :func:`last_usage_tokens` to find the freshest
+#: ``"usage":{…}`` block; both signals live near the file end because Claude
+#: Code appends events sequentially.
 JSONL_TAIL_BYTES = 64 * 1024
+
+#: Assumed context-window size for the per-session "% left" submenu line.
+#: Matches the current Claude 4.x default; we don't read it from each event's
+#: ``model`` field because the indicator is meant as an at-a-glance
+#: approximation, not a precise budgeting tool. The displayed value will
+#: drift from Claude Code's own "context left" readout by a few percent
+#: because we don't subtract the system-prompt and tool-definition reservation
+#: that Claude Code accounts for internally — acceptable for a menu-bar widget.
+CONTEXT_WINDOW_TOKENS = 200_000
 
 #: Upper bound for the per-tick scan that hunts for ``ai-title``. AI titles
 #: are emitted within the first few hundred lines (right after the first turn),
@@ -526,6 +538,12 @@ class Session:
     git_branch: str
     cwd: str
     entrypoint: str
+    #: ``input + cache_creation + cache_read`` from the last assistant event's
+    #: ``usage`` block — i.e. how many tokens the live context window currently
+    #: holds. ``None`` when the transcript has no parseable usage block yet
+    #: (very young session) so the submenu line can be skipped instead of
+    #: showing a meaningless "100% — 0k/200k".
+    context_used: int | None = None
 
     @property
     def right_label(self) -> str:
@@ -565,6 +583,16 @@ _CMD_MSG_RE = re.compile(r"<command-message>(.*?)</command-message>", re.DOTALL)
 _CMD_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 _GIT_BRANCH_RE = re.compile(rb'"gitBranch":"([^"]*)"')
+#: Captures the three additive components of the live context window from a
+#: ``"usage":{…}`` block on an assistant event. ``[^}]*?`` keeps the match
+#: inside the outer object — the first three fields always appear *before*
+#: ``server_tool_use`` (which introduces a nested ``{``), so non-greedy
+#: bracket-class repetition is enough and we don't need a real JSON parser.
+_USAGE_BLOCK_RE = re.compile(
+    rb'"usage":\{[^}]*?"input_tokens":(\d+)[^}]*?'
+    rb'"cache_creation_input_tokens":(\d+)[^}]*?'
+    rb'"cache_read_input_tokens":(\d+)'
+)
 
 
 def _shorten(text: str) -> str:
@@ -599,6 +627,28 @@ def _humanize_age(seconds: int, lang: str = "en") -> str:
     if minutes == 0:
         return _t_for("age.hours", lang, n=hours)
     return _t_for("age.hours_minutes", lang, h=hours, m=minutes)
+
+
+def _format_context_left(used: int, total: int = CONTEXT_WINDOW_TOKENS) -> str:
+    """Render the per-session context-window indicator: ``"30% — 140k/200k"``.
+
+    ``used`` is the sum of ``input_tokens + cache_creation_input_tokens +
+    cache_read_input_tokens`` from the most recent assistant ``usage`` block.
+    Percent is clamped to ``[0, 100]`` so a session that has exceeded the
+    nominal window (still possible during the brief window before Claude
+    Code auto-compacts) reads as ``0%`` rather than a confusing negative.
+
+    Number scale is rounded to the nearest thousand for a stable two-three
+    digit width — the menu submenu is monospace and we don't want this row
+    jitter every tick as token counts tick up.
+    """
+    if total <= 0:
+        return ""
+    used_clamped = max(0, used)
+    percent_left = max(0, min(100, round((1 - used_clamped / total) * 100)))
+    used_k = round(used_clamped / 1000)
+    total_k = round(total / 1000)
+    return f"{percent_left}% — {used_k}k/{total_k}k"
 
 
 def _classify(
@@ -1083,6 +1133,42 @@ def fallback_git_branch_from_jsonl(jsonl_path: Path) -> str:
     return matches[-1].decode("utf-8", errors="replace")
 
 
+def last_usage_tokens(jsonl_path: Path) -> int | None:
+    """Return the live context size from the freshest ``usage`` block, or ``None``.
+
+    Reads only the trailing :data:`JSONL_TAIL_BYTES` because Claude Code
+    appends events sequentially — the newest assistant turn (with the most
+    up-to-date usage block) is always at the end. Bounding the read keeps
+    this O(1) regardless of how large the transcript has grown.
+
+    The returned value is ``input_tokens + cache_creation_input_tokens +
+    cache_read_input_tokens`` from the last matched block — the same sum
+    Claude Code uses to gauge "how full is the window right now". Cache
+    reads dominate this number on most turns; that is expected, and is
+    why the result *can't* meaningfully be aggregated across all events
+    (cache contents repeat from one turn to the next).
+
+    ``None`` is returned for empty files, unreadable files, or transcripts
+    whose tail doesn't yet contain a parseable usage block (a session that
+    only has the user's first prompt, no assistant reply). Callers should
+    omit the indicator row in that case rather than rendering ``0k``.
+    """
+    try:
+        size = jsonl_path.stat().st_size
+        if size == 0:
+            return None
+        with jsonl_path.open("rb") as f:
+            f.seek(max(0, size - JSONL_TAIL_BYTES))
+            data = f.read()
+    except OSError:
+        return None
+    matches = _USAGE_BLOCK_RE.findall(data)
+    if not matches:
+        return None
+    inp, cache_creation, cache_read = (int(x) for x in matches[-1])
+    return inp + cache_creation + cache_read
+
+
 # --------------------------------------------------------------------------- #
 # Composition                                                                  #
 # --------------------------------------------------------------------------- #
@@ -1157,6 +1243,7 @@ def build_session(
     meta = read_transcript_meta(jsonl)
     cwd = sidecar_cwd or meta.cwd
     branch = current_git_branch(cwd) or fallback_git_branch_from_jsonl(jsonl)
+    context_used = last_usage_tokens(jsonl)
 
     return Session(
         id=jsonl.stem,
@@ -1169,6 +1256,7 @@ def build_session(
         git_branch=branch,
         cwd=cwd,
         entrypoint=meta.entrypoint,
+        context_used=context_used,
     )
 
 
@@ -1492,6 +1580,11 @@ def _print_session_row(session: Session) -> None:
         print(
             f"--{session.git_branch} | "
             "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
+        )
+    if session.context_used is not None:
+        print(
+            f"--{_format_context_left(session.context_used)} | "
+            "font=Menlo color=#999999 sfimage=gauge.medium"
         )
 
 
