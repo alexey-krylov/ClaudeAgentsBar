@@ -227,14 +227,15 @@ class Config:
         behind ANSI bullets vs the alternatives.
     ``context_window_tokens``
         Total size of the model's context window in tokens, used as the
-        denominator for the per-session ``{N}% — {used}k/200k`` indicator
-        in the submenu. Default ``200_000`` — matches the Claude 4.x
-        family. Override when running a model with a non-standard window
-        (e.g. Sonnet's 1M-token beta: set this to ``1_000_000``). We do
-        not auto-detect from the transcript because the SDK response
-        carries the model name but not the context window, and no
-        publicly stable Anthropic API surfaces it either; see ADR-0011
-        for the alternatives considered.
+        denominator for the per-session ``{N}% — {used}k/{total}k``
+        indicator in the submenu. Default ``1_000_000`` — matches
+        Claude Opus 4.7 / Opus 4.6 / Sonnet 4.6 (Opus 4.7 has been
+        Anthropic's API default since 2026-04-23). Override down to
+        ``200_000`` when running Haiku 4.5 or Sonnet 4.5 in the
+        session. We do not auto-detect from the transcript because the
+        SDK response carries the model name but not the context window,
+        and no publicly stable Anthropic API surfaces it either; see
+        ADR-0011 for the alternatives considered.
     """
 
     window_sec: int = 3 * 3600
@@ -249,7 +250,7 @@ class Config:
     editor_url_scheme: str = "vscode://"
     language: str = ""
     compact: bool = False
-    context_window_tokens: int = 200_000
+    context_window_tokens: int = 1_000_000
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -302,7 +303,7 @@ class Config:
         take("language", "language", str)
         # Positive-int constraint: 0 or negative would make _format_context_left
         # return an empty string and the row would vanish silently. Better to
-        # warn loudly and keep the 200K default.
+        # warn loudly and keep the 1M default.
         def _require_positive(n: int) -> int:
             if n <= 0:
                 raise ValueError("must be > 0")

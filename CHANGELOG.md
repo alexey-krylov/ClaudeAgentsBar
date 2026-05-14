@@ -20,13 +20,14 @@ cost is O(1) regardless of transcript size. Rows are hidden on
 transcripts too young to have an assistant reply yet.
 
 The denominator is exposed as a new config knob
-**`context_window_tokens`** (default `200000`, the Claude 4.x family
-default). Override it for Sonnet's 1M-token beta or any other
-non-default window; invalid values (`0`, negative, non-numeric) warn
-to SwiftBar's log and keep the 200K default. Auto-detection from the
-transcript was considered and rejected — the API response carries the
-model name but not the window size, and beta flags that change the
-window aren't recorded in the transcript at all. See
+**`context_window_tokens`** (default `1000000` — matches Claude
+Opus 4.7 / Opus 4.6 / Sonnet 4.6, which has been Anthropic's API
+default since 2026-04-23). Override down to `200000` when running
+Haiku 4.5 or Sonnet 4.5. Invalid values (`0`, negative, non-numeric)
+warn to SwiftBar's log and keep the 1M default. Auto-detection from
+the transcript was considered and rejected — the API response carries
+the model name but not the window size, and the transcript doesn't
+record beta flags either. See
 [ADR-0011](./docs/adr/0011-configurable-context-window.md) for the
 alternatives.
 
