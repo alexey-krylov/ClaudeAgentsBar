@@ -11,6 +11,7 @@
   "menu.forget_all": "Alle Sitzungen vergessen",
   "menu.suggest": "Verbesserung vorschlagen…",
   "menu.delete_session": "Sitzung löschen…",
+  "menu.mark_read": "Als gelesen markieren",
   "menu.no_sessions": "Keine Sitzungen in den letzten {duration}",
 
   "title.no_title": "(ohne Titel)",

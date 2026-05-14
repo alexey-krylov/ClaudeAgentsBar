@@ -1453,13 +1453,16 @@ def _print_session_row(session: Session) -> None:
     ``editor_url_scheme`` defaults to ``"vscode://"`` and can be
     overridden in the config (e.g. ``"vscodium://"`` for VSCodium).
 
-    Submenu (``--`` prefix lines): a destructive action (delete), an
-    action that doubles as info (the project name, clickable to reveal in
-    Finder), and read-only metadata (the current git branch).
+    Submenu (``--`` prefix lines): for 🟢 FRESH rows a non-destructive
+    "mark as read" action records a click without opening the editor; a
+    destructive action (delete) follows; then an action that doubles as
+    info (the project name, clickable to reveal in Finder), and
+    read-only metadata (the current git branch).
     """
     label = f"{session.group.icon} {session.title} · {session.right_label_ansi}"
     href = f"{CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
-    open_script = Path(__file__).resolve().parent / "bin" / "open-session.sh"
+    bin_dir = Path(__file__).resolve().parent / "bin"
+    open_script = bin_dir / "open-session.sh"
     main_params = [
         f"shell={_swiftbar_quote(str(open_script))}",
         f"param1={_swiftbar_quote(session.id)}",
@@ -1472,7 +1475,17 @@ def _print_session_row(session: Session) -> None:
     ]
     print(f"{label} | {' '.join(main_params)}")
 
-    delete_script = Path(__file__).resolve().parent / "bin" / "delete-session.sh"
+    if session.group is RenderGroup.FRESH:
+        ack_session_script = bin_dir / "ack-session.sh"
+        print(
+            f"--{_t('menu.mark_read')} | "
+            f"shell={_swiftbar_quote(str(ack_session_script))} "
+            f"param1={_swiftbar_quote(session.id)} "
+            "terminal=false refresh=true "
+            "sfimage=checkmark.circle.fill sfcolor=systemBlue"
+        )
+
+    delete_script = bin_dir / "delete-session.sh"
     print(
         f"--{_t('menu.delete_session')} | "
         f"shell={_swiftbar_quote(str(delete_script))} "

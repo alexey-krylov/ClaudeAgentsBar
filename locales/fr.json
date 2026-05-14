@@ -11,6 +11,7 @@
   "menu.forget_all": "Oublier toutes les sessions",
   "menu.suggest": "Suggérer une amélioration…",
   "menu.delete_session": "Supprimer la session…",
+  "menu.mark_read": "Marquer comme lu",
   "menu.no_sessions": "Aucune session depuis {duration}",
 
   "title.no_title": "(sans titre)",
