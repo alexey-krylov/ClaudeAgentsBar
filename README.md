@@ -93,6 +93,20 @@ Hover over a row to reveal the submenu (▸ on the right):
 - 📁 **`{project-name}`** — click to reveal the session's `cwd` in Finder.
 - ⎇ **`{git branch}`** — read-only, the current branch of `<cwd>/.git/HEAD`
   (not the stale value from session start).
+- ⏱ **`{N}% — {used}k/{total}k`** — context-window indicator. Percent
+  is how much room is left before the model auto-compacts; absolute
+  numbers show consumed-vs-total. Computed from the freshest `usage`
+  block in the JSONL (`input_tokens + cache_creation_input_tokens +
+  cache_read_input_tokens`), so it stays in lock-step with what Claude
+  Code itself reports. Hidden on sessions too young to have an
+  assistant reply yet. The denominator defaults to **1M** — matches
+  Claude Opus 4.7 / Opus 4.6 / Sonnet 4.6, which has been Anthropic's
+  API default since 2026-04-23. Override down to `200000` via
+  `"context_window_tokens"` in `config.json` when running Haiku 4.5 or
+  Sonnet 4.5. The Anthropic API doesn't surface the window size in
+  responses, so this stays a manual setting — see
+  [ADR-0011](./docs/adr/0011-configurable-context-window.md) for the
+  alternatives we considered.
 
 ### Tools submenu (in the footer)
 
