@@ -22,9 +22,32 @@ Stateless: no daemon, no IPC. Each tick rebuilds the menu from disk.
 
 ## Installing on the user's machine
 
-When the user asks you to install ClaudeAgentsBar, the canonical path
-is `bash install.sh`. It's idempotent — safe to re-run. The high-level
-steps it performs:
+There are two install paths. **Confirm with the user before either** —
+both modify `~/.claude/settings.json` and create symlinks outside the
+project. Don't proceed silently.
+
+### Path A: Homebrew (preferred if the user has brew)
+
+```bash
+brew install --cask swiftbar                          # if missing
+brew install alexey-krylov/claude-agents-bar/claude-agents-bar
+claude-agents-bar setup
+```
+
+`brew install` puts the plugin into `$HOMEBREW_PREFIX/Cellar/...`
+and exposes a single `claude-agents-bar` binary on PATH. `setup` is
+the part that touches `~/.claude/*` and the SwiftBar plugins dir.
+
+### Path B: Git clone (canonical inside this repo)
+
+```bash
+bash install.sh                  # or: bin/claude-agents-bar setup
+```
+
+Both forms run the same `bin/setup.sh` underneath. Idempotent — safe
+to re-run.
+
+### What `setup` does (either path)
 
 1. Verify `jq`, `python3`, and SwiftBar.app are present.
 2. Symlink `claude-agents.5s.py` into the SwiftBar plugins directory.
@@ -35,17 +58,17 @@ steps it performs:
 5. Smoke-test the hook with a fake event.
 6. Signal SwiftBar to refresh (`swiftbar://refreshallplugins`).
 
-### Before running install.sh
+### Before running setup
 
-- Confirm with the user — installation modifies `~/.claude/settings.json`
-  and creates symlinks outside the repo. Don't proceed silently.
-- Check the project is **not** inside the SwiftBar plugins folder.
-  Run `defaults read com.ameba.SwiftBar PluginDirectory` and compare
-  with `pwd`. `install.sh` refuses to run if they overlap, but it's
-  better to catch this earlier.
+- Check the project is **not** inside the SwiftBar plugins folder
+  (only matters for path B). Run
+  `defaults read com.ameba.SwiftBar PluginDirectory` and compare with
+  `pwd`. `setup` refuses to run if they overlap, but it's better to
+  catch this earlier.
 - Check SwiftBar is installed: `ls /Applications/SwiftBar.app`. If
   missing, suggest `brew install --cask swiftbar` before continuing —
-  `install.sh` warns but proceeds without it.
+  `setup` warns but proceeds without it. You can also run
+  `claude-agents-bar doctor` to see all three checks at once.
 
 ### After installing
 
@@ -60,10 +83,12 @@ steps it performs:
 
 ### Uninstalling
 
-`bash uninstall.sh` reverses everything except the four sidecar files
-under `~/.claude/` (`agent-state.tsv`, `agent-state.clicks`,
-`agent-state.dismiss`, `agent-state.forget`). If the user wants a
-truly clean slate, delete those manually after running the script.
+`claude-agents-bar teardown` (or the legacy `bash uninstall.sh`)
+reverses everything except the four sidecar files under `~/.claude/`
+(`agent-state.tsv`, `agent-state.clicks`, `agent-state.dismiss`,
+`agent-state.forget`). If the user wants a truly clean slate, delete
+those manually. After a Homebrew install, finish with
+`brew uninstall claude-agents-bar` to remove the binary itself.
 
 ## Coding conventions (if modifying the project)
 

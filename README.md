@@ -30,26 +30,57 @@ you're actually doing.
 
 ## Install
 
-> ⚠️ **Don't place this project inside the SwiftBar plugins folder.**
-> SwiftBar would run `install.sh` / `uninstall.sh` as plugins. Anywhere
-> else is fine (we use `~/Projects/ClaudeAgentsBar`). The installer
-> refuses to run if it detects this misconfiguration.
+### Via Homebrew (recommended)
 
 ```bash
-brew install --cask swiftbar      # if not already installed
-brew install jq                   # if not already installed
-bash install.sh
+brew install --cask swiftbar               # if not already installed
+brew install alexey-krylov/claude-agents-bar/claude-agents-bar
+claude-agents-bar setup
 ```
 
-The installer symlinks the plugin into SwiftBar, registers the Claude
-Code hook, and merges (with backup) hook entries into
-`~/.claude/settings.json`. Sessions started **after** install show live
-state; older ones appear as plain `idle` until they emit their next
-hook event.
+The first two lines install the prerequisites (SwiftBar.app and the
+plugin itself, plus `jq` as a transitive dependency). `setup` then
+symlinks the plugin into SwiftBar's plugins directory, registers the
+Claude Code hook in `~/.claude/hooks/`, and merges (with timestamped
+backup) hook entries into `~/.claude/settings.json`.
 
-Uninstall with `bash uninstall.sh` — symlinks are removed, the hook
-entries are stripped from `settings.json` (with a fresh backup taken
-first), the four sidecar files under `~/.claude/` are left in place.
+### From a git clone
+
+```bash
+git clone https://github.com/alexey-krylov/ClaudeAgentsBar
+cd ClaudeAgentsBar
+brew install --cask swiftbar               # if not already installed
+brew install jq                            # if not already installed
+bash install.sh                            # or: bin/claude-agents-bar setup
+```
+
+> ⚠️ **Don't place this project inside the SwiftBar plugins folder.**
+> SwiftBar would scan it and try to run `setup`/`teardown` scripts as
+> plugins. Anywhere else is fine (we use `~/Projects/ClaudeAgentsBar`).
+> Setup refuses to run if it detects this misconfiguration.
+
+### After install
+
+Sessions started **after** setup populate the sidecar TSV and show
+live state. Sessions started before will appear (from JSONL mtime) but
+as plain `idle` until they emit their next hook event.
+
+Check everything is in order:
+
+```bash
+claude-agents-bar doctor    # verifies jq + python3 + SwiftBar.app
+```
+
+### Uninstall
+
+```bash
+claude-agents-bar teardown   # or: bash uninstall.sh
+```
+
+Symlinks are removed, hook entries are stripped from `settings.json`
+(with a fresh backup taken first), the four sidecar files under
+`~/.claude/` are left in place. After a Homebrew install, follow up
+with `brew uninstall claude-agents-bar` to remove the binary itself.
 
 ## What it shows
 

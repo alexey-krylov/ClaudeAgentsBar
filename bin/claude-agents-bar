@@ -1,0 +1,67 @@
+#!/bin/bash
+#
+# claude-agents-bar — entrypoint for the SwiftBar plugin's lifecycle.
+#
+# Installed by Homebrew as $HOMEBREW_PREFIX/bin/claude-agents-bar (a
+# symlink into libexec/bin/). Also works from a git clone.
+#
+# Subcommands:
+#   setup      Wire the plugin + hook into SwiftBar / ~/.claude/.
+#   teardown   Undo setup. Sidecar files under ~/.claude/ are preserved.
+#   doctor     Check runtime deps (jq, python3, SwiftBar.app).
+#   version    Print version.
+#   help       This message.
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+VERSION="1.0.0"
+
+case "${1:-help}" in
+    setup)
+        shift
+        exec bash "$HERE/setup.sh" "$@"
+        ;;
+    teardown)
+        shift
+        exec bash "$HERE/teardown.sh" "$@"
+        ;;
+    version|--version|-v)
+        echo "claude-agents-bar $VERSION"
+        ;;
+    doctor)
+        if command -v jq >/dev/null; then
+            echo "jq:       ok ($(command -v jq))"
+        else
+            echo "jq:       MISSING (brew install jq)"
+        fi
+        if command -v python3 >/dev/null; then
+            echo "python3:  ok ($(command -v python3))"
+        else
+            echo "python3:  MISSING"
+        fi
+        if [ -d /Applications/SwiftBar.app ]; then
+            echo "SwiftBar: ok (/Applications/SwiftBar.app)"
+        else
+            echo "SwiftBar: MISSING (brew install --cask swiftbar)"
+        fi
+        ;;
+    help|--help|-h)
+        cat <<EOF
+usage: claude-agents-bar <command>
+
+Commands:
+  setup     Symlink plugin + hook, merge ~/.claude/settings.json (backup first)
+  teardown  Undo setup. Sidecar files under ~/.claude/ are preserved.
+  doctor    Check runtime deps (jq, python3, SwiftBar.app).
+  version   Print version.
+  help      This message.
+
+Docs: https://github.com/alexey-krylov/ClaudeAgentsBar
+EOF
+        ;;
+    *)
+        echo "unknown command: $1 (try: claude-agents-bar help)" >&2
+        exit 1
+        ;;
+esac
