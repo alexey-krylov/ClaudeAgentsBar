@@ -341,6 +341,39 @@ def _make_session(**overrides):
     return plugin.Session(**defaults)
 
 
+class TestRightLabel(unittest.TestCase):
+    def setUp(self):
+        # Pin the locale so assertions stay independent of the dev machine's
+        # system language — without this the duration carries Russian / Chinese
+        # suffixes on workstations whose default locale isn't English.
+        self._orig_lang_cache = plugin._LANG_CACHE
+        plugin._LANG_CACHE = "en"
+
+    def tearDown(self):
+        plugin._LANG_CACHE = self._orig_lang_cache
+
+    def test_working_shows_state_duration(self):
+        # Yellow bullet already encodes "working", so the right-hand text is
+        # the duration of the current cycle — not "now - last_event_ts",
+        # which gets bumped by every PreToolUse.
+        s = _make_session(
+            hook_state="working", age_sec=3, state_duration_sec=180
+        )
+        self.assertEqual(s.right_label, "3m")
+
+    def test_waiting_shows_state_duration(self):
+        s = _make_session(
+            hook_state="waiting", age_sec=10, state_duration_sec=45
+        )
+        self.assertEqual(s.right_label, "45s")
+
+    def test_idle_keeps_age(self):
+        s = _make_session(
+            hook_state="idle", age_sec=120, state_duration_sec=0
+        )
+        self.assertEqual(s.right_label, "2m")
+
+
 class TestPredicates(unittest.TestCase):
     def test_interactive_entrypoints(self):
         self.assertTrue(plugin._is_interactive(_make_session(entrypoint="claude-vscode")))
@@ -363,14 +396,31 @@ class TestPredicates(unittest.TestCase):
 
 class TestParseSidecar(unittest.TestCase):
     def test_valid_row(self):
-        raw = "sid1\tworking\t1700000000\tPreToolUse\t/tmp\n"
+        # 6-column row: state_since is parsed independently of last_event_ts,
+        # so the plugin can render "has been working for N seconds" even after
+        # multiple PreToolUse events have bumped last_event_ts.
+        raw = "sid1\tworking\t1700000050\tPreToolUse\t/tmp\t1700000000\n"
         result = plugin._parse_sidecar(raw)
         self.assertEqual(set(result), {"sid1"})
         snap = result["sid1"]
         self.assertEqual(snap.state, "working")
-        self.assertEqual(snap.last_event_ts, 1700000000)
+        self.assertEqual(snap.last_event_ts, 1700000050)
         self.assertEqual(snap.last_event_kind, "PreToolUse")
         self.assertEqual(snap.cwd, "/tmp")
+        self.assertEqual(snap.state_since, 1700000000)
+
+    def test_legacy_five_column_row_defaults_state_since_to_ts(self):
+        # Rows written by the pre-state_since hook version must still parse;
+        # treating state_since == last_event_ts means duration starts counting
+        # afresh from the next hook event, which is the safest fallback.
+        raw = "sid1\tworking\t1700000000\tPreToolUse\t/tmp\n"
+        snap = plugin._parse_sidecar(raw)["sid1"]
+        self.assertEqual(snap.state_since, 1700000000)
+
+    def test_garbage_state_since_falls_back_to_ts(self):
+        raw = "sid1\tworking\t1700000000\tPreToolUse\t/tmp\tnope\n"
+        snap = plugin._parse_sidecar(raw)["sid1"]
+        self.assertEqual(snap.state_since, 1700000000)
 
     def test_invalid_state_skipped(self):
         raw = "sid1\tbogus\t1700000000\tPreToolUse\t/tmp\n"

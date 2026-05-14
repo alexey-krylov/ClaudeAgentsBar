@@ -18,9 +18,6 @@
 
   "title.no_title": "(no title)",
 
-  "right.working": "working",
-  "right.waiting": "needs you",
-
   "error.plugin": "Plugin error: {exc}",
 
   "age.seconds": "{n}s",

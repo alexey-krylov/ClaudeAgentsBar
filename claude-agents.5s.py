@@ -149,6 +149,13 @@ _ANSI_ACK_BAR = "\x1b[1;94m"     # bold bright blue
 #: States that ``hooks/agent-state.sh`` may write.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
 
+#: The subset of :data:`HOOK_STATES` that mean "session is in flight" — i.e.
+#: the right-hand label should show duration of the current state rather
+#: than time-since-last-interaction. ``RenderGroup.ACTIVE`` deliberately
+#: conflates these two (see its docstring); this is the same conflation at
+#: the per-state level.
+ACTIVE_HOOK_STATES = frozenset({"working", "waiting"})
+
 #: ``entrypoint`` values that count as interactive — these are the sessions a
 #: human is actively typing into. Everything else (notably ``sdk-cli`` for
 #: scripted / scheduled runs) is hidden from the menu unconditionally: those
@@ -545,12 +552,22 @@ class RenderGroup(enum.Enum):
 
 @dataclass(frozen=True)
 class HookSnapshot:
-    """A single row of ``agent-state.tsv`` — the last hook fact about a session."""
+    """A single row of ``agent-state.tsv`` — the last hook fact about a session.
+
+    ``state_since`` is the Unix time at which the session entered its current
+    ``state``; the hook preserves it across consecutive events of the same
+    state, so during one ``working`` cycle this stays pinned to the moment
+    the user submitted their prompt. Legacy 5-column rows (written by older
+    hook versions) come in with ``state_since == last_event_ts`` — that
+    over-estimates "freshness" of the state by one event, which corrects
+    itself on the next hook fire.
+    """
 
     state: str
     last_event_ts: int
     last_event_kind: str
     cwd: str
+    state_since: int
 
 
 @dataclass(frozen=True)
@@ -595,14 +612,24 @@ class Session:
     #: (very young session) so the submenu line can be skipped instead of
     #: showing a meaningless "100% — 0k/200k".
     context_used: int | None = None
+    #: How long the session has been in its current ``working`` / ``waiting``
+    #: state, in seconds. ``0`` for idle sessions (or when the hook hasn't
+    #: stamped a transition yet) — :attr:`right_label` only consults this
+    #: for the active states, so the value is meaningless otherwise.
+    state_duration_sec: int = 0
 
     @property
     def right_label(self) -> str:
-        """Plain-text status shown on the right side of the row."""
-        if self.hook_state == "working":
-            return _t("right.working")
-        if self.hook_state == "waiting":
-            return _t("right.waiting")
+        """Plain-text status shown on the right side of the row.
+
+        The bullet colour already encodes "working" / "waiting", so the
+        right-hand text carries the *duration* of the current state instead
+        of repeating it as a word — `3m` next to a yellow dot reads as "has
+        been working for 3 minutes". Idle rows keep their "time since last
+        interaction" reading.
+        """
+        if self.hook_state in ACTIVE_HOOK_STATES:
+            return _humanize_age(self.state_duration_sec, _lang())
         return _humanize_age(self.age_sec, _lang())
 
     @property
@@ -730,7 +757,7 @@ def _classify(
     handled by the caller (filtered out before this is reached) so they
     don't carry over a new idle cycle.
     """
-    if hook_state in ("waiting", "working"):
+    if hook_state in ACTIVE_HOOK_STATES:
         return RenderGroup.ACTIVE
     ack_ts = effective_click_ts if effective_click_ts else stop_ts + CONFIG.fresh_sec
     if now < ack_ts:
@@ -838,8 +865,18 @@ def _parse_sidecar(raw: str) -> dict[str, HookSnapshot]:
             ts = int(ts_raw)
         except ValueError:
             continue
+        state_since = ts
+        if len(parts) >= 6:
+            try:
+                state_since = int(parts[5])
+            except ValueError:
+                pass
         snapshots[sid] = HookSnapshot(
-            state=state, last_event_ts=ts, last_event_kind=kind, cwd=cwd
+            state=state,
+            last_event_ts=ts,
+            last_event_kind=kind,
+            cwd=cwd,
+            state_since=state_since,
         )
     return snapshots
 
@@ -1316,10 +1353,12 @@ def build_session(
         last_ts = snapshot.last_event_ts
         hook_state = snapshot.state
         sidecar_cwd = snapshot.cwd
+        state_since = snapshot.state_since
     else:
         last_ts = jsonl_mtime
         hook_state = "idle"
         sidecar_cwd = ""
+        state_since = jsonl_mtime
 
     # Liveness signal: Claude Code writes the transcript continuously while
     # running (assistant streams, tool results, …). If the process is killed,
@@ -1343,7 +1382,7 @@ def build_session(
     # an acknowledged session's "Xm ago" reads as time-since-click, which
     # is what the user actually cares about.
     interaction_ts = max(last_ts, effective_click_ts)
-    if hook_state in ("working", "waiting"):
+    if hook_state in ACTIVE_HOOK_STATES:
         # While the session is in flight the JSONL mtime is the freshest
         # signal — it ticks with every streamed token.
         interaction_ts = max(interaction_ts, jsonl_mtime)
@@ -1353,6 +1392,10 @@ def build_session(
     cwd = sidecar_cwd or meta.cwd
     branch = current_git_branch(cwd) or fallback_git_branch_from_jsonl(jsonl)
     context_used = last_usage_tokens(jsonl)
+
+    state_duration_sec = (
+        max(0, now - state_since) if hook_state in ACTIVE_HOOK_STATES else 0
+    )
 
     return Session(
         id=jsonl.stem,
@@ -1366,6 +1409,7 @@ def build_session(
         cwd=cwd,
         entrypoint=meta.entrypoint,
         context_used=context_used,
+        state_duration_sec=state_duration_sec,
     )
 
 

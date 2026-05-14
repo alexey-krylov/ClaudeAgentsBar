@@ -19,9 +19,6 @@
 
   "title.no_title": "（無標題）",
 
-  "right.working": "執行中",
-  "right.waiting": "需要您",
-
   "error.plugin": "外掛錯誤：{exc}",
 
   "age.seconds": "{n} 秒",

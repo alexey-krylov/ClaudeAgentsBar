@@ -18,9 +18,6 @@
 
   "title.no_title": "(无标题)",
 
-  "right.working": "工作中",
-  "right.waiting": "需要你",
-
   "error.plugin": "插件错误：{exc}",
 
   "age.seconds": "{n} 秒",

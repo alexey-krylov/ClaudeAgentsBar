@@ -18,9 +18,6 @@
 
   "title.no_title": "(senza titolo)",
 
-  "right.working": "in corso",
-  "right.waiting": "serve te",
-
   "error.plugin": "Errore del plug-in: {exc}",
 
   "age.seconds": "{n}s",

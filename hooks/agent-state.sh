@@ -24,7 +24,13 @@
 # this script just stores whatever it was told.
 #
 # TSV schema (tab-separated, one line per session, latest event wins):
-#     <session_id> <state> <last_event_ts> <last_event_kind> <cwd>
+#     <session_id> <state> <last_event_ts> <last_event_kind> <cwd> <state_since>
+#
+# ``state_since`` is the Unix time at which the session entered its current
+# ``state`` — preserved across consecutive events of the same state (so each
+# PreToolUse/PostToolUse during one "working" cycle keeps the original start
+# time), and bumped to ``last_event_ts`` on a state transition. Old 5‑column
+# rows are still accepted on read; the next event upgrades them in place.
 
 set -u
 
@@ -55,7 +61,6 @@ IFS=$'\t' read -r SID CWD KIND < <(
 [ -z "${SID:-}" ] && exit 0
 
 TS="$(date +%s)"
-LINE="${SID}	${STATE_NEW}	${TS}	${KIND}	${CWD}"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 touch "$STATE_FILE"
@@ -84,12 +89,29 @@ acquire_lock
 
 # Replace this session's row (or append it if absent) and atomically swap the
 # file into place. ``awk`` is fast enough for the typical few-dozen-row TSV.
+# The ``state_since`` column is preserved when the new event continues the
+# previous state, and bumped to ``ts`` on a transition (or when the old row
+# is a legacy 5-column entry that doesn't carry a since-stamp).
 TMP="${STATE_FILE}.$$"
-/usr/bin/awk -v sid="$SID" -v new="$LINE" '
+/usr/bin/awk \
+    -v sid="$SID" \
+    -v new_state="$STATE_NEW" \
+    -v new_kind="$KIND" \
+    -v new_cwd="$CWD" \
+    -v ts="$TS" '
     BEGIN              { FS = OFS = "\t"; written = 0 }
-    $1 == sid          { if (!written) { print new; written = 1 } ; next }
+    $1 == sid {
+        if (!written) {
+            since = ($2 == new_state && NF >= 6 && $6 ~ /^[0-9]+$/) ? $6 : ts
+            print sid, new_state, ts, new_kind, new_cwd, since
+            written = 1
+        }
+        next
+    }
                        { print }
-    END                { if (!written) print new }
+    END {
+        if (!written) print sid, new_state, ts, new_kind, new_cwd, ts
+    }
 ' "$STATE_FILE" > "$TMP" && mv "$TMP" "$STATE_FILE"
 
 exit 0

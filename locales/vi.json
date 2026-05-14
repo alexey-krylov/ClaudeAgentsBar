@@ -18,9 +18,6 @@
 
   "title.no_title": "(không có tiêu đề)",
 
-  "right.working": "đang chạy",
-  "right.waiting": "cần bạn",
-
   "error.plugin": "Lỗi plugin: {exc}",
 
   "age.seconds": "{n}s",

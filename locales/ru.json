@@ -18,9 +18,6 @@
 
   "title.no_title": "(без названия)",
 
-  "right.working": "работает",
-  "right.waiting": "нужна реакция",
-
   "error.plugin": "Ошибка плагина: {exc}",
 
   "age.seconds": "{n}с",
