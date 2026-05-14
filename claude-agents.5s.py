@@ -109,15 +109,6 @@ _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 #: Code appends events sequentially.
 JSONL_TAIL_BYTES = 64 * 1024
 
-#: Assumed context-window size for the per-session "% left" submenu line.
-#: Matches the current Claude 4.x default; we don't read it from each event's
-#: ``model`` field because the indicator is meant as an at-a-glance
-#: approximation, not a precise budgeting tool. The displayed value will
-#: drift from Claude Code's own "context left" readout by a few percent
-#: because we don't subtract the system-prompt and tool-definition reservation
-#: that Claude Code accounts for internally — acceptable for a menu-bar widget.
-CONTEXT_WINDOW_TOKENS = 200_000
-
 #: Upper bound for the per-tick scan that hunts for ``ai-title``. AI titles
 #: are emitted within the first few hundred lines (right after the first turn),
 #: so capping the scan keeps us cheap even when a transcript has megabytes of
@@ -234,6 +225,16 @@ class Config:
         roughly 30 px — meant for notched MacBooks where every menu-bar
         slot counts. Default ``False``. See ADR-0010 for the rationale
         behind ANSI bullets vs the alternatives.
+    ``context_window_tokens``
+        Total size of the model's context window in tokens, used as the
+        denominator for the per-session ``{N}% — {used}k/200k`` indicator
+        in the submenu. Default ``200_000`` — matches the Claude 4.x
+        family. Override when running a model with a non-standard window
+        (e.g. Sonnet's 1M-token beta: set this to ``1_000_000``). We do
+        not auto-detect from the transcript because the SDK response
+        carries the model name but not the context window, and no
+        publicly stable Anthropic API surfaces it either; see ADR-0011
+        for the alternatives considered.
     """
 
     window_sec: int = 3 * 3600
@@ -248,6 +249,7 @@ class Config:
     editor_url_scheme: str = "vscode://"
     language: str = ""
     compact: bool = False
+    context_window_tokens: int = 200_000
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -298,6 +300,14 @@ class Config:
         take("menubar_icon_fallback", "menubar_icon_fallback", str)
         take("editor_url_scheme", "editor_url_scheme", str)
         take("language", "language", str)
+        # Positive-int constraint: 0 or negative would make _format_context_left
+        # return an empty string and the row would vanish silently. Better to
+        # warn loudly and keep the 200K default.
+        def _require_positive(n: int) -> int:
+            if n <= 0:
+                raise ValueError("must be > 0")
+            return n
+        take("context_window_tokens", "context_window_tokens", int, _require_positive)
         # JSON booleans are native Python bool after json.loads; bool("false")
         # == True so we can't use the generic take() helper here.
         if "compact" in data and isinstance(data["compact"], bool):
@@ -629,18 +639,21 @@ def _humanize_age(seconds: int, lang: str = "en") -> str:
     return _t_for("age.hours_minutes", lang, h=hours, m=minutes)
 
 
-def _format_context_left(used: int, total: int = CONTEXT_WINDOW_TOKENS) -> str:
+def _format_context_left(used: int, total: int) -> str:
     """Render the per-session context-window indicator: ``"30% — 140k/200k"``.
 
     ``used`` is the sum of ``input_tokens + cache_creation_input_tokens +
     cache_read_input_tokens`` from the most recent assistant ``usage`` block.
-    Percent is clamped to ``[0, 100]`` so a session that has exceeded the
-    nominal window (still possible during the brief window before Claude
-    Code auto-compacts) reads as ``0%`` rather than a confusing negative.
+    ``total`` is :attr:`Config.context_window_tokens` — surfaced as a
+    parameter rather than a module-level constant so tests can pin it
+    explicitly. Percent is clamped to ``[0, 100]`` so a session that has
+    exceeded the nominal window (still possible in the brief window before
+    Claude Code auto-compacts) reads as ``0%`` rather than a confusing
+    negative.
 
     Number scale is rounded to the nearest thousand for a stable two-three
     digit width — the menu submenu is monospace and we don't want this row
-    jitter every tick as token counts tick up.
+    to jitter every tick as token counts tick up.
     """
     if total <= 0:
         return ""
@@ -1582,10 +1595,9 @@ def _print_session_row(session: Session) -> None:
             "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
         )
     if session.context_used is not None:
-        print(
-            f"--{_format_context_left(session.context_used)} | "
-            "font=Menlo color=#999999 sfimage=gauge.medium"
-        )
+        label = _format_context_left(session.context_used, CONFIG.context_window_tokens)
+        if label:
+            print(f"--{label} | font=Menlo color=#999999 sfimage=gauge.medium")
 
 
 def _swiftbar_quote(value: str) -> str:

@@ -93,15 +93,20 @@ Hover over a row to reveal the submenu (▸ on the right):
 - 📁 **`{project-name}`** — click to reveal the session's `cwd` in Finder.
 - ⎇ **`{git branch}`** — read-only, the current branch of `<cwd>/.git/HEAD`
   (not the stale value from session start).
-- ⏱ **`{N}% — {used}k/200k`** — context-window indicator. Percent is how
-  much room is left before the model auto-compacts; the absolute numbers
-  show consumed-vs-total. Computed from the freshest `usage` block in the
-  JSONL (`input_tokens + cache_creation_input_tokens +
+- ⏱ **`{N}% — {used}k/{total}k`** — context-window indicator. Percent
+  is how much room is left before the model auto-compacts; absolute
+  numbers show consumed-vs-total. Computed from the freshest `usage`
+  block in the JSONL (`input_tokens + cache_creation_input_tokens +
   cache_read_input_tokens`), so it stays in lock-step with what Claude
-  Code itself reports. Hidden on sessions too young to have an assistant
-  reply yet. Window is assumed to be 200K — close enough to Claude 4.x's
-  default that the at-a-glance reading matches reality within a few
-  percent.
+  Code itself reports. Hidden on sessions too young to have an
+  assistant reply yet. The denominator defaults to **200K** (Claude
+  4.x family); override via `"context_window_tokens"` in `config.json`
+  if you're running Sonnet's 1M-token beta or any other non-default
+  window. The Anthropic API doesn't surface the window size and the
+  transcript doesn't record which beta flags were active, so this
+  stays a manual setting — see
+  [ADR-0011](./docs/adr/0011-configurable-context-window.md) for the
+  alternatives we considered.
 
 ### Tools submenu (in the footer)
 

@@ -669,6 +669,30 @@ class TestConfigLoad(unittest.TestCase):
                 f"non-bool compact={bogus!r} must not enable compact mode",
             )
 
+    def test_context_window_tokens_default(self):
+        # Default tracks the Claude 4.x family window.
+        self.assertEqual(plugin.Config().context_window_tokens, 200_000)
+
+    def test_context_window_tokens_override(self):
+        config = plugin.Config._from_mapping({"context_window_tokens": 1_000_000})
+        self.assertEqual(config.context_window_tokens, 1_000_000)
+
+    def test_context_window_tokens_rejects_non_positive(self):
+        # ``_format_context_left`` returns an empty string for total<=0,
+        # which would silently hide the row. Loader must reject and keep
+        # the default loud-and-visible.
+        for bogus in (0, -1, -200_000):
+            config = plugin.Config._from_mapping({"context_window_tokens": bogus})
+            self.assertEqual(
+                config.context_window_tokens, 200_000,
+                f"non-positive context_window_tokens={bogus!r} must fall back",
+            )
+
+    def test_context_window_tokens_rejects_garbage(self):
+        # Non-numeric strings can't be coerced to int → fall back to default.
+        config = plugin.Config._from_mapping({"context_window_tokens": "nope"})
+        self.assertEqual(config.context_window_tokens, 200_000)
+
 
 # --------------------------------------------------------------------------- #
 # Menubar icon resolution                                                      #

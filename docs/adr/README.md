@@ -23,6 +23,7 @@ prior one.
 | [0008](./0008-menubar-template-image-with-multirep-tiff.md) | Menu-bar icon: template image, resized via `sips`, stitched as multi-rep TIFF | Accepted |
 | [0009](./0009-json-per-locale-i18n.md) | JSON-per-locale i18n, stdlib only | Accepted |
 | [0010](./0010-compact-menubar-ansi-bullets.md) | Compact menu-bar mode: ANSI-coloured `●` bullets | Accepted |
+| [0011](./0011-configurable-context-window.md) | Context-window total comes from config, not auto-detection | Accepted |
 
 ## Workflow
 
