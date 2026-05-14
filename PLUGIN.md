@@ -190,6 +190,15 @@ that order, see `_MENUBAR_COUNTER_ORDER`). STALE is intentionally
 omitted: it would be the largest number and would drown out the urgent
 buckets.
 
+`_print_menubar` has two branches keyed on `CONFIG.compact`:
+
+* **default** — `[icon] 🟡N 🟢M 🔵K`, dimmed when every bucket is zero.
+* **compact** — `●N ●M ●K`, with each `●` ANSI-coloured via
+  `_COMPACT_ANSI`. The icon is dropped entirely. When everything is
+  zero a single grey `●` keeps the plugin visible on the bar. See
+  [ADR-0010](./docs/adr/0010-compact-menubar-ansi-bullets.md) for why
+  ANSI bullets won over SF Symbols / narrower glyphs / numbers-only.
+
 ### Adding a new state
 
 1. Add an enum member to `RenderGroup` with a 4-tuple
