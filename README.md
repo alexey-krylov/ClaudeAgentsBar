@@ -93,6 +93,15 @@ Hover over a row to reveal the submenu (▸ on the right):
 - 📁 **`{project-name}`** — click to reveal the session's `cwd` in Finder.
 - ⎇ **`{git branch}`** — read-only, the current branch of `<cwd>/.git/HEAD`
   (not the stale value from session start).
+- ⏱ **`{N}% — {used}k/200k`** — context-window indicator. Percent is how
+  much room is left before the model auto-compacts; the absolute numbers
+  show consumed-vs-total. Computed from the freshest `usage` block in the
+  JSONL (`input_tokens + cache_creation_input_tokens +
+  cache_read_input_tokens`), so it stays in lock-step with what Claude
+  Code itself reports. Hidden on sessions too young to have an assistant
+  reply yet. Window is assumed to be 200K — close enough to Claude 4.x's
+  default that the at-a-glance reading matches reality within a few
+  percent.
 
 ### Tools submenu (in the footer)
 

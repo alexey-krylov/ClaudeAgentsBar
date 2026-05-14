@@ -77,6 +77,79 @@ class TestHumanizeAge(unittest.TestCase):
         self.assertEqual(plugin._humanize_age(7200 + 30), "2h")
 
 
+class TestFormatContextLeft(unittest.TestCase):
+    def test_empty_context_reads_as_full_window(self):
+        # Fresh session: nothing consumed → 100% left.
+        self.assertEqual(
+            plugin._format_context_left(0, total=200_000),
+            "100% — 0k/200k",
+        )
+
+    def test_half_full(self):
+        self.assertEqual(
+            plugin._format_context_left(100_000, total=200_000),
+            "50% — 100k/200k",
+        )
+
+    def test_typical_live_session(self):
+        # Real-world numbers pulled from a transcript on disk: ~27K read from
+        # cache + tiny input/creation deltas.
+        used = 1 + 257 + 27_036
+        self.assertEqual(
+            plugin._format_context_left(used, total=200_000),
+            "86% — 27k/200k",
+        )
+
+    def test_over_budget_clamps_to_zero(self):
+        # A transcript can briefly exceed the nominal window between the last
+        # turn and the auto-compact; "0%" reads better than a negative number.
+        self.assertEqual(
+            plugin._format_context_left(250_000, total=200_000),
+            "0% — 250k/200k",
+        )
+
+    def test_invalid_total_yields_empty(self):
+        # Defensive: a misconfigured/zero total shouldn't crash with ZeroDiv.
+        self.assertEqual(plugin._format_context_left(1000, total=0), "")
+
+
+class TestLastUsageTokens(unittest.TestCase):
+    """Parse the last ``"usage":{…}`` block out of a JSONL transcript tail."""
+
+    def _write(self, body: str) -> Path:
+        # tmp file lives in the test's tempdir; cleaned up via addCleanup.
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return path
+
+    def test_returns_last_match_when_multiple_present(self):
+        # Older usage block (low numbers) followed by the freshest one — the
+        # parser must surface the most recent because that's the live size.
+        body = (
+            '{"type":"assistant","message":{"usage":{"input_tokens":1,'
+            '"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,'
+            '"output_tokens":50}}}\n'
+            '{"type":"assistant","message":{"usage":{"input_tokens":2,'
+            '"cache_creation_input_tokens":300,"cache_read_input_tokens":27000,'
+            '"output_tokens":350,"server_tool_use":{"web_search_requests":0}}}}\n'
+        )
+        self.assertEqual(plugin.last_usage_tokens(self._write(body)), 27_302)
+
+    def test_returns_none_when_no_usage_blocks(self):
+        body = '{"type":"user","message":{"content":"hi"}}\n'
+        self.assertIsNone(plugin.last_usage_tokens(self._write(body)))
+
+    def test_returns_none_for_empty_file(self):
+        self.assertIsNone(plugin.last_usage_tokens(self._write("")))
+
+    def test_returns_none_for_missing_file(self):
+        self.assertIsNone(plugin.last_usage_tokens(Path("/nonexistent/path.jsonl")))
+
+
 # --------------------------------------------------------------------------- #
 # State classification                                                         #
 # --------------------------------------------------------------------------- #
