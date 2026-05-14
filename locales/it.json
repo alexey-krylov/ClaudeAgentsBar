@@ -10,7 +10,9 @@
   "menu.ack_all": "Conferma tutto",
   "menu.forget_all": "Dimentica tutte le sessioni",
   "menu.suggest": "Suggerisci miglioramento…",
-  "menu.delete_session": "Elimina sessione…",
+  "menu.config": "Configurazione…",
+  "menu.forget_session": "Dimentica",
+  "menu.delete_session": "Elimina…",
   "menu.mark_read": "Segna come letto",
   "menu.no_sessions": "Nessuna sessione negli ultimi {duration}",
 
@@ -26,8 +28,10 @@
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
 
-  "dialog.delete.title": "Elimina sessione",
-  "dialog.delete.body": "Eliminare questa sessione Claude Code?\n\n{title}\n\nQuesta operazione rimuove la trascrizione e i risultati degli strumenti da ~/.claude/projects/. La barra laterale di VSCode dovrebbe aggiornarsi automaticamente.",
+  "dialog.delete.title": "Eliminare questa sessione Claude Code?",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nLa barra laterale di VSCode dovrebbe aggiornarsi automaticamente.",
+  "dialog.delete.label.transcript": "Trascrizione:",
+  "dialog.delete.label.artifacts": "Risultati degli strumenti:",
   "dialog.delete.confirm": "Elimina",
   "dialog.delete.cancel": "Annulla",
   "dialog.not_found.title": "Sessione non trovata",

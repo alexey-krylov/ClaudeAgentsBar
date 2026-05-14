@@ -89,13 +89,26 @@ Hover over a row to reveal the submenu (▸ on the right):
 - ✅ **Mark as read** *(🟢 fresh rows only)* — records a synthetic click
   on this one session so it flips to 🔵 on the next tick, without
   opening it in the editor.
-- 🗑 **Delete session…** — confirms with a native dialog, then deletes the
-  JSONL transcript, the tool-results directory, and the row from the
-  state TSV. VSCode's Claude Code sidebar refreshes via its own fs
-  watcher.
-- 📁 **`{project-name}`** — click to reveal the session's `cwd` in Finder.
+- 🟠 **Forget** — hides this row from the menu without touching anything
+  on disk. Same cutoff semantics as *Forget all sessions* but scoped to a
+  single session: a fresh hook event or click pushes the session's
+  `last_event_ts` past the recorded cutoff and brings the row back.
+  Use this when you want a row out of your eyeline but don't want to
+  lose the transcript — and to bring the menu in sync after VSCode's own
+  *Delete* (which also just hides, see below).
+- 🗑 **Delete…** — confirms with a native dialog, then **physically
+  deletes** the JSONL transcript, the tool-results directory, and the row
+  from the state TSV. VSCode's Claude Code sidebar refreshes via its own
+  fs watcher. Note: *Delete* inside the VSCode extension only hides the
+  session from the VSCode sidebar (it writes the id to its `hiddenSessionIds`
+  globalState) — the transcript stays on disk, which is why the row keeps
+  showing up here until you use **Forget** or **Delete…** from this menu.
 - ⎇ **`{git branch}`** — read-only, the current branch of `<cwd>/.git/HEAD`
-  (not the stale value from session start).
+  (not the stale value from session start). The full project `cwd` is
+  attached as a hover tooltip, so the path is one second of dwell time
+  away without claiming a permanent line in the submenu. When the cwd
+  isn't a git repository at all, this line falls back to showing the
+  cwd itself (with the folder icon) so the path stays visible.
 - ⏱ **`{N}% — {used}k/{total}k`** — context-window indicator. Percent
   is how much room is left before the model auto-compacts; absolute
   numbers show consumed-vs-total. Computed from the freshest `usage`
@@ -114,7 +127,8 @@ Hover over a row to reveal the submenu (▸ on the right):
 ### Tools submenu (in the footer)
 
 Below the session list, between *Refresh* and the SwiftBar plugin menu,
-sits a **Tools** submenu with two bulk actions:
+sits a **Tools** submenu with two bulk actions, followed by an action
+group for feedback and configuration:
 
 - 🔵 **Acknowledge all** — flips every currently-🟢 row to 🔵 in one shot
   (records a synthetic click for each). Useful when you've already
@@ -123,6 +137,15 @@ sits a **Tools** submenu with two bulk actions:
   and writes a dismissal cutoff so anything that exists only as a JSONL
   on disk is hidden too. Live sessions reappear on their next hook
   event; nothing under `~/.claude/projects/` is touched.
+- 💡 **Suggest improvement…** — opens the issue tracker on GitHub in
+  your browser.
+- ⚙️ **Configuration…** — opens `config.json` in the system default
+  text editor (`open -t`). On first click the bundled
+  `config.example.json` is copied to the resolved location so you land
+  in a documented starter file; subsequent clicks just open whatever's
+  there. Same resolution rules as the plugin (`$CLAUDE_AGENTS_BAR_CONFIG`
+  → `$XDG_CONFIG_HOME/claude-agents-bar/config.json` →
+  `~/.config/claude-agents-bar/config.json`).
 
 ## How it works
 
@@ -132,9 +155,11 @@ sits a **Tools** submenu with two bulk actions:
 | `hooks/agent-state.sh` | Bash script registered as a Claude Code hook on `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`. On each event, atomically updates one row in `~/.claude/agent-state.tsv`. |
 | `bin/open-session.sh` | Row click: records the click into `agent-state.clicks`, then opens the VSCode deeplink. Lets the plugin tell 🟢 fresh from 🔵 acknowledged. |
 | `bin/ack-session.sh` | *Mark as read* submenu action on a 🟢 row: records the click without opening the editor. |
+| `bin/forget-session.sh` | Per-row *Forget*: writes a `{sid → forget_ts}` entry into `agent-state.forget`. The plugin then hides that row until a fresh event pushes its `last_event_ts` past the cutoff. |
 | `bin/delete-session.sh` | Confirm dialog + safe deletion of a session's files and sidecar row. |
 | `bin/ack-fresh.sh` | *Tools → Acknowledge all*: delegates to `claude-agents.5s.py --ack-fresh` to bulk-promote every 🟢 row to 🔵. |
 | `bin/forget-sessions.sh` | *Tools → Forget all sessions*: wipes the state TSV and the clicks TSV under their mutexes and writes a cutoff timestamp into `agent-state.dismiss`. |
+| `bin/open-config.sh` | *Tools → Configuration…*: bootstraps `config.json` from the bundled example on first run, then opens it via `open -t` (system default text editor). |
 | `settings-hooks.json` | Fragment merged into `~/.claude/settings.json` by the installer. |
 | `install.sh` / `uninstall.sh` | Manage symlinks + the `settings.json` merge. |
 
@@ -205,9 +230,9 @@ bash uninstall.sh
 ```
 
 Removes both symlinks and strips our hook entries from `settings.json`
-(a fresh timestamped backup is taken first). The three sidecar files
-(`agent-state.tsv`, `agent-state.clicks`, `agent-state.dismiss`) are
-left behind — delete them manually if you want.
+(a fresh timestamped backup is taken first). The four sidecar files
+(`agent-state.tsv`, `agent-state.clicks`, `agent-state.dismiss`,
+`agent-state.forget`) are left behind — delete them manually if you want.
 
 ## Files
 
@@ -219,9 +244,11 @@ ClaudeAgentsBar/
 ├── bin/
 │   ├── open-session.sh      ← row click: record click + open in VSCode
 │   ├── ack-session.sh       ← submenu action on 🟢 rows: mark one as read
+│   ├── forget-session.sh    ← submenu action: hide one row (cutoff-based)
 │   ├── delete-session.sh    ← submenu action: confirm + delete a session
 │   ├── ack-fresh.sh         ← Tools: bulk-acknowledge every 🟢 session
-│   └── forget-sessions.sh   ← Tools: wipe sidecars, set dismiss cutoff
+│   ├── forget-sessions.sh   ← Tools: wipe sidecars, set dismiss cutoff
+│   └── open-config.sh       ← Tools: seed + open config.json in $EDITOR
 ├── tests/                   ← unittest suite (stdlib only)
 ├── docs/adr/                ← architecture decision records
 ├── config.example.json      ← copy to ~/.config/claude-agents-bar/config.json
@@ -241,6 +268,7 @@ scripts above:
 | `agent-state.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per session: latest hook state + cwd. |
 | `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
 | `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
+| `agent-state.forget` | `bin/forget-session.sh`, plugin (gc) | `{session_id: forget_ts}` — per-row cutoff. Same semantics as `agent-state.dismiss`, just scoped to one session at a time. |
 
 ## Configuration
 
@@ -260,6 +288,10 @@ mkdir -p ~/.config/claude-agents-bar
 cp config.example.json ~/.config/claude-agents-bar/config.json
 $EDITOR ~/.config/claude-agents-bar/config.json
 ```
+
+…or just click **Tools → Configuration…** in the menu — the plugin
+seeds the file from `config.example.json` on first click and hands it
+to your default text editor.
 
 SwiftBar will pick up the new values on the next 5 s tick — no install
 or restart needed.

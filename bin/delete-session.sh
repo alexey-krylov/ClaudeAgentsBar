@@ -34,12 +34,15 @@ eval "$(/usr/bin/python3 "$PLUGIN" --print-strings 2>/dev/null || true)"
 : "${MSG_DIALOG_NO_SID_BODY:=No session id passed to delete-session.sh.}"
 : "${MSG_DIALOG_NOT_FOUND_TITLE:=Session not found}"
 : "${MSG_DIALOG_NOT_FOUND_BODY:=No transcript for session {sid}}"
-: "${MSG_DIALOG_DELETE_TITLE:=Delete session}"
-: "${MSG_DIALOG_DELETE_BODY:=Delete this Claude Code session?
+: "${MSG_DIALOG_DELETE_TITLE:=Delete this Claude Code session?}"
+: "${MSG_DIALOG_DELETE_BODY:={title}
 
-{title}
+{transcript_label}
+  {transcript_path}{artifacts_section}
 
-This removes the transcript and tool-results from ~/.claude/projects/. VSCode's sidebar should refresh automatically.}"
+VSCode's sidebar should refresh automatically.}"
+: "${MSG_DIALOG_DELETE_LABEL_TRANSCRIPT:=Transcript:}"
+: "${MSG_DIALOG_DELETE_LABEL_ARTIFACTS:=Tool artifacts:}"
 : "${MSG_DIALOG_DELETE_CONFIRM:=Delete}"
 : "${MSG_DIALOG_DELETE_CANCEL:=Cancel}"
 
@@ -95,24 +98,54 @@ PYEOF
 )"
 [ -z "$TITLE" ] && TITLE="$SID"
 
-# Splice the AI-generated session title into the {title} placeholder of the
-# localized dialog body. Plain string substitution (no AppleScript escaping
-# needed because $TITLE comes from the transcript, not user-controlled
-# AppleScript syntax).
-DIALOG_BODY="${MSG_DIALOG_DELETE_BODY//\{title\}/${TITLE}}"
+# Collapse the user's home prefix to ``~`` so the dialog stays readable
+# regardless of how long the actual /Users/<name>/… prefix is. Done via
+# a POSIX-safe ``case`` rather than ``${var/#…}`` so we don't depend on
+# bash's pattern substitution quirks with slashes inside $HOME.
+TRANSCRIPT_PATH="$JSONL_PATH"
+case "$JSONL_PATH" in
+    "$HOME"/*) TRANSCRIPT_PATH="~${JSONL_PATH#$HOME}" ;;
+esac
 
-# Native macOS confirm dialog. ``display dialog`` exits non-zero when the
-# user cancels, which under ``set -e`` would abort the script before we
-# can inspect the answer — wrap in ``|| true`` so we fall through and
-# decide based on the returned string. We pin the answer-matching token to
-# the localized confirm label so the case statement below stays stable.
+# The tool-results subdir exists only if the session actually invoked any
+# tools — sessions that never did would otherwise show an empty-looking
+# section. Build the artifacts block only when the dir is on disk; the
+# locale body inlines this via the {artifacts_section} placeholder, which
+# expands to "" when no artifacts are present.
+ARTIFACTS_SECTION=""
+if [ -d "$TOOL_RESULTS_DIR" ]; then
+    ARTIFACTS_PATH="${TOOL_RESULTS_DIR}/"
+    case "$TOOL_RESULTS_DIR" in
+        "$HOME"/*) ARTIFACTS_PATH="~${TOOL_RESULTS_DIR#$HOME}/" ;;
+    esac
+    ARTIFACTS_SECTION=$'\n\n'"${MSG_DIALOG_DELETE_LABEL_ARTIFACTS}"$'\n  '"${ARTIFACTS_PATH}"
+fi
+
+# Splice the AI-generated session title and on-disk paths into the
+# localized dialog body. Plain string substitution (no AppleScript
+# escaping needed because $TITLE comes from the transcript and the paths
+# are filesystem-derived, not user-controlled AppleScript syntax).
+DIALOG_BODY="$MSG_DIALOG_DELETE_BODY"
+DIALOG_BODY="${DIALOG_BODY//\{title\}/${TITLE}}"
+DIALOG_BODY="${DIALOG_BODY//\{transcript_label\}/${MSG_DIALOG_DELETE_LABEL_TRANSCRIPT}}"
+DIALOG_BODY="${DIALOG_BODY//\{transcript_path\}/${TRANSCRIPT_PATH}}"
+DIALOG_BODY="${DIALOG_BODY//\{artifacts_section\}/${ARTIFACTS_SECTION}}"
+
+# Native macOS confirm dialog. ``display alert`` (instead of ``display
+# dialog``) gives us a bold headline + smaller message body — so the
+# question stands out from the file paths underneath. AppleScript raises
+# error -128 on cancel, which under ``set -e`` would abort the script
+# before we can inspect the answer — wrap in ``|| true`` so we fall
+# through and decide based on the returned string. We pin the answer-
+# matching token to the localized confirm label so the case statement
+# below stays stable.
 CHOICE="$(/usr/bin/osascript \
-    -e "display dialog \"${DIALOG_BODY}\" \
-        with title \"${MSG_DIALOG_DELETE_TITLE}\" \
+    -e "display alert \"${MSG_DIALOG_DELETE_TITLE}\" \
+        message \"${DIALOG_BODY}\" \
+        as warning \
         buttons {\"${MSG_DIALOG_DELETE_CANCEL}\", \"${MSG_DIALOG_DELETE_CONFIRM}\"} \
         default button \"${MSG_DIALOG_DELETE_CANCEL}\" \
-        cancel button \"${MSG_DIALOG_DELETE_CANCEL}\" \
-        with icon caution" \
+        cancel button \"${MSG_DIALOG_DELETE_CANCEL}\"" \
     || true)"
 
 case "$CHOICE" in

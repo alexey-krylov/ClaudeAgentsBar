@@ -7,6 +7,76 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Delete-session confirm dialog shows the actual paths
+
+The per-row *Delete session…* confirmation has been reworked from
+`display dialog` to `display alert`, so the question itself now reads
+as a bold headline above a separate detail block. The detail block
+lists the exact filesystem paths that are about to be removed — the
+transcript `.jsonl` and, when the session ever invoked any tools, the
+tool-results directory — each under a localized label (`Транскрипт:`
+/ `Transcript:` / …, `Результаты инструментов:` / `Tool artifacts:`
+/ …). Paths are shown with `$HOME` collapsed to `~` so they stay
+readable inside the alert's narrow text column.
+
+Two new locale keys (`dialog.delete.label.transcript`,
+`dialog.delete.label.artifacts`) and two new body placeholders
+(`{transcript_path}`, `{artifacts_section}`) added to all six locales;
+`dialog.delete.title` was repurposed from a barely-visible window title
+into the alert's bold headline.
+
+### Per-row *Forget* action and submenu cleanup
+
+Each session row's submenu gained a 🟠 **Forget** entry, sitting above
+**Delete…** (eraser SF symbol, orange — same visual vocabulary as the
+existing *Tools → Forget all sessions*). Clicking it records a
+`{session_id → forget_ts}` row in a new sidecar `~/.claude/agent-state.forget`,
+and the plugin then filters that session out until a fresh hook event or
+click pushes its `last_event_ts` past the cutoff — same cutoff semantics
+as the global dismiss, just per-row. A fresh event re-surfaces the row,
+which is the intended escape hatch.
+
+Motivation: the VSCode Claude Code extension's own *Delete* doesn't
+remove the transcript — it only stores the session id under
+`hiddenSessionIds` in its globalState, so the row keeps showing up here.
+*Forget* is the row-level twin of *Forget all sessions* for that case;
+the existing *Delete…* action (which physically wipes the transcript and
+the tool-results dir) is unchanged in behaviour.
+
+Same pass tightened the submenu layout:
+
+* **Delete session…** is now just **Delete…** in every locale — the row
+  context already conveys what's being deleted, and the shorter label
+  pairs cleanly with the new **Forget** entry above it.
+* The dedicated **📁 `{project-name}` → reveal in Finder** line is gone.
+  The cwd was redundant with the project name on the main row, and the
+  reveal-in-Finder action is a one-line shortcut for a flow that's
+  rarely the goal. The full cwd is now exposed as a hover **tooltip** on
+  the git-branch line instead. When the cwd isn't a git repository
+  (`session.git_branch` empty), the branch line falls back to printing
+  the cwd itself with the folder icon, so the path stays visible in
+  every case.
+
+`menu.forget_session` label added to all six locale tables (en / ru / de
+/ fr / it / zh) and `menu.delete_session` retranslated as the shorter
+"Delete…" / "Удалить…" / … in all six. New `bin/forget-session.sh`
+carries the awk-based record-or-replace write under the same mkdir
+mutex used by the other sidecars. Six new tests in `TestForgetSidecar`;
+total is now 90.
+
+### Configuration shortcut in Tools
+
+A new *Tools → Configuration…* entry opens `config.json` in the system
+default text editor (`open -t`). On the very first click the bundled
+`config.example.json` is copied into place — so the user lands in a
+documented starter file instead of getting "file not found". The path
+is resolved Python-side via the existing `_config_path()` so the
+lookup chain stays defined once. Rationale and rejected alternatives
+in [ADR-0012](./docs/adr/0012-open-config-from-menu.md).
+
+`menu.config` label added to all six locale tables (en / ru / de / fr /
+it / zh). New `bin/open-config.sh` carries the seed + `open -t` logic.
+
 ### Per-session context-window indicator
 
 Each row's hover submenu gained a fourth line under the git branch:

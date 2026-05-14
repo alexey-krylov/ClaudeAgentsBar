@@ -10,7 +10,9 @@
   "menu.ack_all": "全部确认",
   "menu.forget_all": "忘记所有会话",
   "menu.suggest": "建议改进…",
-  "menu.delete_session": "删除会话…",
+  "menu.config": "配置…",
+  "menu.forget_session": "忽略",
+  "menu.delete_session": "删除…",
   "menu.mark_read": "标记为已读",
   "menu.no_sessions": "最近 {duration} 内没有会话",
 
@@ -26,8 +28,10 @@
   "age.hours": "{n} 小时",
   "age.hours_minutes": "{h} 小时 {m} 分",
 
-  "dialog.delete.title": "删除会话",
-  "dialog.delete.body": "删除此 Claude Code 会话？\n\n{title}\n\n这将从 ~/.claude/projects/ 中移除会话转录和工具结果。VSCode 侧栏会自动刷新。",
+  "dialog.delete.title": "删除此 Claude Code 会话？",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nVSCode 侧栏会自动刷新。",
+  "dialog.delete.label.transcript": "转录文件：",
+  "dialog.delete.label.artifacts": "工具结果：",
   "dialog.delete.confirm": "删除",
   "dialog.delete.cancel": "取消",
   "dialog.not_found.title": "未找到会话",

@@ -10,7 +10,9 @@
   "menu.ack_all": "Alle bestätigen",
   "menu.forget_all": "Alle Sitzungen vergessen",
   "menu.suggest": "Verbesserung vorschlagen…",
-  "menu.delete_session": "Sitzung löschen…",
+  "menu.config": "Konfiguration…",
+  "menu.forget_session": "Vergessen",
+  "menu.delete_session": "Löschen…",
   "menu.mark_read": "Als gelesen markieren",
   "menu.no_sessions": "Keine Sitzungen in den letzten {duration}",
 
@@ -26,8 +28,10 @@
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
 
-  "dialog.delete.title": "Sitzung löschen",
-  "dialog.delete.body": "Diese Claude-Code-Sitzung löschen?\n\n{title}\n\nDies entfernt das Transkript und die Tool-Ergebnisse aus ~/.claude/projects/. Die VSCode-Seitenleiste sollte sich automatisch aktualisieren.",
+  "dialog.delete.title": "Diese Claude-Code-Sitzung löschen?",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nDie VSCode-Seitenleiste sollte sich automatisch aktualisieren.",
+  "dialog.delete.label.transcript": "Transkript:",
+  "dialog.delete.label.artifacts": "Tool-Ergebnisse:",
   "dialog.delete.confirm": "Löschen",
   "dialog.delete.cancel": "Abbrechen",
   "dialog.not_found.title": "Sitzung nicht gefunden",

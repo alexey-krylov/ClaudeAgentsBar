@@ -10,7 +10,9 @@
   "menu.ack_all": "Отметить все прочитанными",
   "menu.forget_all": "Забыть все сессии",
   "menu.suggest": "Предложить улучшение…",
-  "menu.delete_session": "Удалить сессию…",
+  "menu.config": "Конфигурация…",
+  "menu.forget_session": "Забыть",
+  "menu.delete_session": "Удалить…",
   "menu.mark_read": "Отметить прочитанным",
   "menu.no_sessions": "Нет сессий за последние {duration}",
 
@@ -26,8 +28,10 @@
   "age.hours": "{n}ч",
   "age.hours_minutes": "{h}ч {m}м",
 
-  "dialog.delete.title": "Удалить сессию",
-  "dialog.delete.body": "Удалить эту сессию Claude Code?\n\n{title}\n\nБудут удалены транскрипт и результаты инструментов из ~/.claude/projects/. Боковая панель VSCode обновится автоматически.",
+  "dialog.delete.title": "Удалить эту сессию Claude Code?",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nБоковая панель VSCode обновится автоматически.",
+  "dialog.delete.label.transcript": "Транскрипт:",
+  "dialog.delete.label.artifacts": "Результаты инструментов:",
   "dialog.delete.confirm": "Удалить",
   "dialog.delete.cancel": "Отмена",
   "dialog.not_found.title": "Сессия не найдена",

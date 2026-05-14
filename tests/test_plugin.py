@@ -592,6 +592,125 @@ class TestReadDismissTs(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# Per-row Forget sidecar                                                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestForgetSidecar(unittest.TestCase):
+    """Per-row *Forget* hides a session until its ``last_event_ts`` is past
+    the recorded ``forget_ts`` — same cutoff semantics as the global dismiss,
+    just keyed by session id. A fresh event re-surfaces the row.
+    """
+
+    def setUp(self):
+        import tempfile
+        self._tmpdir = Path(tempfile.mkdtemp())
+        projects = self._tmpdir / "projects"
+        projects.mkdir()
+        sidecar = self._tmpdir / "state.tsv"
+        clicks = self._tmpdir / "clicks.tsv"
+        forget = self._tmpdir / "forget.tsv"
+        dismiss = self._tmpdir / "dismiss"
+        self._orig_projects = plugin.PROJECTS_DIR
+        self._orig_sidecar = plugin.SIDECAR_PATH
+        self._orig_clicks = plugin.CLICKS_PATH
+        self._orig_forget = plugin.FORGET_PATH
+        self._orig_dismiss = plugin.DISMISS_PATH
+        self._orig_sidecar_lock = plugin._SIDECAR_LOCK_DIR
+        self._orig_clicks_lock = plugin._CLICKS_LOCK_DIR
+        self._orig_forget_lock = plugin._FORGET_LOCK_DIR
+        plugin.PROJECTS_DIR = projects
+        plugin.SIDECAR_PATH = sidecar
+        plugin.CLICKS_PATH = clicks
+        plugin.FORGET_PATH = forget
+        plugin.DISMISS_PATH = dismiss
+        plugin._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
+        plugin._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
+        plugin._FORGET_LOCK_DIR = forget.with_suffix(forget.suffix + ".lock.d")
+        self.projects = projects
+        self.sidecar = sidecar
+        self.forget = forget
+        self.now = 1_700_000_000
+
+    def tearDown(self):
+        import shutil
+        plugin.PROJECTS_DIR = self._orig_projects
+        plugin.SIDECAR_PATH = self._orig_sidecar
+        plugin.CLICKS_PATH = self._orig_clicks
+        plugin.FORGET_PATH = self._orig_forget
+        plugin.DISMISS_PATH = self._orig_dismiss
+        plugin._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
+        plugin._CLICKS_LOCK_DIR = self._orig_clicks_lock
+        plugin._FORGET_LOCK_DIR = self._orig_forget_lock
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _make_session(self, sid, mtime, sidecar_row=None):
+        project_dir = self.projects / f"-fake-{sid}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        jsonl = project_dir / f"{sid}.jsonl"
+        jsonl.write_bytes(b"")
+        os.utime(jsonl, (mtime, mtime))
+        if sidecar_row is not None:
+            state, ts = sidecar_row
+            existing = self.sidecar.read_text() if self.sidecar.exists() else ""
+            self.sidecar.write_text(
+                existing + f"{sid}\t{state}\t{ts}\tStop\t/tmp\n",
+                encoding="utf-8",
+            )
+
+    def _ids(self, sessions):
+        return sorted(s.id for s in sessions)
+
+    def test_missing_file_returns_empty(self):
+        # No forget sidecar yet — read_forget must not error.
+        self.assertEqual(plugin.read_forget(), {})
+
+    def test_forget_hides_idle_session(self):
+        # forget_ts >= last_event_ts ⇒ row is hidden.
+        self._make_session("ghost", self.now - 60, ("idle", self.now - 60))
+        self.forget.write_text(f"ghost\t{self.now - 30}\n", encoding="utf-8")
+        sessions = plugin.collect_sessions(self.now)
+        self.assertEqual(self._ids(sessions), [])
+
+    def test_fresh_event_resurfaces_forgotten_session(self):
+        # A new event past forget_ts must bring the row back — that's the
+        # built-in escape hatch when the user changes their mind.
+        self._make_session("ghost", self.now - 10, ("idle", self.now - 10))
+        self.forget.write_text(f"ghost\t{self.now - 60}\n", encoding="utf-8")
+        sessions = plugin.collect_sessions(self.now)
+        self.assertEqual(self._ids(sessions), ["ghost"])
+
+    def test_forget_only_affects_targeted_session(self):
+        # The forget map is per-session; siblings keep showing.
+        self._make_session("ghost", self.now - 60, ("idle", self.now - 60))
+        self._make_session("live", self.now - 30, ("idle", self.now - 30))
+        self.forget.write_text(f"ghost\t{self.now - 30}\n", encoding="utf-8")
+        sessions = plugin.collect_sessions(self.now)
+        self.assertEqual(self._ids(sessions), ["live"])
+
+    def test_orphan_forget_rows_are_gc_d(self):
+        # forget rows whose JSONL no longer exists must be dropped on the
+        # next collect_sessions pass — otherwise the sidecar would grow
+        # forever as sessions get deleted out of band.
+        self.forget.write_text(f"gone\t{self.now}\n", encoding="utf-8")
+        plugin.collect_sessions(self.now)
+        self.assertEqual(plugin.read_forget(), {})
+
+    def test_unparseable_rows_are_skipped(self):
+        # Same fail-open stance as read_clicks: a single corrupt row must
+        # not hide the rest of the forget set.
+        self._make_session("ghost", self.now - 60, ("idle", self.now - 60))
+        self.forget.write_text(
+            "garbage-line-no-tab\n"
+            f"ghost\tnot-an-int\n"
+            f"ghost\t{self.now - 30}\n",
+            encoding="utf-8",
+        )
+        sessions = plugin.collect_sessions(self.now)
+        self.assertEqual(self._ids(sessions), [])
+
+
+# --------------------------------------------------------------------------- #
 # Config loader                                                                #
 # --------------------------------------------------------------------------- #
 

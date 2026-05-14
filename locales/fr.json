@@ -10,7 +10,9 @@
   "menu.ack_all": "Tout marquer comme lu",
   "menu.forget_all": "Oublier toutes les sessions",
   "menu.suggest": "Suggérer une amélioration…",
-  "menu.delete_session": "Supprimer la session…",
+  "menu.config": "Configuration…",
+  "menu.forget_session": "Oublier",
+  "menu.delete_session": "Supprimer…",
   "menu.mark_read": "Marquer comme lu",
   "menu.no_sessions": "Aucune session depuis {duration}",
 
@@ -26,8 +28,10 @@
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
 
-  "dialog.delete.title": "Supprimer la session",
-  "dialog.delete.body": "Supprimer cette session Claude Code ?\n\n{title}\n\nCette action supprime la transcription et les résultats d’outils de ~/.claude/projects/. La barre latérale VSCode devrait s’actualiser automatiquement.",
+  "dialog.delete.title": "Supprimer cette session Claude Code ?",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nLa barre latérale VSCode devrait s’actualiser automatiquement.",
+  "dialog.delete.label.transcript": "Transcription :",
+  "dialog.delete.label.artifacts": "Résultats d’outils :",
   "dialog.delete.confirm": "Supprimer",
   "dialog.delete.cancel": "Annuler",
   "dialog.not_found.title": "Session introuvable",

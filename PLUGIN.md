@@ -25,16 +25,18 @@ If you only want to *install* and use it, see [README.md](./README.md).
             ▲                                          ▼
             │                          ┌───────────────────────────┐
             │                          │  bin/open-session.sh      │
+            │                          │  bin/forget-session.sh    │
             │                          │  bin/delete-session.sh    │
             │                          │  bin/forget-sessions.sh   │
             └──────────────────────────┤  (actions triggered       │
    ~/.claude/agent-state.clicks        │   from menu rows / Tools) │
    ~/.claude/agent-state.dismiss       └───────────────────────────┘
+   ~/.claude/agent-state.forget
    (sidecars written by actions)
 ```
 
 The plugin is **stateless** — every 5 s it rebuilds the entire menu from
-four sources:
+five sources:
 
 1. The JSONL transcripts Claude Code already writes (titles, cwd).
 2. `agent-state.tsv` that `agent-state.sh` maintains (live state, last event).
@@ -42,6 +44,8 @@ four sources:
    the user has opened from the menu — drives 🟢 FRESH → 🔵 ACKNOWLEDGED).
 4. `agent-state.dismiss`, a single-timestamp cutoff set by *Forget all
    sessions* under Tools.
+5. `agent-state.forget`, a `{sid → forget_ts}` map written by the per-row
+   *Forget* action — same cutoff semantics as dismiss, scoped to one row.
 
 There is no daemon, no IPC, no shared in-memory state. This makes the
 plugin trivial to test (just run the script) and trivial to reason about.
@@ -53,6 +57,7 @@ ClaudeAgentsBar/
 ├── claude-agents.5s.py      ← plugin entry point, all rendering logic
 ├── hooks/agent-state.sh     ← hook: writes ~/.claude/agent-state.tsv
 ├── bin/open-session.sh      ← row click: records click + opens in VSCode
+├── bin/forget-session.sh    ← submenu action: hide one row (cutoff-based)
 ├── bin/delete-session.sh    ← submenu action: delete a session
 ├── bin/forget-sessions.sh   ← Tools action: wipe TSV + clicks, set dismiss cutoff
 ├── config.example.json      ← copy → ~/.config/claude-agents-bar/config.json

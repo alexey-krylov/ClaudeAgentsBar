@@ -102,6 +102,20 @@ CLICKS_PATH = HOME / ".claude" / "agent-state.clicks"
 #: recorder. Same ``mkdir``-based scheme as the main sidecar lock.
 _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 
+#: ``{session_id: forget_ts}`` sidecar maintained by ``bin/forget-session.sh``
+#: (the per-row *Forget* action). A session whose ``last_event_ts`` is at or
+#: before its ``forget_ts`` is filtered out of the menu — same cutoff semantics
+#: as :data:`DISMISS_PATH` but per-session instead of global. A fresh hook
+#: event or click pushes ``last_event_ts`` past the cutoff and the row
+#: re-surfaces, which is the intended escape hatch if the user wants the row
+#: back. Use the per-row *Delete session…* action for permanent removal.
+FORGET_PATH = HOME / ".claude" / "agent-state.forget"
+
+#: Mutex on :data:`FORGET_PATH`, shared between plugin (gc) and
+#: ``bin/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
+#: locks.
+_FORGET_LOCK_DIR = FORGET_PATH.with_suffix(FORGET_PATH.suffix + ".lock.d")
+
 #: Bytes mmap'd from the JSONL tail when searching for the most recent
 #: ``gitBranch`` — bounded so huge transcripts (base64 attachments) stay cheap.
 #: The same window is used by :func:`last_usage_tokens` to find the freshest
@@ -919,6 +933,11 @@ def _clicks_lock(timeout_sec: float = 2.0):
     return _mkdir_lock(_CLICKS_LOCK_DIR, timeout_sec)
 
 
+def _forget_lock(timeout_sec: float = 2.0):
+    """Mutex shared with ``bin/forget-session.sh`` for ``agent-state.forget``."""
+    return _mkdir_lock(_FORGET_LOCK_DIR, timeout_sec)
+
+
 def read_clicks() -> dict[str, int]:
     """Load the click sidecar into a ``{session_id: click_ts}`` map.
 
@@ -949,6 +968,56 @@ def _parse_clicks(raw: str) -> dict[str, int]:
             continue
         out[sid] = ts
     return out
+
+
+def read_forget() -> dict[str, int]:
+    """Load the forget sidecar into a ``{session_id: forget_ts}`` map.
+
+    Same two-column TSV shape as the clicks sidecar. Unparseable rows are
+    dropped silently — we'd rather show a session that was meant to be
+    forgotten than hide every row because of one corrupt byte.
+    """
+    if not FORGET_PATH.exists():
+        return {}
+    try:
+        raw = FORGET_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return _parse_clicks(raw)
+
+
+def gc_forget(stale: set[str]) -> None:
+    """Drop the given session ids from the forget sidecar, atomically.
+
+    Mirrors :func:`gc_clicks`. We only prune rows whose transcript is gone —
+    a forgotten row whose JSONL still exists must stay, otherwise the
+    sessions would silently re-surface.
+    """
+    if not stale or not FORGET_PATH.exists():
+        return
+    with _forget_lock():
+        try:
+            raw = FORGET_PATH.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        original = raw.splitlines()
+        kept = [
+            line
+            for line in original
+            if not (line.split("\t", 1)[:1] and line.split("\t", 1)[0] in stale)
+        ]
+        if len(kept) == len(original):
+            return
+        tmp = FORGET_PATH.with_suffix(FORGET_PATH.suffix + f".{os.getpid()}.tmp")
+        try:
+            tmp.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+            tmp.replace(FORGET_PATH)
+        except OSError as exc:
+            _warn(f"forget gc failed: {exc}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def gc_clicks(stale: set[str]) -> None:
@@ -1285,20 +1354,26 @@ def collect_sessions(now: int) -> list[Session]:
     """
     sidecar = read_sidecar()
     clicks = read_clicks()
+    forget = read_forget()
     if stale := _stale_sidecar_ids(sidecar, now):
         gc_sidecar(stale)
         for sid in stale:
             sidecar.pop(sid, None)
-    # Click rows for sessions whose transcript no longer exists are pure
-    # overhead. The transcript — not the state sidecar — is authoritative:
-    # plenty of legitimate sessions have a JSONL but no TSV row.
-    if clicks:
+    # Click and forget rows for sessions whose transcript no longer exists
+    # are pure overhead. The transcript — not the state sidecar — is
+    # authoritative: plenty of legitimate sessions have a JSONL but no TSV row.
+    if clicks or forget:
         live_ids = _live_session_ids()
         orphan_clicks = set(clicks) - live_ids
         if orphan_clicks:
             gc_clicks(orphan_clicks)
             for sid in orphan_clicks:
                 clicks.pop(sid, None)
+        orphan_forget = set(forget) - live_ids
+        if orphan_forget:
+            gc_forget(orphan_forget)
+            for sid in orphan_forget:
+                forget.pop(sid, None)
     sessions = [
         build_session(p, sidecar, clicks, now) for p in iter_active_jsonls(now)
     ]
@@ -1311,6 +1386,14 @@ def collect_sessions(now: int) -> list[Session]:
         # (Stop, click, or streamed token while in flight), so this picks
         # up everything we'd otherwise show.
         sessions = [s for s in sessions if s.last_event_ts > dismiss_ts]
+    if forget:
+        # Per-row *Forget* uses the same cutoff semantics as the global
+        # dismiss — a session re-surfaces if it gets a fresh event past
+        # its own ``forget_ts``.
+        sessions = [
+            s for s in sessions
+            if s.id not in forget or s.last_event_ts > forget[s.id]
+        ]
     sessions.sort(key=lambda s: (s.group.order, -s.last_event_ts))
     return sessions
 
@@ -1555,11 +1638,14 @@ def _print_session_row(session: Session) -> None:
     ``editor_url_scheme`` defaults to ``"vscode://"`` and can be
     overridden in the config (e.g. ``"vscodium://"`` for VSCodium).
 
-    Submenu (``--`` prefix lines): for 🟢 FRESH rows a non-destructive
-    "mark as read" action records a click without opening the editor; a
-    destructive action (delete) follows; then an action that doubles as
-    info (the project name, clickable to reveal in Finder), and
-    read-only metadata (the current git branch).
+    Submenu (``--`` prefix lines): up to three row-level actions —
+    *mark as read* (🟢 FRESH rows only, records a click without opening
+    the editor), *forget* (hide the row until it gets a fresh event),
+    *delete* (physically remove the transcript) — followed by read-only
+    metadata (current git branch with the full cwd as a hover tooltip,
+    context usage). When the cwd isn't a git repository we fall back to
+    a plain folder line carrying the cwd itself so the path stays
+    visible.
     """
     label = f"{session.group.icon} {session.title} · {session.right_label_ansi}"
     href = f"{CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
@@ -1587,6 +1673,14 @@ def _print_session_row(session: Session) -> None:
             "sfimage=checkmark.circle.fill sfcolor=systemBlue"
         )
 
+    forget_script = bin_dir / "forget-session.sh"
+    print(
+        f"--{_t('menu.forget_session')} | "
+        f"shell={_swiftbar_quote(str(forget_script))} "
+        f"param1={_swiftbar_quote(session.id)} "
+        "terminal=false refresh=true "
+        "sfimage=eraser.fill sfcolor=systemOrange"
+    )
     delete_script = bin_dir / "delete-session.sh"
     print(
         f"--{_t('menu.delete_session')} | "
@@ -1595,18 +1689,24 @@ def _print_session_row(session: Session) -> None:
         "terminal=false refresh=true "
         "sfimage=trash.fill sfcolor=systemRed"
     )
-    if session.cwd:
-        print(
-            f"--{session.project} | "
-            f"shell=open param1={_swiftbar_quote(session.cwd)} "
-            "terminal=false sfimage=folder.fill"
-        )
-    else:
-        print(f"--{session.project} | sfimage=folder.fill")
     if session.git_branch:
-        print(
+        # Branch line doubles as the cwd surface: the path is verbose
+        # enough that promoting it to the visible label would crowd the
+        # menu, so we keep the branch in view and let macOS render the
+        # full cwd via NSMenuItem's tooltip on hover.
+        branch_line = (
             f"--{session.git_branch} | "
             "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
+        )
+        if session.cwd:
+            branch_line += f" tooltip={_swiftbar_quote(session.cwd)}"
+        print(branch_line)
+    elif session.cwd:
+        # No git branch (cwd isn't a repo, or .git was removed) — surface
+        # the full path directly so the menu still tells the user which
+        # project the session belongs to.
+        print(
+            f"--{session.cwd} | font=Menlo color=#999999 sfimage=folder.fill"
         )
     if session.context_used is not None:
         label = _format_context_left(session.context_used, CONFIG.context_window_tokens)
@@ -1629,9 +1729,13 @@ def _swiftbar_quote(value: str) -> str:
 def _print_footer() -> None:
     """System actions at the bottom of the menu — manual refresh + Tools submenu."""
     print(f"{_t('menu.refresh')} | refresh=true sfimage=arrow.clockwise")
-    bin_dir = Path(__file__).resolve().parent / "bin"
+    plugin_dir = Path(__file__).resolve().parent
+    bin_dir = plugin_dir / "bin"
     ack_fresh_script = bin_dir / "ack-fresh.sh"
     forget_script = bin_dir / "forget-sessions.sh"
+    open_config_script = bin_dir / "open-config.sh"
+    example_config = plugin_dir / "config.example.json"
+    config_path = _config_path()
     print(f"{_t('menu.tools')} | sfimage=wrench.adjustable.fill")
     print(
         f"--{_t('menu.ack_all')} | "
@@ -1651,6 +1755,19 @@ def _print_footer() -> None:
         "href=https://github.com/alexey-krylov/ClaudeAgentsBar/issues/new "
         "sfimage=lightbulb.fill"
     )
+    # Resolve the config path Python-side so the open-config.sh wrapper
+    # stays a thin shell script and doesn't duplicate the env-var → XDG
+    # → ~/.config lookup chain. The example path travels alongside so the
+    # script can seed an empty install on the first click.
+    if config_path is not None:
+        print(
+            f"--{_t('menu.config')} | "
+            f"shell={_swiftbar_quote(str(open_config_script))} "
+            f"param1={_swiftbar_quote(str(config_path))} "
+            f"param2={_swiftbar_quote(str(example_config))} "
+            "terminal=false "
+            "sfimage=gearshape.fill"
+        )
 
 
 # --------------------------------------------------------------------------- #
