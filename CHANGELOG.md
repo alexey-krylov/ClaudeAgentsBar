@@ -7,23 +7,52 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Region-aware locale resolution
+
+Locale codes from `defaults read -g AppleLocale` / `$LANG` /
+`CONFIG.language` are now normalised (`zh_TW.UTF-8` → `zh-tw`) and
+resolved region-first, then by primary subtag, then English. Two new
+tables shipped alongside: `locales/zh-TW.json` (Traditional Chinese,
+Taiwan terminology — `工作階段` / `重新整理` / `設定` instead of the
+mainland `会话` / `刷新` / `配置`) and `locales/vi.json` (Vietnamese).
+Users on generic `zh-*` locales fall through to `zh.json`; the
+matching `<xbar.title.vi>` / `<xbar.desc.vi>` headers were added so
+SwiftBar's About box localises too.
+
+### Brighter ANSI palette for the compact menu-bar
+
+`_print_menubar` (compact mode) now uses a dedicated palette
+(`_ANSI_ACTIVE_BAR` / `_ANSI_FRESH_BAR` / `_ANSI_ACK_BAR` — the bold
+bright `9{2,3,4}m` variants) for the `●` bullets. The dropdown rows
+keep the softer `_ANSI_WORKING` / `_ANSI_FRESH` / `_ANSI_ACK` palette
+they already had. Same colour semantics across both (yellow / green /
+blue), but the 9 px bar glyph needs more contrast against the
+wallpaper than a row sitting on the menu's solid background. See the
+updated [ADR-0010](./docs/adr/0010-compact-menubar-ansi-bullets.md)
+for the trade-off.
+
 ### Delete-session confirm dialog shows the actual paths
 
-The per-row *Delete session…* confirmation has been reworked from
-`display dialog` to `display alert`, so the question itself now reads
-as a bold headline above a separate detail block. The detail block
-lists the exact filesystem paths that are about to be removed — the
-transcript `.jsonl` and, when the session ever invoked any tools, the
+The per-row *Delete session…* confirmation now lists the exact
+filesystem paths that are about to be removed — the transcript
+`.jsonl` and, when the session ever invoked any tools, the
 tool-results directory — each under a localized label (`Транскрипт:`
 / `Transcript:` / …, `Результаты инструментов:` / `Tool artifacts:`
 / …). Paths are shown with `$HOME` collapsed to `~` so they stay
-readable inside the alert's narrow text column.
+readable inside the narrow text column. The question itself is
+prepended to the body as the first line so it stands out above the
+paths.
+
+The dialog uses AppleScript's `display dialog … with icon alias` and
+points at `/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/TrashIcon.icns`,
+so the macOS trash icon appears next to the question instead of
+osascript's default folder icon — matches what the *Delete* button
+actually does and reads as destructive at a glance.
 
 Two new locale keys (`dialog.delete.label.transcript`,
 `dialog.delete.label.artifacts`) and two new body placeholders
-(`{transcript_path}`, `{artifacts_section}`) added to all six locales;
-`dialog.delete.title` was repurposed from a barely-visible window title
-into the alert's bold headline.
+(`{transcript_path}`, `{artifacts_section}`) added across all
+locales.
 
 ### Per-row *Forget* action and submenu cleanup
 

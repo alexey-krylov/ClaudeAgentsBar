@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "locale": "zh-TW",
+    "name": "繁體中文 (Chinese, Traditional — Taiwan)",
+    "fallback": "zh, en",
+    "note": "Taiwan terminology: 工作階段 (session), 重新整理 (refresh), 設定 (configuration), 外掛 (plugin), 文字記錄 (transcript) — diverges from zh.json (mainland)."
+  },
+
+  "menu.refresh": "重新整理",
+  "menu.tools": "工具",
+  "menu.ack_all": "全部標示為已讀",
+  "menu.forget_all": "忘記所有工作階段",
+  "menu.suggest": "建議改善…",
+  "menu.config": "設定…",
+  "menu.forget_session": "忽略",
+  "menu.delete_session": "刪除…",
+  "menu.mark_read": "標示為已讀",
+  "menu.no_sessions": "最近 {duration} 內沒有工作階段",
+
+  "title.no_title": "（無標題）",
+
+  "right.working": "執行中",
+  "right.waiting": "需要您",
+
+  "error.plugin": "外掛錯誤：{exc}",
+
+  "age.seconds": "{n} 秒",
+  "age.minutes": "{n} 分",
+  "age.hours": "{n} 小時",
+  "age.hours_minutes": "{h} 小時 {m} 分",
+
+  "dialog.delete.title": "刪除此 Claude Code 工作階段？",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nVSCode 側邊欄會自動重新整理。",
+  "dialog.delete.label.transcript": "文字記錄：",
+  "dialog.delete.label.artifacts": "工具結果：",
+  "dialog.delete.confirm": "刪除",
+  "dialog.delete.cancel": "取消",
+  "dialog.not_found.title": "找不到工作階段",
+  "dialog.not_found.body": "找不到工作階段 {sid} 的文字記錄",
+  "dialog.no_sid.title": "ClaudeAgentsBar",
+  "dialog.no_sid.body": "delete-session.sh 未收到工作階段 ID。"
+}

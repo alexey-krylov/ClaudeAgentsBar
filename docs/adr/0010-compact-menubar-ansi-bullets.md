@@ -46,11 +46,17 @@ Add a boolean `compact` config knob, default `false`. When enabled,
 * The menu-bar icon is suppressed entirely (no `image=`, no inline
   glyph). Branding loss is the explicit trade.
 * Each non-zero counter is rendered as
-  `<ansi-colour>●<reset><count>` — a single `●` (U+25CF) coloured with
-  the same ANSI sequence the dropdown rows already use
-  (`_ANSI_WORKING` / `_ANSI_FRESH` / `_ANSI_ACK`, defined in the
-  module). SwiftBar's `ansi=true` flag on the title line enables the
-  parser.
+  `<ansi-colour>●<reset><count>` — a single `●` (U+25CF) coloured via
+  a **menu-bar-specific palette** (`_ANSI_ACTIVE_BAR` /
+  `_ANSI_FRESH_BAR` / `_ANSI_ACK_BAR`, the bold-bright `9{2,3,4}m`
+  variants), separate from the toned-down palette the dropdown rows
+  use (`_ANSI_WORKING` / `_ANSI_FRESH` / `_ANSI_ACK`). The two
+  contexts have different legibility budgets: dropdown rows sit on
+  the menu's solid background and benefit from softer colours, while
+  the menu-bar `●` is a 9 px glyph competing with the wallpaper and
+  needs the brighter ANSI variants to stay readable. `_COMPACT_ANSI`
+  is the map that wires `RenderGroup` → bar palette; SwiftBar's
+  `ansi=true` flag on the title line enables the parser.
 * Empty buckets are still omitted (same as the default branch). If
   every bucket is zero, the title falls back to a single dim
   `●` (`color=#888888`) so the plugin keeps a visible foothold on the
@@ -72,8 +78,10 @@ loader requires the raw value to already be a JSON boolean (which
 
 * ~30 px reclaimed on the menu bar — enough to unblock notch
   clipping in most real-world bar configurations.
-* Colour semantics preserved (yellow/green/cyan), so the at-a-glance
-  read is the same.
+* Colour semantics preserved across contexts (yellow = active,
+  green = fresh, blue = acknowledged) even though the exact ANSI
+  codes differ between the menu bar and dropdown rows — the
+  at-a-glance read is unchanged.
 * No new dependencies; ANSI rendering uses SwiftBar's existing
   `ansi=true` path that the dropdown rows already rely on, so we're
   not stress-testing a new code path.
@@ -89,6 +97,11 @@ loader requires the raw value to already be a JSON boolean (which
 * Two rendering branches in `_print_menubar`. Both are short and the
   shared `_MENUBAR_COUNTER_ORDER` keeps them in sync, but they need
   to be updated together when render-group changes happen.
+* Two ANSI palettes (dropdown vs. menu bar) instead of one. The
+  duplication is intentional — see the Decision — but it does mean a
+  palette tweak ("make `acknowledged` slightly more teal") may need
+  to land in two constants, not one. `_ANSI_*_BAR` are colocated
+  with `_ANSI_*` in the module header to make the pairing obvious.
 * Dropping the icon means losing the "click target" affordance — on
   an empty bar the lone dim `●` is less obviously clickable than a
   recognised app icon. Acceptable: users who enable compact mode know

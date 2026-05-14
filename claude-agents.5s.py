@@ -5,6 +5,7 @@
 # <xbar.title.fr>Claude Agents Bar</xbar.title.fr>
 # <xbar.title.de>Claude Agents Bar</xbar.title.de>
 # <xbar.title.it>Claude Agents Bar</xbar.title.it>
+# <xbar.title.vi>Claude Agents Bar</xbar.title.vi>
 # <xbar.version>1.0</xbar.version>
 # <xbar.author>Alexey Krylov</xbar.author>
 # <xbar.author.github>alexey-krylov/ClaudeAgentsBar</xbar.author.github>
@@ -14,6 +15,7 @@
 # <xbar.desc.fr>État en direct des sessions Claude Code sur tous les projets.</xbar.desc.fr>
 # <xbar.desc.de>Live-Status der Claude-Code-Sitzungen aller Projekte.</xbar.desc.de>
 # <xbar.desc.it>Stato live delle sessioni Claude Code in tutti i progetti.</xbar.desc.it>
+# <xbar.desc.vi>Trạng thái phiên Claude Code trên mọi dự án theo thời gian thực.</xbar.desc.vi>
 # <xbar.dependencies>python3</xbar.dependencies>
 # <xbar.abouturl>https://github.com/alexey-krylov/ClaudeAgentsBar</xbar.abouturl>
 # <swiftbar.hideAbout>false</swiftbar.hideAbout>
@@ -133,11 +135,16 @@ JSONL_TITLE_SCAN_BYTES = 256 * 1024
 #: ``ansi=true``, letting us colour a single segment independently of the
 #: base ``color=`` parameter.
 _ANSI_RESET = "\x1b[0m"
+#: Right-side age labels in the dropdown (toned-down palette).
 _ANSI_WORKING = "\x1b[1;33m"  # bold yellow — active in flight
 _ANSI_WAITING = "\x1b[1;31m"  # bold red    — needs you
-_ANSI_FRESH = "\x1b[32m"      # green       — finished, user hasn't seen it yet
-_ANSI_ACK = "\x1b[1;36m"      # bold cyan   — under active follow-up
+_ANSI_FRESH = "\x1b[1;36m"    # bold cyan   — finished, user hasn't seen it yet
+_ANSI_ACK = "\x1b[32m"        # green       — acknowledged
 _ANSI_STALE = "\x1b[2;37m"    # dim white   — abandoned
+#: ● bullets in the compact menu-bar (brighter palette for legibility).
+_ANSI_ACTIVE_BAR = "\x1b[1;93m"  # bold bright yellow
+_ANSI_FRESH_BAR = "\x1b[1;92m"   # bold bright green
+_ANSI_ACK_BAR = "\x1b[1;94m"     # bold bright blue
 
 #: States that ``hooks/agent-state.sh`` may write.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
@@ -414,8 +421,20 @@ def _load_strings() -> dict[str, dict[str, str]]:
 STRINGS: dict[str, dict[str, str]] = _load_strings()
 
 
+def _normalize_lang(raw: str) -> str:
+    """Normalize ``zh_TW`` / ``zh-TW`` / ``zh_TW.UTF-8`` → ``zh-tw``.
+
+    Strips any codepage suffix, unifies the separator to ``-``, and lowercases
+    the whole thing so the result matches ``locales/<code>.json`` filename
+    stems (themselves lowercased on load). Preserves the optional region
+    subtag so Traditional Chinese for Taiwan (``zh-tw``) stays distinguishable
+    from generic Chinese (``zh``).
+    """
+    return raw.strip().split(".", 1)[0].replace("_", "-").lower()
+
+
 def _detect_system_lang() -> str:
-    """Two-letter macOS GUI locale, or ``"en"`` if nothing usable was found.
+    """macOS GUI locale (e.g. ``zh-tw`` or ``en``), or ``"en"`` if nothing usable was found.
 
     GUI apps under launchd don't inherit a shell ``LANG``, so the canonical
     source is ``defaults read -g AppleLocale`` (the same value System Settings
@@ -428,7 +447,7 @@ def _detect_system_lang() -> str:
             capture_output=True, text=True, timeout=0.5, check=False,
         )
         if result.returncode == 0:
-            code = result.stdout.strip().split("_", 1)[0].split("-", 1)[0].lower()
+            code = _normalize_lang(result.stdout)
             if code:
                 return code
     except (OSError, subprocess.SubprocessError):
@@ -436,18 +455,25 @@ def _detect_system_lang() -> str:
     for env in ("LANG", "LC_ALL", "LC_MESSAGES"):
         val = os.environ.get(env, "")
         if val and val.lower() not in ("c", "posix"):
-            return val.split("_", 1)[0].split(".", 1)[0].lower()
+            return _normalize_lang(val)
     return "en"
 
 
 def _resolve_lang() -> str:
-    """Pick the UI locale code, honouring ``CONFIG.language`` overrides."""
+    """Pick the UI locale code, honouring ``CONFIG.language`` overrides.
+
+    Tries the full ``lang-region`` code first so ``zh-tw`` picks
+    ``locales/zh-TW.json`` over the generic ``locales/zh.json``; on miss,
+    falls back to the primary subtag (``zh``), and finally to English.
+    """
     raw = (CONFIG.language or "").strip().lower()
-    if raw and raw != "auto":
-        code = raw.split("_", 1)[0].split("-", 1)[0]
-        return code if code in STRINGS else "en"
-    code = _detect_system_lang()
-    return code if code in STRINGS else "en"
+    code = _normalize_lang(raw) if raw and raw != "auto" else _detect_system_lang()
+    if code in STRINGS:
+        return code
+    primary = code.split("-", 1)[0]
+    if primary in STRINGS:
+        return primary
+    return "en"
 
 
 _LANG_CACHE: str | None = None
@@ -507,7 +533,7 @@ class RenderGroup(enum.Enum):
 
     ACTIVE = ("active", 0, "🟡", "#cc7700")
     FRESH = ("fresh", 1, "🟢", "#1f7a1f")
-    ACKNOWLEDGED = ("acknowledged", 2, "🔵", "#2563eb")
+    ACKNOWLEDGED = ("acknowledged", 2, "🔵", "#0a84ff")
     STALE = ("stale", 3, "⚪", "#777777")
 
     def __init__(self, key: str, order: int, icon: str, color: str) -> None:
@@ -1455,9 +1481,9 @@ _MENUBAR_COUNTER_ORDER: tuple[RenderGroup, ...] = (
 
 
 _COMPACT_ANSI: dict[RenderGroup, str] = {
-    RenderGroup.ACTIVE: _ANSI_WORKING,
-    RenderGroup.FRESH: _ANSI_FRESH,
-    RenderGroup.ACKNOWLEDGED: _ANSI_ACK,
+    RenderGroup.ACTIVE: _ANSI_ACTIVE_BAR,
+    RenderGroup.FRESH: _ANSI_FRESH_BAR,
+    RenderGroup.ACKNOWLEDGED: _ANSI_ACK_BAR,
 }
 
 

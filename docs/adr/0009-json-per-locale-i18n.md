@@ -66,7 +66,17 @@ Translations live in `locales/<lang>.json`, colocated with
 * **Locale resolution** consults `CONFIG.language` first (an explicit
   config override, supports `"auto"`), then `defaults read -g
   AppleLocale` (macOS GUI locale, the canonical source for launchd-
-  spawned GUI apps), then `$LANG`. Unknown codes fall back to `en`.
+  spawned GUI apps), then `$LANG`. All inputs are normalised by
+  `_normalize_lang()` — codepage suffix stripped, `_` unified to `-`,
+  lowercased — so `zh_TW.UTF-8`, `zh-TW`, and `zh_TW` all collapse to
+  the single token `zh-tw`. Lookup is **region-first, then primary
+  subtag, then English**: `zh-tw` picks `locales/zh-TW.json` when
+  present, falls back to `locales/zh.json` if not, and finally to
+  `en.json`. This is what lets us ship a Taiwan-specific table whose
+  terminology (`工作階段`, `重新整理`, `設定`) diverges from the
+  mainland `zh.json` (`会话`, `刷新`, `配置`) without forking users on
+  generic `zh-*` locales — they still land on the closest available
+  table.
 * **Shell side** doesn't reload the JSON. The plugin exposes
   `--print-strings` which emits shell-quoted `MSG_*` variables for the
   `dialog.*` subset; `bin/delete-session.sh` does
@@ -108,7 +118,12 @@ folder.
   per-key comments aren't supported. Acceptable; the keys are
   self-descriptive.
 * Locale tables are loaded eagerly into memory on every tick. About
-  3 KB per locale × 6 locales — negligible.
+  3 KB per locale and currently eight locales on disk
+  (`en`, `ru`, `zh`, `zh-TW`, `fr`, `de`, `it`, `vi`) — negligible.
+  New regional variants ship as standalone files (`zh-TW`, `pt-BR`)
+  rather than forks of the primary-subtag table, and the resolver's
+  region→primary fallback keeps users on close-enough locales from
+  ever seeing English by accident.
 
 ## Related
 

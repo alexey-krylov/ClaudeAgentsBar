@@ -73,8 +73,8 @@ ANSI escapes):
 
 - 🟡 `working` (bold yellow) — a tool call is in flight
 - 🟡 `needs you` (bold red) — permission prompt / question open
-- 🟢 `Xm ago` (green) — fresh, unopened
-- 🔵 `Xm ago` (bold cyan) — acknowledged
+- 🟢 `Xm ago` (bold cyan) — fresh, unopened
+- 🔵 `Xm ago` (green) — acknowledged
 - ⚪ `Xh Xm ago` (dim grey) — stale
 
 **Click a row** → records the click into the click sidecar (which moves
@@ -357,10 +357,12 @@ form:
 ```
 
 The icon is suppressed and `🟡🟢🔵` are replaced with `●` rendered
-through SwiftBar's `ansi=true`, picking up the same yellow / green /
-cyan tones as the dropdown rows. Empty buckets are still omitted; if
-nothing is active, a single dim `●` keeps the slot occupied so the
-plugin doesn't disappear from the bar entirely.
+through SwiftBar's `ansi=true`, in a brighter palette than the
+dropdown rows (the 9 px glyph competes with the wallpaper). Colour
+semantics line up: yellow = active, green = fresh, blue =
+acknowledged. Empty buckets are omitted; if nothing is active, a
+single dim `●` keeps the slot occupied so the plugin doesn't
+disappear from the bar entirely.
 
 The trade-off is loss of branding (no Claude mark) in exchange for
 roughly 30 px of horizontal space. Recommended only on notched

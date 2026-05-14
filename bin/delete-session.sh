@@ -131,18 +131,24 @@ DIALOG_BODY="${DIALOG_BODY//\{transcript_label\}/${MSG_DIALOG_DELETE_LABEL_TRANS
 DIALOG_BODY="${DIALOG_BODY//\{transcript_path\}/${TRANSCRIPT_PATH}}"
 DIALOG_BODY="${DIALOG_BODY//\{artifacts_section\}/${ARTIFACTS_SECTION}}"
 
-# Native macOS confirm dialog. ``display alert`` (instead of ``display
-# dialog``) gives us a bold headline + smaller message body — so the
-# question stands out from the file paths underneath. AppleScript raises
-# error -128 on cancel, which under ``set -e`` would abort the script
-# before we can inspect the answer — wrap in ``|| true`` so we fall
-# through and decide based on the returned string. We pin the answer-
-# matching token to the localized confirm label so the case statement
-# below stays stable.
+# Native macOS confirm dialog. We use ``display dialog`` (not ``display
+# alert``) because it accepts ``with icon`` — that lets us replace the
+# default folder icon (osascript's parent app icon) with the system
+# trash icon, which matches what the button actually does. The price is
+# no bold headline, so we prepend the question to the body as the first
+# line. AppleScript raises error -128 on cancel, which under ``set -e``
+# would abort the script before we can inspect the answer — wrap in
+# ``|| true`` so we fall through and decide based on the returned
+# string. We pin the answer-matching token to the localized confirm
+# label so the case statement below stays stable.
+DIALOG_MESSAGE="${MSG_DIALOG_DELETE_TITLE}
+
+${DIALOG_BODY}"
+ICON_PATH="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/TrashIcon.icns"
+
 CHOICE="$(/usr/bin/osascript \
-    -e "display alert \"${MSG_DIALOG_DELETE_TITLE}\" \
-        message \"${DIALOG_BODY}\" \
-        as warning \
+    -e "display dialog \"${DIALOG_MESSAGE}\" \
+        with icon alias POSIX file \"${ICON_PATH}\" \
         buttons {\"${MSG_DIALOG_DELETE_CANCEL}\", \"${MSG_DIALOG_DELETE_CONFIRM}\"} \
         default button \"${MSG_DIALOG_DELETE_CANCEL}\" \
         cancel button \"${MSG_DIALOG_DELETE_CANCEL}\"" \

@@ -1,0 +1,41 @@
+{
+  "_meta": {
+    "locale": "vi",
+    "name": "Tiếng Việt (Vietnamese)",
+    "fallback": "en"
+  },
+
+  "menu.refresh": "Làm mới",
+  "menu.tools": "Công cụ",
+  "menu.ack_all": "Đánh dấu tất cả đã đọc",
+  "menu.forget_all": "Quên tất cả phiên",
+  "menu.suggest": "Đề xuất cải tiến…",
+  "menu.config": "Cấu hình…",
+  "menu.forget_session": "Quên",
+  "menu.delete_session": "Xóa…",
+  "menu.mark_read": "Đánh dấu đã đọc",
+  "menu.no_sessions": "Không có phiên trong {duration} qua",
+
+  "title.no_title": "(không có tiêu đề)",
+
+  "right.working": "đang chạy",
+  "right.waiting": "cần bạn",
+
+  "error.plugin": "Lỗi plugin: {exc}",
+
+  "age.seconds": "{n}s",
+  "age.minutes": "{n}p",
+  "age.hours": "{n}h",
+  "age.hours_minutes": "{h}h {m}p",
+
+  "dialog.delete.title": "Xóa phiên Claude Code này?",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nThanh bên VSCode sẽ tự động làm mới.",
+  "dialog.delete.label.transcript": "Bản ghi:",
+  "dialog.delete.label.artifacts": "Kết quả công cụ:",
+  "dialog.delete.confirm": "Xóa",
+  "dialog.delete.cancel": "Hủy",
+  "dialog.not_found.title": "Không tìm thấy phiên",
+  "dialog.not_found.body": "Không có bản ghi cho phiên {sid}",
+  "dialog.no_sid.title": "ClaudeAgentsBar",
+  "dialog.no_sid.body": "Không có id phiên được truyền cho delete-session.sh."
+}
