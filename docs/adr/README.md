@@ -22,6 +22,7 @@ prior one.
 | [0007](./0007-project-outside-plugins-folder.md) | Project lives outside the SwiftBar plugins folder | Accepted |
 | [0008](./0008-menubar-template-image-with-multirep-tiff.md) | Menu-bar icon: template image, resized via `sips`, stitched as multi-rep TIFF | Accepted |
 | [0009](./0009-json-per-locale-i18n.md) | JSON-per-locale i18n, stdlib only | Accepted |
+| [0010](./0010-compact-menubar-ansi-bullets.md) | Compact menu-bar mode: ANSI-coloured `●` bullets | Accepted |
 
 ## Workflow
 

@@ -7,6 +7,28 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Compact menu-bar mode
+
+New optional config knob `"compact": true` switches the menu-bar title
+to a narrower rendering for notched MacBooks where every slot to the
+right of the camera housing is contested:
+
+* The icon is suppressed.
+* The 🟡🟢🔵 emoji counters are replaced with ANSI-coloured `●` bullets
+  rendered through SwiftBar's `ansi=true`. Result: `●2 ●1 ●3` instead
+  of `[icon] 🟡2 🟢1 🔵3` — roughly 30 px saved.
+* Empty buckets are still omitted; if nothing is active, a single grey
+  `●` keeps the plugin visible on the bar.
+
+Default stays `false` so out-of-the-box rendering is unchanged. The
+rationale for picking ANSI bullets over SF Symbols / numbers-only / a
+narrower icon is captured in
+[ADR-0010](./docs/adr/0010-compact-menubar-ansi-bullets.md).
+
+Three new `TestConfigLoad` cases cover the default, a real JSON
+boolean override, and the bogus-type rejection (since `bool("false")`
+would otherwise silently parse as `True`). 71 tests total.
+
 ### Idle bucket split: FRESH / ACKNOWLEDGED / STALE
 
 The single 🟢 *recent* bucket is gone. Idle sessions now flow through
@@ -72,7 +94,8 @@ etc.
 
 ### Config
 
-* New: `fresh_minutes`, `ack_minutes`, `menubar_icon_fallback`.
+* New: `fresh_minutes`, `ack_minutes`, `menubar_icon_fallback`,
+  `compact`.
 * Removed: `recent_minutes`. **Breaking** — old configs continue to
   load (the key is silently ignored as an unknown field), but the
   behaviour they encoded is now split across `fresh_minutes` and

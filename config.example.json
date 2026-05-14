@@ -45,5 +45,8 @@
   "// language.1": "Supported codes: 'en', 'ru', 'zh', 'fr', 'de', 'it'. Unknown codes fall back to 'en'.",
   "// language.2": "Default '' (or 'auto') detects from macOS AppleLocale, falling back to $LANG.",
   "// language.3": "Plugin metadata (About box) is localized by SwiftBar itself via <xbar.title.<lang>> headers in the plugin file.",
-  "language": "auto"
+  "language": "auto",
+
+  "// compact": "Compact menu-bar format. Hides the Claude icon and replaces wide emoji circles (🟡🟢🔵) with narrow ANSI-coloured '●' bullets: '●2 ●1 ●3' instead of '[icon] 🟡2 🟢1 🔵3'. Saves ~30 px — useful on MacBook with notch and no external display. Default: false.",
+  "compact": false
 }
