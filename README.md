@@ -20,18 +20,18 @@ plugin.
    └───────────────────────────────────────────────────────────┘
 ```
 
-## Why
+## Why I built this
 
-Claude Code now encourages many sessions in flight at once — background
-agents and parallel worktrees in particular. The VSCode sidebar shows only
-the active workspace's sessions (and no live state). Other UIs hide that
-state behind tabs and clicks. ClaudeAgentsBar puts the answer to *"which
-agent needs me?"* on the menu bar, always visible no matter what app is
-focused.
-
-Scripted / scheduled runs (cron jobs, Python SDK invocations, anything
-launched via `claude -p`) are filtered out unconditionally — they don't
-need human attention and would otherwise clutter the list.
+I run a handful of Claude Code sessions in parallel — background agents,
+worktrees, the occasional long-running investigation — and kept losing
+track of which one had just finished, which one was sitting on a
+permission prompt, and which one I'd already triaged. The VSCode sidebar
+only sees the active workspace; ⌘-tabbing through windows to find the
+yellow dot got old fast, and I didn't want another floating panel
+stealing screen real estate. A menu-bar widget was the smallest thing
+that could answer *"which agent needs me right now?"* without pulling
+focus from whatever I was actually doing, so I wrote one for myself and
+then cleaned it up enough to share.
 
 ## What you see
 
