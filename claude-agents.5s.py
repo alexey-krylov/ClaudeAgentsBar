@@ -146,6 +146,49 @@ _ANSI_ACTIVE_BAR = "\x1b[1;93m"  # bold bright yellow
 _ANSI_FRESH_BAR = "\x1b[1;92m"   # bold bright green
 _ANSI_ACK_BAR = "\x1b[1;94m"     # bold bright blue
 
+#: Session ids we're willing to surface. Claude Code in practice ships
+#: RFC-4122 UUIDs, but we accept the broader ``[A-Za-z0-9_-]{1,64}`` —
+#: large enough to fit any future Claude id format while still rejecting
+#: every shape that could weaponise downstream consumers:
+#:
+#:   * shell arguments (``param1=`` to ``bin/*.sh``),
+#:   * AppleScript dialogs in ``bin/delete-session.sh``,
+#:   * field-anchored TSV lookups,
+#:   * SwiftBar ``paramN=`` tokens, which break on embedded newlines.
+#:
+#: The set is intentionally narrow: no spaces, no quotes, no shell or
+#: regex metacharacters, no path separators, no control bytes. A session
+#: id whose source we don't fully control (TSV row written by a hook,
+#: JSONL filename created by another process under the same uid) is
+#: rejected at the boundary so every downstream consumer stays simple.
+#: See the SECURITY note at the top of ``bin/delete-session.sh`` and the
+#: SwiftBar quoting helper for context.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _is_valid_session_id(value: str) -> bool:
+    """True iff ``value`` matches the safe-session-id allow-list.
+
+    See :data:`_SESSION_ID_RE` for the threat model.
+    """
+    return bool(_SESSION_ID_RE.match(value))
+
+
+#: Editor URL schemes we're willing to hand to ``open``. Anything outside
+#: this set is dropped at config-load time, falling back to the
+#: ``Config.editor_url_scheme`` default. Add a new entry here only when a
+#: real Code-OSS fork (Cursor, VSCodium, …) registers its own scheme; the
+#: empty value is reserved for ``open ?session=…`` style URLs which macOS
+#: would otherwise treat as a relative web URL.
+_EDITOR_URL_SCHEME_ALLOWLIST = frozenset({
+    "vscode://",
+    "vscodium://",
+    "cursor://",
+    "windsurf://",
+    "positron://",
+})
+
+
 #: States that ``hooks/agent-state.sh`` may write.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
 
@@ -320,15 +363,6 @@ class Config:
                     return
             coerced[field_name] = value
 
-        take("window_minutes", "window_sec", float, lambda m: int(m * 60))
-        take("fresh_minutes", "fresh_sec", float, lambda m: int(m * 60))
-        take("ack_minutes", "ack_sec", float, lambda m: int(m * 60))
-        take("watchdog_seconds", "watchdog_sec", int)
-        take("title_max", "title_max", int)
-        take("menubar_icon", "menubar_icon", str)
-        take("menubar_icon_fallback", "menubar_icon_fallback", str)
-        take("editor_url_scheme", "editor_url_scheme", str)
-        take("language", "language", str)
         # Positive-int constraint: 0 or negative would make _format_context_left
         # return an empty string and the row would vanish silently. Better to
         # warn loudly and keep the 1M default.
@@ -336,6 +370,30 @@ class Config:
             if n <= 0:
                 raise ValueError("must be > 0")
             return n
+
+        def _require_editor_scheme(value: str) -> str:
+            if value not in _EDITOR_URL_SCHEME_ALLOWLIST:
+                raise ValueError(
+                    f"must be one of {sorted(_EDITOR_URL_SCHEME_ALLOWLIST)}"
+                )
+            return value
+
+        take("window_minutes", "window_sec", float, lambda m: int(m * 60))
+        take("fresh_minutes", "fresh_sec", float, lambda m: int(m * 60))
+        take("ack_minutes", "ack_sec", float, lambda m: int(m * 60))
+        take("watchdog_seconds", "watchdog_sec", int)
+        take("title_max", "title_max", int)
+        take("menubar_icon", "menubar_icon", str)
+        take("menubar_icon_fallback", "menubar_icon_fallback", str)
+        # Lock the editor URL scheme to known Code-OSS-family handlers. The
+        # value flows into ``open <url>``, so an attacker who can write to
+        # the config (e.g. a malicious process running under the same uid,
+        # or a synced config from another machine) could otherwise pivot
+        # every row click into launching an arbitrary registered URL
+        # handler (``file://`` apps, custom schemes). Schemes outside the
+        # allow-list are logged and dropped, falling back to the default.
+        take("editor_url_scheme", "editor_url_scheme", str, _require_editor_scheme)
+        take("language", "language", str)
         take("context_window_tokens", "context_window_tokens", int, _require_positive)
         # JSON booleans are native Python bool after json.loads; bool("false")
         # == True so we can't use the generic take() helper here.
@@ -859,6 +917,8 @@ def _parse_sidecar(raw: str) -> dict[str, HookSnapshot]:
         if len(parts) < 5:
             continue
         sid, state, ts_raw, kind, cwd = parts[:5]
+        if not _is_valid_session_id(sid):
+            continue
         if state not in HOOK_STATES:
             continue
         try:
@@ -896,7 +956,13 @@ def _live_session_ids() -> set[str]:
             if not project_dir.is_dir():
                 continue
             for jsonl in project_dir.glob("*.jsonl"):
-                live_ids.add(jsonl.stem)
+                sid = jsonl.stem
+                if not _is_valid_session_id(sid):
+                    # Names with stray newlines/quotes/regex-metachars would
+                    # later flow into shell args and grep regexes; refuse to
+                    # surface them at all. See ``_SESSION_ID_RE``.
+                    continue
+                live_ids.add(sid)
     return live_ids
 
 
