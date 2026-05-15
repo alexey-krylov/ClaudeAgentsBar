@@ -360,13 +360,12 @@ class TestSummariseToolUse(unittest.TestCase):
         )
         self.assertEqual(out, "Bash: echo foo echo bar echo baz")
 
-    def test_long_preview_truncates_with_ellipsis(self):
+    def test_long_preview_not_truncated_in_tooltip(self):
+        # Tooltips have plenty of room and the full command/path is the
+        # whole point of surfacing it — no truncation, unlike a menu row.
         long = "x" * 200
         out = plugin._summarise_tool_use("Read", {"file_path": long})
-        self.assertTrue(out.startswith("Read: "))
-        self.assertTrue(out.endswith("…"))
-        # Tool name + ": " + 59 chars + "…" — keeps the tooltip glanceable.
-        self.assertLessEqual(len(out), len("Read: ") + 60)
+        self.assertEqual(out, "Read: " + long)
 
     def test_empty_name_returns_empty(self):
         self.assertEqual(plugin._summarise_tool_use("", {"command": "x"}), "")

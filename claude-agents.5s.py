@@ -1530,7 +1530,17 @@ _TOOL_INPUT_PREVIEW_KEY = {
 
 
 def _summarise_tool_use(name: str, input_obj: object) -> str:
-    """Format one ``tool_use`` chunk as a one-line tooltip preview."""
+    """Format one ``tool_use`` chunk as a single tooltip line.
+
+    Used as the main row's NSMenuItem tooltip — surfaces *what Claude
+    is doing right now* (``Read: main.py``, ``Bash: pytest …``) on
+    hover. No truncation: tooltips have plenty of room and the full
+    command/path is the whole point. Whitespace is collapsed so the
+    tooltip stays a single readable line; NSMenuItem.toolTip respects
+    ``\\n`` but multi-line tooltips crowd the menu and the preview is
+    meant to be glanceable. Returns ``""`` for a chunk with no
+    rendered tool name (caller skips rendering).
+    """
     if not isinstance(name, str) or not name:
         return ""
     if not isinstance(input_obj, dict):
@@ -1548,12 +1558,7 @@ def _summarise_tool_use(name: str, input_obj: object) -> str:
                 break
     if not isinstance(candidate, str) or not candidate.strip():
         return name
-    # Collapse newlines + tabs so the tooltip stays a single readable
-    # line (NSMenuItem.toolTip respects \n but multi-line tooltips
-    # crowd the menu and the preview is meant to be glanceable).
     preview = " ".join(candidate.split())
-    if len(preview) > 60:
-        preview = preview[:59].rstrip() + "…"
     return f"{name}: {preview}"
 
 
@@ -1562,8 +1567,8 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
 
     Reads the trailing :data:`JSONL_TAIL_BYTES` and walks it in order,
     keeping the last ``"type":"tool_use"`` chunk that yields a parseable
-    name. Used as the hover-tooltip on a session's main row so the user
-    can see *what Claude is doing right now* without expanding the
+    name. Surfaced as the main row's NSMenuItem tooltip so a hover
+    answers *what is Claude doing right now?* without expanding the
     submenu. Bounded tail-read keeps it cheap regardless of transcript
     size — same pattern as :func:`last_usage_tokens`.
     """
@@ -2111,15 +2116,6 @@ def _print_session_row(session: Session) -> None:
         "terminal=false refresh=false "
         "sfimage=folder.fill sfcolor=systemGray"
     )
-    # "Currently doing" — read-only row showing the freshest tool_use
-    # from the JSONL tail. Lives in the submenu rather than as the
-    # main row's NSMenuItem.toolTip because macOS auto-expands the
-    # submenu on hover, which would race the tooltip and usually win.
-    if session.last_tool_use:
-        print(
-            f"--{session.last_tool_use} | "
-            "font=Menlo color=#999999 sfimage=bolt.fill"
-        )
     if session.git_branch:
         # Branch line doubles as the cwd surface: the path is verbose
         # enough that promoting it to the visible label would crowd the
@@ -2142,7 +2138,20 @@ def _print_session_row(session: Session) -> None:
     if session.context_used is not None:
         label = _format_context_left(session.context_used, CONFIG.context_window_tokens)
         if label:
-            print(f"--{label} | font=Menlo color=#999999 sfimage=gauge.medium")
+            # The context line piggy-backs the "currently doing" preview
+            # as its hover tooltip — same pattern as the branch row
+            # carrying the full cwd. Lives here rather than on the
+            # parent session row because NSMenu auto-expands the submenu
+            # on hover and that win-races the tooltip; leaf rows under
+            # the open submenu show their tooltips reliably.
+            context_line = (
+                f"--{label} | font=Menlo color=#999999 sfimage=gauge.medium"
+            )
+            if session.last_tool_use:
+                context_line += (
+                    f" tooltip={_swiftbar_quote(session.last_tool_use)}"
+                )
+            print(context_line)
 
 
 def _swiftbar_quote(value: str) -> str:

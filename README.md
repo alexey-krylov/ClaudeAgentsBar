@@ -113,8 +113,10 @@ Hover a row for its submenu:
   state.
 - **Reveal in Finder** — open the JSONL transcript's folder with the
   file selected.
-- Read-only "currently doing" (the last `tool_use`, e.g. `Read: main.py`
-  or `Bash: pytest`), current git branch, and context-window %.
+- Read-only git branch + context-window %. Hovering the context row
+  shows the last `tool_use` as a tooltip (e.g. `Read: main.py`,
+  `Bash: pytest …`) — quick answer to *what is this session doing?*
+  without expanding anything.
 
 The footer **Tools** submenu has bulk actions (acknowledge all / forget
 all), today's activity summary, a feedback link, and a one-click jump

@@ -7,27 +7,26 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
-### "Currently doing" line in each session's submenu
+### "Currently doing" tooltip on the context-usage row
 
-Every session's submenu picked up a read-only row showing the freshest
-`tool_use` from the JSONL tail: `Read: main.py`, `Bash: pytest`,
-`Edit: src/parser.py`, etc. Glanceable answer to *"what is that
-session actually doing?"* — sits between the action items
-(*Mark as read* / *Forget* / *Delete…* / *Reveal in Finder*) and the
-existing metadata lines (branch, context %), under a `bolt.fill` SF
-Symbol. The parser keeps a short map of `tool name → input field` to
-pick the most meaningful arg (`command` for `Bash`, `file_path` for
-editors, `query` for search tools); unmapped tools fall back to the
-first string arg, so new tools get a sensible default until they're
-added explicitly. Reading is bounded to the trailing 64 KB — same
-window as `last_usage_tokens` — so the cost stays O(1) per session
-regardless of transcript size.
+The context-window line in each session's submenu (`{N}% — {used}k/{total}k`)
+now carries the freshest `tool_use` from the JSONL tail as its hover
+tooltip: `Read: main.py`, `Bash: pytest …`, `Edit: src/parser.py`, etc.
+Same pattern the branch row already uses to surface the full cwd —
+leaf submenu rows render their NSMenuItem tooltip reliably on hover,
+while the parent session row's hover gets eaten by AppKit's automatic
+submenu expansion. The parser keeps a short map of
+`tool name → input field` to pick the most meaningful arg
+(`command` for `Bash`, `file_path` for editors, `query` for search
+tools); unmapped tools fall back to the first string arg, so new tools
+get a sensible default until they're added explicitly. Reading is
+bounded to the trailing 64 KB — same window as `last_usage_tokens` —
+so the cost stays O(1) per session regardless of transcript size.
 
-The first cut attached the summary as the main row's NSMenuItem
-tooltip, but macOS auto-expands the submenu on hover and that win
-races out the tooltip in practice — a dedicated submenu row is both
-discoverable and reliably visible. Rows whose tail has no parseable
-`tool_use` simply omit the line.
+No truncation: tooltips have plenty of room and the whole point is to
+surface the full command/path that wouldn't fit in a row. Rows whose
+tail has no parseable `tool_use` keep the bare context line — the
+tooltip is just suppressed.
 
 ### Context-burn warning between title and age
 
