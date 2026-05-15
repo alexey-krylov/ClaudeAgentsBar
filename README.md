@@ -68,7 +68,8 @@ as plain `idle` until they emit their next hook event.
 Check everything is in order:
 
 ```bash
-claude-agents-bar doctor    # verifies jq + python3 + SwiftBar.app
+claude-agents-bar doctor    # jq + python3 + SwiftBar.app, hook
+                            # registration, sidecar freshness, editor app
 ```
 
 ### Uninstall
@@ -96,9 +97,14 @@ In the menu bar — counters only, no text labels:
 Click the icon for the full dropdown — every session active in the
 last 3 hours, sorted by urgency (active → fresh → acknowledged →
 stale). Each row shows the AI-generated title and a coloured right
-label: `working`, `needs you`, or `Xm ago`. Click a row to open the
-session in your editor — VSCode by default, VSCodium and Cursor work
-too (one-line `editor_url_scheme` change, see
+label: `working`, `needs you`, or `Xm ago`. Above 80 % context usage
+the row gets an inline `⚠ {pct}%` warning between the title and the
+age (red past 90 %), so a glance tells you which sessions are close to
+auto-compact. Hover any row for a tooltip with the current `tool_use`
+(`Read: main.py`, `Bash: pytest`, …) so you can see what each session
+is doing without expanding it. Click a row to open the session in your
+editor — VSCode by default, VSCodium and Cursor work too (one-line
+`editor_url_scheme` change, see
 [docs/configuration.md](./docs/configuration.md#all-fields)).
 
 Hover a row for its submenu:
@@ -107,10 +113,13 @@ Hover a row for its submenu:
 - **Forget** — hide this row without deleting anything.
 - **Delete…** — confirm + physically remove the JSONL transcript and
   state.
+- **Reveal in Finder** — open the JSONL transcript's folder with the
+  file selected.
 - Read-only context-window % and current git branch.
 
 The footer **Tools** submenu has bulk actions (acknowledge all / forget
-all), a feedback link, and a one-click jump to your `config.json`.
+all), today's activity summary, a feedback link, and a one-click jump
+to your `config.json`.
 
 ## Configuration
 
@@ -134,7 +143,7 @@ The three fields you're most likely to touch:
 | `ack_minutes` | `60` | How long an acknowledged 🔵 session stays before fading to ⚪. |
 | `menubar_icon` | Claude.app glyph | Plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>`. |
 
-Full reference (all 11 fields, icon formats, compact mode for notched
+Full reference (all 12 fields, icon formats, compact mode for notched
 MacBooks, refresh cadence, sidecar files on disk):
 [docs/configuration.md](./docs/configuration.md).
 

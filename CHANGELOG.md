@@ -7,6 +7,127 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Hover tooltip surfaces what Claude is doing right now
+
+Hovering a session row now pops a native macOS tooltip with the freshest
+`tool_use` from the JSONL tail: `Read: main.py`, `Bash: pytest`,
+`Edit: src/parser.py`, etc. Glanceable answer to *"what is that session
+actually doing?"* without expanding the submenu. The parser keeps a
+short map of `tool name → input field` to pick the most meaningful arg
+(`command` for `Bash`, `file_path` for editors, `query` for search
+tools); unmapped tools fall back to the first string arg, so new tools
+get a sensible default until they're added explicitly. Reading is
+bounded to the trailing 64 KB — same window as `last_usage_tokens` —
+so the cost stays O(1) per session regardless of transcript size.
+
+Rows whose tail has no parseable `tool_use` simply render without a
+tooltip, rather than shadowing macOS's own *"right-click for menu"*
+hint with an empty value.
+
+### Context-burn warning between title and age
+
+Sessions that have consumed more context than
+`context_warning_threshold` (new config knob, default 80 %) now render
+an inline `· ⚠ {pct}%` token between the AI title and the right-hand
+age label. Yellow up to 90 %, red beyond — matches the yellow / red
+zones Claude Code's own CLI uses, so a single glance at the dropdown
+tells you which sessions are close to auto-compact. Below the
+threshold nothing extra is drawn; the existing `{N}% — {used}k/{total}k`
+gauge in the submenu stays available for the detail view.
+
+Pure rendering branch — `Session.context_used` was already computed
+per-tick, so this adds zero I/O. New `_format_context_warning` helper
++ six unit tests around it; `context_warning_threshold` is validated in
+`Config._from_mapping` against the `1..100` range, out-of-range and
+non-numeric values fall back to 80 with the usual warning to stderr.
+
+### Last user message as title fallback for new sessions
+
+When Claude Code hasn't generated an `ai-title` event yet (the very
+first turns of a freshly-started session), the row now shows the
+*latest* real user prompt as its title instead of falling all the way
+back to the project name. Previously this slot was the *first* prompt,
+which on a long-running unsummarised thread became increasingly stale
+the further the conversation drifted.
+
+`last_user_message_preview` tail-reads 128 KB of the transcript and
+filters out the noise Claude Code stores as `type:"user"` events
+alongside real prompts: `tool_result` payloads, IDE/harness wrappers
+(`<system-reminder>`, `<ide_opened_file>`, `<command-*>`, …) and the
+synthetic `[Request interrupted by user for tool use]` line. Only
+called when `meta.ai_title` is empty, so the warm path costs nothing.
+`TranscriptMeta.display_title` priority is now
+`ai_title → last_user_message → raw_title (= first prompt)`, with the
+old "first prompt" entry kept as a last-ditch fallback for transcripts
+whose tail didn't yield a parseable user event.
+
+Eight new tests across `TestUserPromptText`,
+`TestLastUserMessagePreview`, and `TestDisplayTitleFallback`.
+
+### Reveal-in-Finder on each row
+
+A new submenu entry under every session row — below *Forget* and
+*Delete…* — opens Finder with the session's JSONL transcript selected
+(`open -R ~/.claude/projects/<slug>/<sid>.jsonl`). Useful for
+inspecting raw JSONL, exporting a transcript, or jumping to the
+tool-results directory next to it. Silently no-ops if the transcript
+was already deleted via the *Delete…* action, so a stale click won't
+surface an error dialog.
+
+New `bin/reveal-session.sh` mirrors the session-id validation from
+`bin/delete-session.sh` (alphanumeric + `_-`, ≤ 64 chars) so a
+manually-passed value can't smuggle `find` predicates. Label
+`menu.reveal_in_finder` added across all eight locales.
+
+### Tools → Stats today
+
+A new entry in the *Tools* submenu pops a modal AppleScript dialog
+with today's Claude Code activity, aggregated from
+`~/.claude/projects/*/*.jsonl` since local midnight: number of active
+sessions, real user turns (filtered through the same `_user_prompt_text`
+that drives the title fallback so tool-results don't inflate the
+count), tokens with prompt-vs-cache split + cache-hit ratio, and the
+three projects with the most turns. JSONLs whose mtime is older than
+midnight are skipped before opening the file, and the per-transcript
+read is bounded to the trailing 64 KB for the usage block.
+
+Implementation lives in the plugin behind a new `--stats-today`
+subcommand; the `bin/stats-today.sh` wrapper exists only because
+SwiftBar binds menu actions to executable scripts. Seven new locale
+keys (`menu.stats_today`, `stats.title`, `stats.sessions`,
+`stats.turns`, `stats.turns_short`, `stats.tokens`,
+`stats.tokens_empty`, `stats.top_projects`) added across all eight
+locales.
+
+### `claude-agents-bar doctor` actually checks the install
+
+The `doctor` subcommand stopped at *"jq + python3 + SwiftBar.app are
+on disk"* — which says nothing about whether the plugin is actually
+wired up. It now runs five additional in-plugin checks behind a new
+`--doctor` subcommand on the plugin itself:
+
+* `hooks/` — all six required events (`SessionStart`,
+  `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`,
+  `Stop`) are registered in `~/.claude/settings.json` and point at
+  `agent-state.sh`. Names the missing events when they aren't.
+* `tsv/` — `~/.claude/agent-state.tsv` was written within the last
+  hour, i.e. some session has actually fired hooks recently.
+* `plugin/` — SwiftBar's `PluginDirectory` defaults preference is
+  set and contains a `claude-agents.*.py` symlink.
+* `perms/` — every `~/.claude/agent-state.*` sidecar is readable and
+  writable by the current user.
+* `editor/` — the configured `editor_url_scheme` resolves to an .app
+  bundle that's actually installed (the top symptom from
+  `docs/troubleshooting.md`: clicks on rows do nothing because the
+  user has VSCodium but kept the default `vscode://`).
+
+Each line prefixed with `[ok]` / `[warn]` / `[err]`, so the output
+stays greppable in CI logs or Homebrew formula tests. Hard errors
+(`err`) bubble up as a non-zero exit code; warnings don't, so the
+command remains advisory rather than a gate. Nine new tests in
+`TestDoctorChecks` covering the TSV/freshness, hook-registration,
+and editor-app branches.
+
 ### Region-aware locale resolution
 
 Locale codes from `defaults read -g AppleLocale` / `$LANG` /

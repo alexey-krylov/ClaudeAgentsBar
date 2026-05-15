@@ -9,11 +9,13 @@
   "menu.tools": "工具",
   "menu.ack_all": "全部确认",
   "menu.forget_all": "忘记所有会话",
+  "menu.stats_today": "今日统计…",
   "menu.suggest": "建议改进…",
   "menu.config": "配置…",
   "menu.forget_session": "忽略",
   "menu.delete_session": "删除…",
   "menu.mark_read": "标记为已读",
+  "menu.reveal_in_finder": "在访达中显示",
   "menu.no_sessions": "最近 {duration} 内没有会话",
 
   "title.no_title": "(无标题)",
@@ -34,5 +36,13 @@
   "dialog.not_found.title": "未找到会话",
   "dialog.not_found.body": "未找到会话 {sid} 的转录",
   "dialog.no_sid.title": "ClaudeAgentsBar",
-  "dialog.no_sid.body": "delete-session.sh 未收到会话 ID。"
+  "dialog.no_sid.body": "delete-session.sh 未收到会话 ID。",
+
+  "stats.title": "Claude Code — 今日",
+  "stats.sessions": "今日会话：{n}",
+  "stats.turns": "轮次：{n}",
+  "stats.turns_short": "{n} 轮",
+  "stats.tokens": "Token：{total}（输入 {prompt}，缓存命中 {cache_hit}%）",
+  "stats.tokens_empty": "Token：暂无数据",
+  "stats.top_projects": "活跃项目："
 }

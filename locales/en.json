@@ -9,11 +9,13 @@
   "menu.tools": "Tools",
   "menu.ack_all": "Acknowledge all",
   "menu.forget_all": "Forget all sessions",
+  "menu.stats_today": "Stats today…",
   "menu.suggest": "Suggest improvement…",
   "menu.config": "Configuration…",
   "menu.forget_session": "Forget",
   "menu.delete_session": "Delete…",
   "menu.mark_read": "Mark as read",
+  "menu.reveal_in_finder": "Reveal in Finder",
   "menu.no_sessions": "No sessions in the last {duration}",
 
   "title.no_title": "(no title)",
@@ -34,5 +36,13 @@
   "dialog.not_found.title": "Session not found",
   "dialog.not_found.body": "No transcript for session {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
-  "dialog.no_sid.body": "No session id passed to delete-session.sh."
+  "dialog.no_sid.body": "No session id passed to delete-session.sh.",
+
+  "stats.title": "Claude Code — today",
+  "stats.sessions": "Sessions today: {n}",
+  "stats.turns": "Turns: {n}",
+  "stats.turns_short": "{n} turns",
+  "stats.tokens": "Tokens: {total} (prompt {prompt}, cache-hit {cache_hit}%)",
+  "stats.tokens_empty": "Tokens: no usage data yet",
+  "stats.top_projects": "Top projects:"
 }

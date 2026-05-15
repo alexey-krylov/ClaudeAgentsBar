@@ -9,11 +9,13 @@
   "menu.tools": "Strumenti",
   "menu.ack_all": "Conferma tutto",
   "menu.forget_all": "Dimentica tutte le sessioni",
+  "menu.stats_today": "Statistiche di oggi…",
   "menu.suggest": "Suggerisci miglioramento…",
   "menu.config": "Configurazione…",
   "menu.forget_session": "Dimentica",
   "menu.delete_session": "Elimina…",
   "menu.mark_read": "Segna come letto",
+  "menu.reveal_in_finder": "Mostra nel Finder",
   "menu.no_sessions": "Nessuna sessione negli ultimi {duration}",
 
   "title.no_title": "(senza titolo)",
@@ -34,5 +36,13 @@
   "dialog.not_found.title": "Sessione non trovata",
   "dialog.not_found.body": "Nessuna trascrizione per la sessione {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
-  "dialog.no_sid.body": "Nessun ID di sessione passato a delete-session.sh."
+  "dialog.no_sid.body": "Nessun ID di sessione passato a delete-session.sh.",
+
+  "stats.title": "Claude Code — oggi",
+  "stats.sessions": "Sessioni oggi: {n}",
+  "stats.turns": "Turni: {n}",
+  "stats.turns_short": "{n} turni",
+  "stats.tokens": "Token: {total} (prompt {prompt}, cache {cache_hit} %)",
+  "stats.tokens_empty": "Token: nessun dato ancora",
+  "stats.top_projects": "Progetti principali:"
 }

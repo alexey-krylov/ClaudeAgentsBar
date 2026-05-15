@@ -1,5 +1,20 @@
 # Troubleshooting
 
+## First: run `doctor`
+
+Before working through the sections below, run:
+
+```bash
+claude-agents-bar doctor
+```
+
+It surfaces the most common breakages — missing dependency, hooks not
+registered, sidecar TSV gone stale, SwiftBar plugin symlink missing,
+the configured editor scheme pointing at an app that isn't installed —
+with a `[warn]` / `[err]` prefix per check. If everything reads `[ok]`
+and the plugin is still misbehaving, fall through to the specific
+sections below.
+
 ## Icon not showing on a notched MacBook
 
 On notched MacBooks (14"/16" Pro, the redesigned Air) the menu bar is

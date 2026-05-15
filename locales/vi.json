@@ -9,11 +9,13 @@
   "menu.tools": "Công cụ",
   "menu.ack_all": "Đánh dấu tất cả đã đọc",
   "menu.forget_all": "Quên tất cả phiên",
+  "menu.stats_today": "Thống kê hôm nay…",
   "menu.suggest": "Đề xuất cải tiến…",
   "menu.config": "Cấu hình…",
   "menu.forget_session": "Quên",
   "menu.delete_session": "Xóa…",
   "menu.mark_read": "Đánh dấu đã đọc",
+  "menu.reveal_in_finder": "Hiện trong Finder",
   "menu.no_sessions": "Không có phiên trong {duration} qua",
 
   "title.no_title": "(không có tiêu đề)",
@@ -34,5 +36,13 @@
   "dialog.not_found.title": "Không tìm thấy phiên",
   "dialog.not_found.body": "Không có bản ghi cho phiên {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
-  "dialog.no_sid.body": "Không có id phiên được truyền cho delete-session.sh."
+  "dialog.no_sid.body": "Không có id phiên được truyền cho delete-session.sh.",
+
+  "stats.title": "Claude Code — hôm nay",
+  "stats.sessions": "Phiên hôm nay: {n}",
+  "stats.turns": "Lượt: {n}",
+  "stats.turns_short": "{n} lượt",
+  "stats.tokens": "Token: {total} (prompt {prompt}, cache {cache_hit} %)",
+  "stats.tokens_empty": "Token: chưa có dữ liệu",
+  "stats.top_projects": "Dự án hàng đầu:"
 }

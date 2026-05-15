@@ -9,11 +9,13 @@
   "menu.tools": "Инструменты",
   "menu.ack_all": "Отметить все прочитанными",
   "menu.forget_all": "Забыть все сессии",
+  "menu.stats_today": "Статистика за сегодня…",
   "menu.suggest": "Предложить улучшение…",
   "menu.config": "Конфигурация…",
   "menu.forget_session": "Забыть",
   "menu.delete_session": "Удалить…",
   "menu.mark_read": "Отметить прочитанным",
+  "menu.reveal_in_finder": "Показать в Finder",
   "menu.no_sessions": "Нет сессий за последние {duration}",
 
   "title.no_title": "(без названия)",
@@ -34,5 +36,13 @@
   "dialog.not_found.title": "Сессия не найдена",
   "dialog.not_found.body": "Транскрипт для сессии {sid} не найден",
   "dialog.no_sid.title": "ClaudeAgentsBar",
-  "dialog.no_sid.body": "В delete-session.sh не передан id сессии."
+  "dialog.no_sid.body": "В delete-session.sh не передан id сессии.",
+
+  "stats.title": "Claude Code — сегодня",
+  "stats.sessions": "Сессий за сегодня: {n}",
+  "stats.turns": "Реплик: {n}",
+  "stats.turns_short": "{n} реплик",
+  "stats.tokens": "Токенов: {total} (промпт {prompt}, попаданий в кэш {cache_hit}%)",
+  "stats.tokens_empty": "Токенов: данных пока нет",
+  "stats.top_projects": "Самые активные проекты:"
 }

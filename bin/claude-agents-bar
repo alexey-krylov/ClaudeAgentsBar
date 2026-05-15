@@ -40,20 +40,34 @@ case "${1:-help}" in
         echo "claude-agents-bar $VERSION"
         ;;
     doctor)
+        # Two-layer doctor: shell-level checks for the binaries setup.sh
+        # itself relies on, then a Python pass for the deeper "is the
+        # plugin actually wired up?" checks that only the plugin knows
+        # how to perform (hook registration, TSV freshness, SwiftBar
+        # plugin symlink, sidecar permissions, editor .app).
+        any_missing=0
         if command -v jq >/dev/null; then
-            echo "jq:       ok ($(command -v jq))"
+            echo "[ok]   jq        $(command -v jq)"
         else
-            echo "jq:       MISSING (brew install jq)"
+            echo "[err]  jq        MISSING (brew install jq)"
+            any_missing=1
         fi
         if command -v python3 >/dev/null; then
-            echo "python3:  ok ($(command -v python3))"
+            echo "[ok]   python3   $(command -v python3)"
         else
-            echo "python3:  MISSING"
+            echo "[err]  python3   MISSING"
+            any_missing=1
         fi
         if [ -d /Applications/SwiftBar.app ]; then
-            echo "SwiftBar: ok (/Applications/SwiftBar.app)"
+            echo "[ok]   SwiftBar  /Applications/SwiftBar.app"
         else
-            echo "SwiftBar: MISSING (brew install --cask swiftbar)"
+            echo "[err]  SwiftBar  MISSING (brew install --cask swiftbar)"
+            any_missing=1
+        fi
+        # Only run the in-plugin checks when we have a usable Python; the
+        # plugin imports stdlib that an older interpreter might not have.
+        if [ "$any_missing" -eq 0 ] && [ -f "$HERE/../claude-agents.5s.py" ]; then
+            /usr/bin/python3 "$HERE/../claude-agents.5s.py" --doctor
         fi
         ;;
     help|--help|-h)

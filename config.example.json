@@ -52,5 +52,8 @@
   "compact": false,
 
   "// context_window_tokens": "Denominator for the per-session '{N}% — {used}k/{total}k' submenu indicator. Default 1000000 — matches Claude Opus 4.7 / Opus 4.6 / Sonnet 4.6, which is Anthropic's API default since 2026-04-23 and what Claude Code uses out of the box. Override down to 200000 when running Haiku 4.5 or Sonnet 4.5. Must be > 0; invalid values fall back to the default with a warning to SwiftBar's log.",
-  "context_window_tokens": 1000000
+  "context_window_tokens": 1000000,
+
+  "// context_warning_threshold": "Percent of context-window usage above which the row gets an inline '⚠ {pct}%' marker between the title and the age label. Default 80 (matches the yellow zone in Claude Code's own CLI). The marker turns red once usage crosses 90 %. Set to 100 to disable the warning while keeping the submenu gauge. Valid range: 1..100; out-of-range or non-int values fall back to 80.",
+  "context_warning_threshold": 80
 }

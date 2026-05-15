@@ -10,11 +10,13 @@
   "menu.tools": "工具",
   "menu.ack_all": "全部標示為已讀",
   "menu.forget_all": "忘記所有工作階段",
+  "menu.stats_today": "今日統計…",
   "menu.suggest": "建議改善…",
   "menu.config": "設定…",
   "menu.forget_session": "忽略",
   "menu.delete_session": "刪除…",
   "menu.mark_read": "標示為已讀",
+  "menu.reveal_in_finder": "在 Finder 中顯示",
   "menu.no_sessions": "最近 {duration} 內沒有工作階段",
 
   "title.no_title": "（無標題）",
@@ -35,5 +37,13 @@
   "dialog.not_found.title": "找不到工作階段",
   "dialog.not_found.body": "找不到工作階段 {sid} 的文字記錄",
   "dialog.no_sid.title": "ClaudeAgentsBar",
-  "dialog.no_sid.body": "delete-session.sh 未收到工作階段 ID。"
+  "dialog.no_sid.body": "delete-session.sh 未收到工作階段 ID。",
+
+  "stats.title": "Claude Code — 今日",
+  "stats.sessions": "今日工作階段：{n}",
+  "stats.turns": "輪次：{n}",
+  "stats.turns_short": "{n} 輪",
+  "stats.tokens": "Token：{total}（輸入 {prompt}，快取命中 {cache_hit}%）",
+  "stats.tokens_empty": "Token：暫無資料",
+  "stats.top_projects": "熱門專案："
 }

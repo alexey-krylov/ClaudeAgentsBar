@@ -125,6 +125,12 @@ _FORGET_LOCK_DIR = FORGET_PATH.with_suffix(FORGET_PATH.suffix + ".lock.d")
 #: Code appends events sequentially.
 JSONL_TAIL_BYTES = 64 * 1024
 
+#: Tail window for hunting the *latest* user prompt — used as the
+#: aiTitle fallback. Bigger than ``JSONL_TAIL_BYTES`` because we want
+#: to catch the most recent few turns, and a single rich turn (with
+#: pasted code or large tool outputs) can easily fill 64 KB on its own.
+JSONL_USER_TAIL_BYTES = 128 * 1024
+
 #: Upper bound for the per-tick scan that hunts for ``ai-title``. AI titles
 #: are emitted within the first few hundred lines (right after the first turn),
 #: so capping the scan keeps us cheap even when a transcript has megabytes of
@@ -307,6 +313,14 @@ class Config:
         SDK response carries the model name but not the context window,
         and no publicly stable Anthropic API surfaces it either; see
         ADR-0011 for the alternatives considered.
+    ``context_warning_threshold``
+        Percentage of context-window usage above which the main row
+        gets an inline ``⚠ {pct}%`` marker between the title and the
+        age label. Default ``80`` (matches the yellow zone in Claude
+        Code's own CLI). Valid range ``1..100``. The marker switches
+        from yellow to red once usage crosses 90 % so a glance tells
+        you how close auto-compact is. Set to ``100`` to effectively
+        disable the warning while keeping the submenu gauge.
     """
 
     window_sec: int = 3 * 3600
@@ -322,6 +336,7 @@ class Config:
     language: str = ""
     compact: bool = False
     context_window_tokens: int = 1_000_000
+    context_warning_threshold: int = 80
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -395,6 +410,21 @@ class Config:
         take("editor_url_scheme", "editor_url_scheme", str, _require_editor_scheme)
         take("language", "language", str)
         take("context_window_tokens", "context_window_tokens", int, _require_positive)
+
+        # Percent — keep in (0, 100]. Values outside that range are useless
+        # (≤0 fires the warning unconditionally, >100 is unreachable) so we
+        # drop them rather than silently clamping.
+        def _require_percent(n: int) -> int:
+            if not (1 <= n <= 100):
+                raise ValueError("must be in 1..100")
+            return n
+
+        take(
+            "context_warning_threshold",
+            "context_warning_threshold",
+            int,
+            _require_percent,
+        )
         # JSON booleans are native Python bool after json.loads; bool("false")
         # == True so we can't use the generic take() helper here.
         if "compact" in data and isinstance(data["compact"], bool):
@@ -636,11 +666,21 @@ class TranscriptMeta:
     raw_title: str = ""
     cwd: str = ""
     entrypoint: str = ""
+    last_user_message: str = ""
 
     @property
     def display_title(self) -> str:
-        """Title to show in the UI: prefer the AI summary, fall back to raw."""
-        return _shorten(self.ai_title or self.raw_title)
+        """Title to show in the UI.
+
+        Priority order: AI-generated summary → latest user prompt
+        (so a fresh session shows what the user just asked rather
+        than a stale opening line) → first user prompt (works on
+        truncated transcripts where the tail doesn't carry a parseable
+        user event yet).
+        """
+        return _shorten(
+            self.ai_title or self.last_user_message or self.raw_title
+        )
 
 
 @dataclass
@@ -675,6 +715,12 @@ class Session:
     #: stamped a transition yet) — :attr:`right_label` only consults this
     #: for the active states, so the value is meaningless otherwise.
     state_duration_sec: int = 0
+    #: One-line summary of the last assistant ``tool_use`` chunk
+    #: (e.g. ``"Read: main.py"``, ``"Bash: pytest"``). Empty when the
+    #: tail of the transcript has no parseable tool call — used as the
+    #: hover tooltip on the main row so a quick glance answers
+    #: "what is Claude doing right now?".
+    last_tool_use: str = ""
 
     @property
     def right_label(self) -> str:
@@ -763,6 +809,31 @@ def _humanize_age(seconds: int, lang: str = "en") -> str:
     if minutes == 0:
         return _t_for("age.hours", lang, n=hours)
     return _t_for("age.hours_minutes", lang, h=hours, m=minutes)
+
+
+def _format_context_warning(used: int, total: int, threshold: int) -> str:
+    """Render the inline ``⚠ {pct}%`` warning for the main row, or ``""``.
+
+    Returned string is wrapped in an ANSI colour escape: yellow while usage
+    sits between ``threshold`` and 90 %, red once it crosses 90 % (the
+    point at which Claude Code's CLI itself starts shouting). When the
+    session is below ``threshold`` we render nothing — the user already
+    sees the detailed ``{N}% — {used}k/{total}k`` line in the submenu,
+    and crowding every row with a green-zone gauge would defeat the
+    purpose of having a warning at all.
+
+    Mirrors the percent-used semantics rather than ``_format_context_left``
+    (percent remaining) so the threshold reads naturally as "warn at 80 %
+    consumed".
+    """
+    if total <= 0:
+        return ""
+    used_clamped = max(0, used)
+    pct_used = min(100, round(used_clamped / total * 100))
+    if pct_used < threshold:
+        return ""
+    color = _ANSI_WAITING if pct_used >= 90 else _ANSI_WORKING
+    return f"{color}⚠ {pct_used}%{_ANSI_RESET}"
 
 
 def _format_context_left(used: int, total: int) -> str:
@@ -1345,6 +1416,191 @@ def fallback_git_branch_from_jsonl(jsonl_path: Path) -> str:
     return matches[-1].decode("utf-8", errors="replace")
 
 
+#: System-injected ``type:"user"`` events that aren't really the user
+#: typing — Claude Code stores them in the transcript for continuity
+#: but they shouldn't surface as the row title.
+_USER_SYS_PREFIXES = (
+    "<system-reminder",
+    "<command-name",
+    "<command-message",
+    "<command-stdout",
+    "<command-stderr",
+    "<local-command-stdout",
+    "<ide_opened_file",
+    "<ide_selection",
+    "[Request interrupted",
+)
+
+
+def _user_prompt_text(content: object) -> str:
+    """Return the raw prompt text for a ``type:"user"`` event, or ``""``.
+
+    Filters out the noise that Claude Code stores as user-events alongside
+    real prompts: ``tool_result`` payloads (continuity for assistant tool
+    calls), IDE/harness wrappers (``<system-reminder>``, ``<ide_*>``,
+    ``<command-*>``) and the synthetic ``[Request interrupted …]`` line
+    Claude Code injects when a tool call is cancelled. What's left is
+    what the user actually typed — exactly what we want behind the
+    aiTitle fallback.
+    """
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list) and content:
+        first = content[0] if isinstance(content[0], dict) else {}
+        if first.get("type") != "text":
+            return ""
+        text = first.get("text", "")
+    else:
+        return ""
+    if not isinstance(text, str):
+        return ""
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    if stripped.startswith(_USER_SYS_PREFIXES):
+        return ""
+    return _clean_text(stripped)
+
+
+def last_user_message_preview(jsonl_path: Path) -> str:
+    """Return a one-line preview of the freshest user prompt, or ``""``.
+
+    Reads only the trailing :data:`JSONL_USER_TAIL_BYTES`, then walks the
+    chunk in order and keeps the *last* ``"type":"user"`` event whose
+    content survives :func:`_user_prompt_text`. Tail-only because
+    Claude Code appends events sequentially — the most recent prompt is
+    always at the end — and because reading the whole file every tick
+    would be a regression. The window can occasionally miss the very
+    last prompt if a single turn dumped more than 128 KB of tool output
+    afterwards; in that case the row falls back to whatever earlier
+    title source the transcript yielded.
+
+    Used purely as the aiTitle fallback in :attr:`TranscriptMeta.display_title`.
+    """
+    try:
+        size = jsonl_path.stat().st_size
+        if size == 0:
+            return ""
+        with jsonl_path.open("rb") as f:
+            f.seek(max(0, size - JSONL_USER_TAIL_BYTES))
+            data = f.read()
+    except OSError:
+        return ""
+    last = ""
+    for raw in data.splitlines():
+        if b'"type":"user"' not in raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if event.get("type") != "user":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+        text = _user_prompt_text(message.get("content"))
+        if text:
+            last = text
+    return last
+
+
+#: Short, recognisable "preview" input key per tool. Picks the first input
+#: argument that's likely to mean something at a glance — file path for
+#: editors, command for shells, query/pattern for search tools. Tools
+#: missing from the map render with just the tool name in the tooltip.
+_TOOL_INPUT_PREVIEW_KEY = {
+    "Bash": "command",
+    "Read": "file_path",
+    "Write": "file_path",
+    "Edit": "file_path",
+    "NotebookEdit": "notebook_path",
+    "Grep": "pattern",
+    "Glob": "pattern",
+    "WebFetch": "url",
+    "WebSearch": "query",
+    "ToolSearch": "query",
+    "Task": "description",
+    "Agent": "description",
+    "AskUserQuestion": "header",
+    "Skill": "skill",
+    "ScheduleWakeup": "reason",
+    "Monitor": "command",
+}
+
+
+def _summarise_tool_use(name: str, input_obj: object) -> str:
+    """Format one ``tool_use`` chunk as a one-line tooltip preview."""
+    if not isinstance(name, str) or not name:
+        return ""
+    if not isinstance(input_obj, dict):
+        return name
+    preview_key = _TOOL_INPUT_PREVIEW_KEY.get(name)
+    candidate = input_obj.get(preview_key) if preview_key else None
+    if not isinstance(candidate, str) or not candidate.strip():
+        # Generic fallback: the first string value the tool was called
+        # with — typically the most meaningful arg for tools not in the
+        # map above (and a sensible default for new tools we haven't
+        # explicitly modelled).
+        for value in input_obj.values():
+            if isinstance(value, str) and value.strip():
+                candidate = value
+                break
+    if not isinstance(candidate, str) or not candidate.strip():
+        return name
+    # Collapse newlines + tabs so the tooltip stays a single readable
+    # line (NSMenuItem.toolTip respects \n but multi-line tooltips
+    # crowd the menu and the preview is meant to be glanceable).
+    preview = " ".join(candidate.split())
+    if len(preview) > 60:
+        preview = preview[:59].rstrip() + "…"
+    return f"{name}: {preview}"
+
+
+def last_tool_use_summary(jsonl_path: Path) -> str:
+    """Return a one-line summary of the freshest assistant ``tool_use``, or ``""``.
+
+    Reads the trailing :data:`JSONL_TAIL_BYTES` and walks it in order,
+    keeping the last ``"type":"tool_use"`` chunk that yields a parseable
+    name. Used as the hover-tooltip on a session's main row so the user
+    can see *what Claude is doing right now* without expanding the
+    submenu. Bounded tail-read keeps it cheap regardless of transcript
+    size — same pattern as :func:`last_usage_tokens`.
+    """
+    try:
+        size = jsonl_path.stat().st_size
+        if size == 0:
+            return ""
+        with jsonl_path.open("rb") as f:
+            f.seek(max(0, size - JSONL_TAIL_BYTES))
+            data = f.read()
+    except OSError:
+        return ""
+    last_summary = ""
+    for raw in data.splitlines():
+        if b'"type":"tool_use"' not in raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for chunk in content:
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("type") != "tool_use":
+                continue
+            summary = _summarise_tool_use(chunk.get("name", ""), chunk.get("input"))
+            if summary:
+                last_summary = summary
+    return last_summary
+
+
 def last_usage_tokens(jsonl_path: Path) -> int | None:
     """Return the live context size from the freshest ``usage`` block, or ``None``.
 
@@ -1455,9 +1711,19 @@ def build_session(
     age = now - interaction_ts
 
     meta = read_transcript_meta(jsonl)
+    # AI-generated titles only appear after the first turn — for sessions
+    # whose first user message hasn't been summarized yet we fall back to
+    # the latest *real* user prompt (not first, since by then the
+    # conversation has often moved on). Only worth the extra tail-read
+    # when ``ai_title`` is missing.
+    if not meta.ai_title:
+        last_user = last_user_message_preview(jsonl)
+        if last_user:
+            meta = replace(meta, last_user_message=last_user)
     cwd = sidecar_cwd or meta.cwd
     branch = current_git_branch(cwd) or fallback_git_branch_from_jsonl(jsonl)
     context_used = last_usage_tokens(jsonl)
+    tool_summary = last_tool_use_summary(jsonl)
 
     state_duration_sec = (
         max(0, now - state_since) if hook_state in ACTIVE_HOOK_STATES else 0
@@ -1476,6 +1742,7 @@ def build_session(
         entrypoint=meta.entrypoint,
         context_used=context_used,
         state_duration_sec=state_duration_sec,
+        last_tool_use=tool_summary,
     )
 
 
@@ -1783,7 +2050,18 @@ def _print_session_row(session: Session) -> None:
     a plain folder line carrying the cwd itself so the path stays
     visible.
     """
-    label = f"{session.group.icon} {session.title} · {session.right_label_ansi}"
+    warning = ""
+    if session.context_used is not None:
+        warning = _format_context_warning(
+            session.context_used,
+            CONFIG.context_window_tokens,
+            CONFIG.context_warning_threshold,
+        )
+    warning_segment = f"{warning} · " if warning else ""
+    label = (
+        f"{session.group.icon} {session.title} · "
+        f"{warning_segment}{session.right_label_ansi}"
+    )
     href = f"{CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
     bin_dir = Path(__file__).resolve().parent / "bin"
     open_script = bin_dir / "open-session.sh"
@@ -1797,6 +2075,12 @@ def _print_session_row(session: Session) -> None:
         "font=Menlo",
         "ansi=true",
     ]
+    # Tooltip surfaces what Claude is doing right now (last tool call)
+    # so a hover answers the question without expanding the submenu.
+    # No tooltip when the tail had no parseable tool_use — empty string
+    # would just shadow the system "right-click for menu" hint.
+    if session.last_tool_use:
+        main_params.append(f"tooltip={_swiftbar_quote(session.last_tool_use)}")
     print(f"{label} | {' '.join(main_params)}")
 
     if session.group is RenderGroup.FRESH:
@@ -1824,6 +2108,14 @@ def _print_session_row(session: Session) -> None:
         f"param1={_swiftbar_quote(session.id)} "
         "terminal=false refresh=true "
         "sfimage=trash.fill sfcolor=systemRed"
+    )
+    reveal_script = bin_dir / "reveal-session.sh"
+    print(
+        f"--{_t('menu.reveal_in_finder')} | "
+        f"shell={_swiftbar_quote(str(reveal_script))} "
+        f"param1={_swiftbar_quote(session.id)} "
+        "terminal=false refresh=false "
+        "sfimage=folder.fill sfcolor=systemGray"
     )
     if session.git_branch:
         # Branch line doubles as the cwd surface: the path is verbose
@@ -1885,6 +2177,13 @@ def _print_footer() -> None:
         "terminal=false refresh=true "
         "sfimage=eraser.fill sfcolor=systemOrange"
     )
+    stats_script = bin_dir / "stats-today.sh"
+    print(
+        f"--{_t('menu.stats_today')} | "
+        f"shell={_swiftbar_quote(str(stats_script))} "
+        "terminal=false refresh=false "
+        "sfimage=chart.bar.fill sfcolor=systemPurple"
+    )
     print("-----")
     print(
         f"--{_t('menu.suggest')} | "
@@ -1941,6 +2240,383 @@ def _print_shell_strings() -> None:
         print(f"{var}={shlex.quote(value)}")
 
 
+#: Hook events the plugin needs registered in ``~/.claude/settings.json``.
+#: The doctor warns when any of these is missing; ``setup.sh`` writes
+#: all six. State keywords on the hook command line live in
+#: ``settings-hooks.json`` next to the script itself.
+_REQUIRED_HOOK_EVENTS = frozenset((
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Notification",
+    "Stop",
+))
+
+#: Editor URL scheme → expected .app bundle. Used by the doctor to warn
+#: when the configured editor isn't actually installed (the top
+#: symptom from docs/troubleshooting.md).
+_EDITOR_SCHEME_APP = {
+    "vscode://": "/Applications/Visual Studio Code.app",
+    "vscodium://": "/Applications/VSCodium.app",
+    "cursor://": "/Applications/Cursor.app",
+    "windsurf://": "/Applications/Windsurf.app",
+    "positron://": "/Applications/Positron.app",
+}
+
+
+def _doctor_check_tsv_freshness(now: int) -> tuple[str, str]:
+    """Did the hook write a TSV row within the last hour?"""
+    if not SIDECAR_PATH.exists():
+        return "warn", (
+            f"TSV missing ({SIDECAR_PATH}); has any Claude Code session "
+            "run since install?"
+        )
+    try:
+        mtime = int(SIDECAR_PATH.stat().st_mtime)
+    except OSError as exc:
+        return "err", f"can't stat {SIDECAR_PATH}: {exc}"
+    age_sec = now - mtime
+    if age_sec > 3600:
+        mins = age_sec // 60
+        return "warn", (
+            f"TSV last updated {mins}m ago — hooks may not be firing, "
+            "or no sessions have been active in the last hour"
+        )
+    return "ok", f"TSV fresh (updated {age_sec}s ago)"
+
+
+def _has_agent_state_hook(entries: object) -> bool:
+    """``True`` iff any matcher under an event runs ``agent-state.sh``."""
+    if not isinstance(entries, list):
+        return False
+    for matcher in entries:
+        if not isinstance(matcher, dict):
+            continue
+        for hook in matcher.get("hooks", []):
+            if isinstance(hook, dict) and "agent-state.sh" in hook.get("command", ""):
+                return True
+    return False
+
+
+def _doctor_check_hook_registration() -> tuple[str, str]:
+    """Are all six required hooks pointing at ``agent-state.sh``?"""
+    settings_path = HOME / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return "err", f"{settings_path} missing (run `claude-agents-bar setup`)"
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return "err", f"can't parse {settings_path}: {exc}"
+    hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
+    missing = sorted(
+        e for e in _REQUIRED_HOOK_EVENTS
+        if not _has_agent_state_hook(hooks.get(e))
+    )
+    if missing:
+        return "warn", (
+            f"hooks missing for {len(missing)} event(s): {', '.join(missing)} "
+            "— re-run `claude-agents-bar setup`"
+        )
+    return "ok", "all 6 hook events registered"
+
+
+def _doctor_check_swiftbar_plugin() -> tuple[str, str]:
+    """Is the plugin file visible inside SwiftBar's plugins directory?"""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/defaults", "read", "com.ameba.SwiftBar", "PluginDirectory"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "warn", f"can't query SwiftBar PluginDirectory: {exc}"
+    if result.returncode != 0:
+        return "warn", (
+            "SwiftBar PluginDirectory not set — open SwiftBar.app and "
+            "pick a plugin folder, then re-run `claude-agents-bar setup`"
+        )
+    plugin_dir = Path(result.stdout.strip()).expanduser()
+    if not plugin_dir.is_dir():
+        return "warn", f"PluginDirectory {plugin_dir} doesn't exist on disk"
+    candidates = list(plugin_dir.glob("claude-agents.*.py"))
+    if not candidates:
+        return "warn", (
+            f"no claude-agents.*.py in {plugin_dir} — "
+            "re-run `claude-agents-bar setup`"
+        )
+    return "ok", f"plugin linked in {plugin_dir}"
+
+
+def _doctor_check_sidecar_permissions() -> tuple[str, str]:
+    """Can the current user read/write every ``~/.claude/agent-state.*`` file?"""
+    pattern_dir = HOME / ".claude"
+    if not pattern_dir.exists():
+        # Nothing to check yet — fresh install before any hook fires.
+        return "ok", f"{pattern_dir} not present yet (no hook fires yet)"
+    bad = []
+    for path in pattern_dir.glob("agent-state.*"):
+        # We don't care about ``.lock.d`` directories — they're transient.
+        if path.suffix == ".d":
+            continue
+        if not os.access(path, os.R_OK):
+            bad.append(f"{path.name} not readable")
+        elif not os.access(path, os.W_OK):
+            bad.append(f"{path.name} not writable")
+    if bad:
+        return "warn", "; ".join(bad)
+    return "ok", "sidecars readable + writable"
+
+
+def _doctor_check_editor_app() -> tuple[str, str]:
+    """Is the .app that handles the configured ``editor_url_scheme`` installed?"""
+    scheme = CONFIG.editor_url_scheme
+    expected = _EDITOR_SCHEME_APP.get(scheme)
+    if expected is None:
+        return "ok", f"editor scheme {scheme!r} (custom; not auto-checked)"
+    if Path(expected).exists():
+        return "ok", f"editor scheme {scheme!r} → {expected}"
+    return "warn", (
+        f"editor scheme {scheme!r} expects {expected} which isn't installed "
+        "— clicks on rows will do nothing until you install it or change "
+        "``editor_url_scheme`` in the config"
+    )
+
+
+def _local_midnight_ts(now: int) -> int:
+    """Unix timestamp of today's local 00:00, derived from ``now``.
+
+    Used as the lower bound when filtering JSONL transcripts by mtime
+    for the "Stats today" summary.
+    """
+    local = time.localtime(now)
+    midnight = time.struct_time((
+        local.tm_year, local.tm_mon, local.tm_mday,
+        0, 0, 0,
+        local.tm_wday, local.tm_yday, local.tm_isdst,
+    ))
+    return int(time.mktime(midnight))
+
+
+def _format_token_count(n: int) -> str:
+    """Render a token count compactly: 1234 → '1.2K', 1_234_567 → '1.2M'."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def _collect_stats_today(now: int) -> dict:
+    """Aggregate today's activity across every JSONL under ``~/.claude/projects``.
+
+    Per-transcript fields surfaced:
+
+    * ``sessions`` — count of JSONLs whose mtime is on or after local
+      midnight. Approximates "sessions active today" — a session
+      started yesterday but still being used today counts here, which
+      is the intent.
+    * ``turns`` — total number of real user prompts (``type:"user"``
+      with a parseable text chunk that isn't a tool result or system
+      wrapper) seen today across all JSONLs.
+    * ``total_tokens`` / ``prompt_tokens`` / ``cache_read_tokens`` —
+      sums from each transcript's most recent ``usage`` block, gives
+      a rough "how much context did Claude crunch through today"
+      number. Cache reads dominate this; the cache-hit ratio is
+      derived from them.
+    * ``top_projects`` — list of ``(project_name, turn_count)`` tuples
+      sorted descending, capped at three.
+
+    Failures stay local: an unreadable JSONL is skipped rather than
+    aborting the aggregate. Matches the same fail-soft policy as the
+    render path.
+    """
+    midnight = _local_midnight_ts(now)
+    sessions = 0
+    turns = 0
+    total_tokens = 0
+    prompt_tokens = 0
+    cache_read_tokens = 0
+    per_project_turns: dict[str, int] = {}
+
+    if not PROJECTS_DIR.exists():
+        return {
+            "sessions": 0,
+            "turns": 0,
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "cache_read_tokens": 0,
+            "top_projects": [],
+        }
+
+    for project_dir in PROJECTS_DIR.iterdir():
+        if not project_dir.is_dir():
+            continue
+        for jsonl in project_dir.glob("*.jsonl"):
+            try:
+                mtime = int(jsonl.stat().st_mtime)
+            except OSError:
+                continue
+            if mtime < midnight:
+                continue
+            sessions += 1
+            project_turn_count = 0
+            try:
+                with jsonl.open("rb") as f:
+                    for raw in f:
+                        if b'"type":"user"' not in raw:
+                            continue
+                        try:
+                            event = json.loads(raw)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        if event.get("type") != "user":
+                            continue
+                        message = event.get("message")
+                        if not isinstance(message, dict):
+                            continue
+                        if _user_prompt_text(message.get("content")):
+                            project_turn_count += 1
+            except OSError:
+                continue
+            turns += project_turn_count
+            # Single tail-read covers all three token counters. The
+            # ``usage`` block we care about is always the last one in
+            # the file (Claude Code appends sequentially), so a bounded
+            # tail is enough and we don't pay for a second read just
+            # to split the total into prompt vs cache.
+            try:
+                size = jsonl.stat().st_size
+                with jsonl.open("rb") as f:
+                    f.seek(max(0, size - JSONL_TAIL_BYTES))
+                    data = f.read()
+                matches = _USAGE_BLOCK_RE.findall(data)
+                if matches:
+                    inp, cache_creation, cache_read = (int(x) for x in matches[-1])
+                    total_tokens += inp + cache_creation + cache_read
+                    prompt_tokens += inp
+                    cache_read_tokens += cache_read
+            except OSError:
+                pass
+            project_name = _project_name(_session_initial_cwd(jsonl), project_dir.name)
+            per_project_turns[project_name] = (
+                per_project_turns.get(project_name, 0) + project_turn_count
+            )
+
+    top_projects = sorted(
+        per_project_turns.items(), key=lambda kv: kv[1], reverse=True,
+    )[:3]
+    return {
+        "sessions": sessions,
+        "turns": turns,
+        "total_tokens": total_tokens,
+        "prompt_tokens": prompt_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "top_projects": top_projects,
+    }
+
+
+def _session_initial_cwd(jsonl: Path) -> str:
+    """Return the ``cwd`` from the first JSONL event, or ``""``.
+
+    Cheaper than ``read_transcript_meta`` when all we need is the cwd
+    to name the project. Reads at most the first 4 KB — the
+    ``SessionStart`` event always lands in the opening bytes.
+    """
+    try:
+        with jsonl.open("rb") as f:
+            for raw in f.read(4096).splitlines():
+                if b'"cwd"' not in raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if isinstance(event.get("cwd"), str):
+                    return event["cwd"]
+    except OSError:
+        pass
+    return ""
+
+
+def _format_stats_dialog(stats: dict) -> str:
+    """Format the aggregate as the multi-line body for the AppleScript dialog."""
+    lines: list[str] = []
+    lines.append(_t("stats.sessions", n=stats["sessions"]))
+    lines.append(_t("stats.turns", n=stats["turns"]))
+    total = stats["total_tokens"]
+    prompt = stats["prompt_tokens"]
+    cache_read = stats["cache_read_tokens"]
+    if total > 0:
+        cache_hit_pct = round(cache_read / total * 100) if total else 0
+        lines.append(_t(
+            "stats.tokens",
+            total=_format_token_count(total),
+            prompt=_format_token_count(prompt),
+            cache_hit=cache_hit_pct,
+        ))
+    else:
+        lines.append(_t("stats.tokens_empty"))
+    top = stats["top_projects"]
+    if top:
+        lines.append("")
+        lines.append(_t("stats.top_projects"))
+        for name, count in top:
+            lines.append(f"  {name} ({_t('stats.turns_short', n=count)})")
+    return "\n".join(lines)
+
+
+def _run_stats_today() -> int:
+    """Show today's activity summary in a modal AppleScript dialog."""
+    stats = _collect_stats_today(int(time.time()))
+    body = _format_stats_dialog(stats)
+    title = _t("stats.title")
+    # AppleScript wrapper is read from stdin and dialog values arrive as
+    # argv elements — same pattern as bin/delete-session.sh — so the
+    # body (which may contain user-controlled project names from disk)
+    # can't escape into AppleScript source.
+    script = (
+        'on run argv\n'
+        '  set theTitle to item 1 of argv\n'
+        '  set theBody to item 2 of argv\n'
+        '  try\n'
+        '    display dialog theBody with title theTitle '
+        'buttons {"OK"} default button "OK"\n'
+        '  end try\n'
+        'end run'
+    )
+    try:
+        subprocess.run(
+            ["/usr/bin/osascript", "-e", script, "--", title, body],
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _warn(f"stats-today dialog failed: {exc}")
+        return 1
+    return 0
+
+
+def _run_doctor() -> int:
+    """Run the in-plugin doctor checks. Returns non-zero only on hard errors."""
+    now = int(time.time())
+    checks = (
+        ("hooks/", _doctor_check_hook_registration()),
+        ("tsv/", _doctor_check_tsv_freshness(now)),
+        ("plugin/", _doctor_check_swiftbar_plugin()),
+        ("perms/", _doctor_check_sidecar_permissions()),
+        ("editor/", _doctor_check_editor_app()),
+    )
+    any_err = False
+    label_width = max(len(name) for name, _ in checks)
+    for name, (status, message) in checks:
+        # ``[ok]`` / ``[warn]`` / ``[err]`` keeps the output greppable and
+        # the colour-free output readable in CI logs / Homebrew formula tests.
+        tag = f"[{status}]"
+        print(f"{tag:<6} {name:<{label_width}}  {message}")
+        if status == "err":
+            any_err = True
+    return 1 if any_err else 0
+
+
 def main() -> int:
     """Render the menu once. Always exits zero so SwiftBar keeps polling.
 
@@ -1948,6 +2624,7 @@ def main() -> int:
 
     * ``--ack-fresh`` runs the bulk acknowledgement (Tools → Acknowledge all).
     * ``--print-strings`` emits localized shell variables for bin/*.sh.
+    * ``--doctor`` runs the deeper health checks behind ``claude-agents-bar doctor``.
 
     Anything else is treated as a render.
     """
@@ -1961,6 +2638,10 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--print-strings":
         _print_shell_strings()
         return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "--doctor":
+        return _run_doctor()
+    if len(sys.argv) > 1 and sys.argv[1] == "--stats-today":
+        return _run_stats_today()
     try:
         render(collect_sessions(int(time.time())))
     except Exception as exc:

@@ -13,10 +13,14 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import os
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _PLUGIN_PATH = Path(__file__).resolve().parent.parent / "claude-agents.5s.py"
 
@@ -113,6 +117,52 @@ class TestFormatContextLeft(unittest.TestCase):
         self.assertEqual(plugin._format_context_left(1000, total=0), "")
 
 
+class TestFormatContextWarning(unittest.TestCase):
+    """Inline ``⚠ {pct}%`` marker between session title and the age label."""
+
+    def test_below_threshold_yields_empty(self):
+        # 50% used vs threshold 80% — no warning, the submenu gauge already
+        # covers the green-zone information.
+        self.assertEqual(
+            plugin._format_context_warning(100_000, total=200_000, threshold=80),
+            "",
+        )
+
+    def test_at_threshold_renders_yellow(self):
+        # Boundary: exactly at the threshold counts as "above" — earliest
+        # signal the user can act on.
+        out = plugin._format_context_warning(160_000, total=200_000, threshold=80)
+        self.assertIn("⚠ 80%", out)
+        self.assertIn(plugin._ANSI_WORKING, out)
+        self.assertTrue(out.endswith(plugin._ANSI_RESET))
+
+    def test_below_ninety_stays_yellow(self):
+        out = plugin._format_context_warning(178_000, total=200_000, threshold=80)
+        self.assertIn("⚠ 89%", out)
+        self.assertIn(plugin._ANSI_WORKING, out)
+        self.assertNotIn(plugin._ANSI_WAITING, out)
+
+    def test_at_or_above_ninety_flips_to_red(self):
+        # Crossing 90 % is the "auto-compact soon" line — escalate the
+        # ANSI colour from yellow to red so the row visibly screams.
+        out = plugin._format_context_warning(180_000, total=200_000, threshold=80)
+        self.assertIn("⚠ 90%", out)
+        self.assertIn(plugin._ANSI_WAITING, out)
+
+    def test_over_budget_clamps_to_hundred(self):
+        # Same clamp semantics as ``_format_context_left`` — a transcript
+        # that briefly overshoots its window should not print "104%".
+        out = plugin._format_context_warning(250_000, total=200_000, threshold=80)
+        self.assertIn("⚠ 100%", out)
+        self.assertIn(plugin._ANSI_WAITING, out)
+
+    def test_invalid_total_yields_empty(self):
+        self.assertEqual(
+            plugin._format_context_warning(1000, total=0, threshold=80),
+            "",
+        )
+
+
 class TestLastUsageTokens(unittest.TestCase):
     """Parse the last ``"usage":{…}`` block out of a JSONL transcript tail."""
 
@@ -148,6 +198,266 @@ class TestLastUsageTokens(unittest.TestCase):
 
     def test_returns_none_for_missing_file(self):
         self.assertIsNone(plugin.last_usage_tokens(Path("/nonexistent/path.jsonl")))
+
+
+class TestUserPromptText(unittest.TestCase):
+    """Strip noise out of a ``type:"user"`` event so only real prompts remain."""
+
+    def test_plain_text_chunk_returns_text(self):
+        content = [{"type": "text", "text": "Hello"}]
+        self.assertEqual(plugin._user_prompt_text(content), "Hello")
+
+    def test_tool_result_is_dropped(self):
+        # Claude Code stores assistant tool-results as user-events for
+        # transcript continuity; they must not surface as the row title.
+        content = [{"type": "tool_result", "content": "File created"}]
+        self.assertEqual(plugin._user_prompt_text(content), "")
+
+    def test_system_reminder_wrapper_is_dropped(self):
+        # IDE/harness injects these; the user didn't type them.
+        for prefix in (
+            "<system-reminder>", "<ide_opened_file>", "<command-name>",
+            "<command-stdout>", "<local-command-stdout>", "<ide_selection>",
+        ):
+            content = [{"type": "text", "text": f"{prefix}noise</tag>"}]
+            self.assertEqual(
+                plugin._user_prompt_text(content), "",
+                f"prefix {prefix!r} must be filtered out",
+            )
+
+    def test_interrupted_marker_is_dropped(self):
+        # Claude Code injects this synthetic line when a tool call is
+        # cancelled — not a user prompt.
+        content = [{"type": "text", "text": "[Request interrupted by user for tool use]"}]
+        self.assertEqual(plugin._user_prompt_text(content), "")
+
+    def test_empty_content_returns_empty(self):
+        self.assertEqual(plugin._user_prompt_text(None), "")
+        self.assertEqual(plugin._user_prompt_text([]), "")
+        self.assertEqual(plugin._user_prompt_text(""), "")
+
+    def test_string_content_unwraps_slash_commands(self):
+        # _clean_text turns <command-message> + <command-args> into '/foo bar'.
+        content = "<command-message>foo</command-message><command-args>bar</command-args>"
+        # Starts with '<' so _user_prompt_text skips it — that's fine, the
+        # alternative would mis-classify legitimate user inline XML; slash
+        # commands themselves rarely become the aiTitle fallback anyway.
+        self.assertEqual(plugin._user_prompt_text(content), "")
+
+
+class TestLastUserMessagePreview(unittest.TestCase):
+    """Tail-scan a JSONL transcript for the freshest real user prompt."""
+
+    def _write(self, body: str) -> Path:
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return path
+
+    def test_picks_latest_user_prompt_not_first(self):
+        # The whole point of the fallback: when the conversation has moved
+        # on, the latest prompt is more informative than the opening one.
+        body = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"First question"}]}}\n'
+            '{"type":"assistant","message":{"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}\n'
+            '{"type":"user","message":{"content":[{"type":"text","text":"Follow-up question"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_user_message_preview(self._write(body)),
+            "Follow-up question",
+        )
+
+    def test_skips_tool_results_between_prompts(self):
+        body = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"Real prompt"}]}}\n'
+            '{"type":"user","message":{"content":[{"type":"tool_result","content":"tool output"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_user_message_preview(self._write(body)),
+            "Real prompt",
+        )
+
+    def test_skips_system_reminder_wrappers(self):
+        body = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"Real prompt"}]}}\n'
+            '{"type":"user","message":{"content":[{"type":"text","text":"<system-reminder>do X</system-reminder>"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_user_message_preview(self._write(body)),
+            "Real prompt",
+        )
+
+    def test_returns_empty_when_no_real_prompts(self):
+        body = (
+            '{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]}}\n'
+            '{"type":"user","message":{"content":[{"type":"text","text":"<system-reminder>noise</system-reminder>"}]}}\n'
+        )
+        self.assertEqual(plugin.last_user_message_preview(self._write(body)), "")
+
+    def test_returns_empty_for_empty_file(self):
+        self.assertEqual(plugin.last_user_message_preview(self._write("")), "")
+
+    def test_returns_empty_for_missing_file(self):
+        self.assertEqual(
+            plugin.last_user_message_preview(Path("/nonexistent/path.jsonl")),
+            "",
+        )
+
+    def test_malformed_lines_dont_crash(self):
+        # A truncated JSON line in the middle of the tail must not abort
+        # the scan — we silently skip and keep going.
+        body = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"Good"}]}}\n'
+            '{"type":"user","message":{"content":[{"type":"text",\n'  # truncated
+            '{"type":"user","message":{"content":[{"type":"text","text":"Latest"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_user_message_preview(self._write(body)),
+            "Latest",
+        )
+
+
+class TestSummariseToolUse(unittest.TestCase):
+    """Format one ``tool_use`` chunk for the hover tooltip."""
+
+    def test_bash_uses_command(self):
+        self.assertEqual(
+            plugin._summarise_tool_use("Bash", {"command": "pytest -q"}),
+            "Bash: pytest -q",
+        )
+
+    def test_read_uses_file_path(self):
+        self.assertEqual(
+            plugin._summarise_tool_use("Read", {"file_path": "main.py"}),
+            "Read: main.py",
+        )
+
+    def test_unknown_tool_falls_back_to_first_string_arg(self):
+        # Sensible default for tools we haven't explicitly mapped — still
+        # better than just rendering the bare tool name.
+        self.assertEqual(
+            plugin._summarise_tool_use("MyTool", {"thing": "the-thing"}),
+            "MyTool: the-thing",
+        )
+
+    def test_no_useful_input_falls_back_to_name(self):
+        # TodoWrite-style tools whose input is a list of objects (no string
+        # values at the top level) — render just the bare tool name rather
+        # than dumping JSON in the tooltip.
+        self.assertEqual(
+            plugin._summarise_tool_use("TodoWrite", {"todos": [{"x": 1}]}),
+            "TodoWrite",
+        )
+
+    def test_multiline_input_collapsed_to_single_line(self):
+        # NSMenuItem.toolTip respects newlines but a multi-line tooltip
+        # crowds the menu. Collapse whitespace runs.
+        out = plugin._summarise_tool_use(
+            "Bash", {"command": "echo foo\n   echo bar\n\techo baz"},
+        )
+        self.assertEqual(out, "Bash: echo foo echo bar echo baz")
+
+    def test_long_preview_truncates_with_ellipsis(self):
+        long = "x" * 200
+        out = plugin._summarise_tool_use("Read", {"file_path": long})
+        self.assertTrue(out.startswith("Read: "))
+        self.assertTrue(out.endswith("…"))
+        # Tool name + ": " + 59 chars + "…" — keeps the tooltip glanceable.
+        self.assertLessEqual(len(out), len("Read: ") + 60)
+
+    def test_empty_name_returns_empty(self):
+        self.assertEqual(plugin._summarise_tool_use("", {"command": "x"}), "")
+
+    def test_non_dict_input_returns_just_name(self):
+        self.assertEqual(plugin._summarise_tool_use("Bash", None), "Bash")
+        self.assertEqual(plugin._summarise_tool_use("Bash", "raw"), "Bash")
+
+
+class TestLastToolUseSummary(unittest.TestCase):
+    """Tail-scan a JSONL transcript for the freshest ``tool_use`` chunk."""
+
+    def _write(self, body: str) -> Path:
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return path
+
+    def test_returns_latest_tool_use(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"old.py"}}]}}\n'
+            '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"pytest"}}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_tool_use_summary(self._write(body)),
+            "Bash: pytest",
+        )
+
+    def test_returns_empty_when_no_tool_use(self):
+        body = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n'
+        )
+        self.assertEqual(plugin.last_tool_use_summary(self._write(body)), "")
+
+    def test_returns_empty_for_empty_file(self):
+        self.assertEqual(plugin.last_tool_use_summary(self._write("")), "")
+
+    def test_returns_empty_for_missing_file(self):
+        self.assertEqual(
+            plugin.last_tool_use_summary(Path("/nonexistent/path.jsonl")),
+            "",
+        )
+
+    def test_malformed_lines_dont_crash(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.py"}}]}}\n'
+            'not-json{\n'
+            '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"b.py"}}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_tool_use_summary(self._write(body)),
+            "Edit: b.py",
+        )
+
+
+class TestDisplayTitleFallback(unittest.TestCase):
+    """``TranscriptMeta.display_title`` picks the right source by priority."""
+
+    def test_ai_title_wins_when_present(self):
+        meta = plugin.TranscriptMeta(
+            ai_title="Generated summary",
+            raw_title="First user message",
+            last_user_message="Latest user prompt",
+        )
+        self.assertEqual(meta.display_title, "Generated summary")
+
+    def test_last_user_message_is_preferred_over_raw_when_ai_missing(self):
+        # The whole point of the new feature: when aiTitle hasn't been
+        # generated yet, show what the user *just* asked, not their opening.
+        meta = plugin.TranscriptMeta(
+            ai_title="",
+            raw_title="First user message",
+            last_user_message="Follow-up about feature X",
+        )
+        self.assertEqual(meta.display_title, "Follow-up about feature X")
+
+    def test_raw_title_used_when_no_ai_and_no_last(self):
+        # Tail might not yield a parseable last_user_message (e.g. a single
+        # giant pasted code block that pushed the prompt outside the tail
+        # window). Fall back to first user message rather than rendering
+        # the row as untitled.
+        meta = plugin.TranscriptMeta(
+            ai_title="",
+            raw_title="First user message",
+            last_user_message="",
+        )
+        self.assertEqual(meta.display_title, "First user message")
 
 
 # --------------------------------------------------------------------------- #
@@ -864,6 +1174,32 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"context_window_tokens": "nope"})
         self.assertEqual(config.context_window_tokens, 1_000_000)
 
+    def test_context_warning_threshold_default(self):
+        # Default 80 % matches Claude Code's own yellow zone — early enough
+        # to act on, late enough to avoid noise on regular sessions.
+        self.assertEqual(plugin.Config().context_warning_threshold, 80)
+
+    def test_context_warning_threshold_override(self):
+        config = plugin.Config._from_mapping({"context_warning_threshold": 70})
+        self.assertEqual(config.context_warning_threshold, 70)
+
+    def test_context_warning_threshold_rejects_out_of_range(self):
+        # 0 fires unconditionally and >100 is unreachable — neither is
+        # what the user wants, so fall back to the default rather than
+        # quietly clamping into a confused state.
+        for bogus in (0, -10, 101, 200):
+            config = plugin.Config._from_mapping(
+                {"context_warning_threshold": bogus}
+            )
+            self.assertEqual(
+                config.context_warning_threshold, 80,
+                f"out-of-range threshold={bogus!r} must fall back",
+            )
+
+    def test_context_warning_threshold_rejects_garbage(self):
+        config = plugin.Config._from_mapping({"context_warning_threshold": "nope"})
+        self.assertEqual(config.context_warning_threshold, 80)
+
     def test_editor_url_scheme_default(self):
         self.assertEqual(plugin.Config().editor_url_scheme, "vscode://")
 
@@ -1151,6 +1487,175 @@ class TestSwiftbarQuote(unittest.TestCase):
         # Embedded double-quotes would close our wrapping prematurely;
         # replace with single quotes so the value still parses safely.
         self.assertEqual(plugin._swiftbar_quote('a "b" c'), '"a \'b\' c"')
+
+
+class TestStatsHelpers(unittest.TestCase):
+    """Pure helpers for the ``Tools → Stats today`` summary."""
+
+    def test_format_token_count_under_thousand(self):
+        self.assertEqual(plugin._format_token_count(0), "0")
+        self.assertEqual(plugin._format_token_count(999), "999")
+
+    def test_format_token_count_thousands(self):
+        self.assertEqual(plugin._format_token_count(1_500), "1.5K")
+        self.assertEqual(plugin._format_token_count(120_000), "120.0K")
+
+    def test_format_token_count_millions(self):
+        self.assertEqual(plugin._format_token_count(1_800_000), "1.8M")
+
+    def test_local_midnight_is_today_zero_hour(self):
+        now = int(time.time())
+        midnight = plugin._local_midnight_ts(now)
+        # The struct decomposed from the result must read 00:00:00 in
+        # local time and share the calendar date with ``now``.
+        m = time.localtime(midnight)
+        n = time.localtime(now)
+        self.assertEqual((m.tm_hour, m.tm_min, m.tm_sec), (0, 0, 0))
+        self.assertEqual((m.tm_year, m.tm_mon, m.tm_mday),
+                         (n.tm_year, n.tm_mon, n.tm_mday))
+        self.assertLessEqual(midnight, now)
+
+    def test_format_stats_dialog_empty_state(self):
+        # Brand new install: zero sessions, no tokens, no top projects.
+        # Force English so assertions don't depend on the host locale.
+        with patch.object(plugin, "_lang", return_value="en"):
+            body = plugin._format_stats_dialog({
+                "sessions": 0, "turns": 0,
+                "total_tokens": 0, "prompt_tokens": 0, "cache_read_tokens": 0,
+                "top_projects": [],
+            })
+        # Tokens line should show the "no usage data yet" variant — not
+        # a confusing "0 (prompt 0, cache-hit 0%)" sentence.
+        self.assertIn("Tokens", body)
+        self.assertNotIn("Top projects", body)
+
+    def test_format_stats_dialog_with_projects(self):
+        with patch.object(plugin, "_lang", return_value="en"):
+            body = plugin._format_stats_dialog({
+                "sessions": 5, "turns": 100,
+                "total_tokens": 1_000_000, "prompt_tokens": 200_000,
+                "cache_read_tokens": 500_000,
+                "top_projects": [("FooRepo", 60), ("BarRepo", 40)],
+            })
+        self.assertIn("Sessions today: 5", body)
+        self.assertIn("Turns: 100", body)
+        self.assertIn("1.0M", body)
+        # 500K / 1M → 50 % cache-hit
+        self.assertIn("50%", body)
+        self.assertIn("FooRepo", body)
+        self.assertIn("BarRepo", body)
+
+
+class TestDoctorChecks(unittest.TestCase):
+    """In-plugin doctor checks behind ``claude-agents-bar doctor``."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="cabar-doctor-"))
+        self.addCleanup(self._wipe)
+
+    def _wipe(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_tsv_fresh_returns_ok(self):
+        sidecar = self.tmpdir / "agent-state.tsv"
+        sidecar.write_text("abc\tidle\t1\tSessionStart\t/x\t1\n", encoding="utf-8")
+        with patch.object(plugin, "SIDECAR_PATH", sidecar):
+            status, _ = plugin._doctor_check_tsv_freshness(int(time.time()))
+        self.assertEqual(status, "ok")
+
+    def test_tsv_stale_returns_warn(self):
+        sidecar = self.tmpdir / "agent-state.tsv"
+        sidecar.write_text("row\n", encoding="utf-8")
+        with patch.object(plugin, "SIDECAR_PATH", sidecar):
+            # Simulate "last written 2 hours ago" — easier than sleeping
+            # by setting an explicit mtime.
+            os.utime(sidecar, (time.time(), time.time() - 7200))
+            status, message = plugin._doctor_check_tsv_freshness(int(time.time()))
+        self.assertEqual(status, "warn")
+        self.assertIn("last updated", message)
+
+    def test_tsv_missing_returns_warn(self):
+        missing = self.tmpdir / "no-such.tsv"
+        with patch.object(plugin, "SIDECAR_PATH", missing):
+            status, _ = plugin._doctor_check_tsv_freshness(int(time.time()))
+        self.assertEqual(status, "warn")
+
+    def test_hook_registration_all_present_ok(self):
+        settings = self.tmpdir / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        payload = {
+            "hooks": {
+                event: [{"hooks": [{
+                    "type": "command",
+                    "command": "${HOME}/.claude/hooks/agent-state.sh idle",
+                }]}]
+                for event in plugin._REQUIRED_HOOK_EVENTS
+            }
+        }
+        settings.write_text(json.dumps(payload), encoding="utf-8")
+        with patch.object(plugin, "HOME", self.tmpdir):
+            status, _ = plugin._doctor_check_hook_registration()
+        self.assertEqual(status, "ok")
+
+    def test_hook_registration_missing_event_warns(self):
+        # Drop two events from settings.json — doctor must report them.
+        settings = self.tmpdir / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        payload = {
+            "hooks": {
+                event: [{"hooks": [{
+                    "type": "command",
+                    "command": "${HOME}/.claude/hooks/agent-state.sh idle",
+                }]}]
+                for event in plugin._REQUIRED_HOOK_EVENTS
+                if event not in ("Notification", "Stop")
+            }
+        }
+        settings.write_text(json.dumps(payload), encoding="utf-8")
+        with patch.object(plugin, "HOME", self.tmpdir):
+            status, message = plugin._doctor_check_hook_registration()
+        self.assertEqual(status, "warn")
+        self.assertIn("Notification", message)
+        self.assertIn("Stop", message)
+
+    def test_hook_registration_missing_settings_returns_err(self):
+        # No settings.json on disk at all — a hard error, the plugin
+        # can't possibly receive events without it.
+        with patch.object(plugin, "HOME", self.tmpdir):
+            status, _ = plugin._doctor_check_hook_registration()
+        self.assertEqual(status, "err")
+
+    def test_editor_app_present_ok(self):
+        # CONFIG is frozen → can't mutate; swap the whole singleton.
+        new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="vscode://")
+        with patch.object(
+            plugin, "_EDITOR_SCHEME_APP", {"vscode://": str(self.tmpdir)},
+        ), patch.object(plugin, "CONFIG", new_config):
+            status, message = plugin._doctor_check_editor_app()
+        self.assertEqual(status, "ok")
+        self.assertIn(str(self.tmpdir), message)
+
+    def test_editor_app_missing_warns(self):
+        missing = self.tmpdir / "Nope.app"
+        new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="vscode://")
+        with patch.object(
+            plugin, "_EDITOR_SCHEME_APP", {"vscode://": str(missing)},
+        ), patch.object(plugin, "CONFIG", new_config):
+            status, message = plugin._doctor_check_editor_app()
+        self.assertEqual(status, "warn")
+        self.assertIn("isn't installed", message)
+
+    def test_editor_app_custom_scheme_is_ok_without_check(self):
+        # Schemes outside the allowlist are still legal at runtime
+        # (extended via the editor_url_scheme allowlist) and we can't
+        # know which .app handles them — say so explicitly rather than
+        # warning by default.
+        new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="myeditor://")
+        with patch.object(plugin, "_EDITOR_SCHEME_APP", {}), \
+             patch.object(plugin, "CONFIG", new_config):
+            status, _ = plugin._doctor_check_editor_app()
+        self.assertEqual(status, "ok")
 
 
 if __name__ == "__main__":
