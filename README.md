@@ -100,11 +100,9 @@ stale). Each row shows the AI-generated title and a coloured right
 label: `working`, `needs you`, or `Xm ago`. Above 80 % context usage
 the row gets an inline `⚠ {pct}%` warning between the title and the
 age (red past 90 %), so a glance tells you which sessions are close to
-auto-compact. Hover any row for a tooltip with the current `tool_use`
-(`Read: main.py`, `Bash: pytest`, …) so you can see what each session
-is doing without expanding it. Click a row to open the session in your
-editor — VSCode by default, VSCodium and Cursor work too (one-line
-`editor_url_scheme` change, see
+auto-compact. Click a row to open the session in your editor — VSCode
+by default, VSCodium and Cursor work too (one-line `editor_url_scheme`
+change, see
 [docs/configuration.md](./docs/configuration.md#all-fields)).
 
 Hover a row for its submenu:
@@ -115,7 +113,8 @@ Hover a row for its submenu:
   state.
 - **Reveal in Finder** — open the JSONL transcript's folder with the
   file selected.
-- Read-only context-window % and current git branch.
+- Read-only "currently doing" (the last `tool_use`, e.g. `Read: main.py`
+  or `Bash: pytest`), current git branch, and context-window %.
 
 The footer **Tools** submenu has bulk actions (acknowledge all / forget
 all), today's activity summary, a feedback link, and a one-click jump

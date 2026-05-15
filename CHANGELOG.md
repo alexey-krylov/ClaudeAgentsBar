@@ -7,22 +7,27 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
-### Hover tooltip surfaces what Claude is doing right now
+### "Currently doing" line in each session's submenu
 
-Hovering a session row now pops a native macOS tooltip with the freshest
+Every session's submenu picked up a read-only row showing the freshest
 `tool_use` from the JSONL tail: `Read: main.py`, `Bash: pytest`,
-`Edit: src/parser.py`, etc. Glanceable answer to *"what is that session
-actually doing?"* without expanding the submenu. The parser keeps a
-short map of `tool name → input field` to pick the most meaningful arg
-(`command` for `Bash`, `file_path` for editors, `query` for search
-tools); unmapped tools fall back to the first string arg, so new tools
-get a sensible default until they're added explicitly. Reading is
-bounded to the trailing 64 KB — same window as `last_usage_tokens` —
-so the cost stays O(1) per session regardless of transcript size.
+`Edit: src/parser.py`, etc. Glanceable answer to *"what is that
+session actually doing?"* — sits between the action items
+(*Mark as read* / *Forget* / *Delete…* / *Reveal in Finder*) and the
+existing metadata lines (branch, context %), under a `bolt.fill` SF
+Symbol. The parser keeps a short map of `tool name → input field` to
+pick the most meaningful arg (`command` for `Bash`, `file_path` for
+editors, `query` for search tools); unmapped tools fall back to the
+first string arg, so new tools get a sensible default until they're
+added explicitly. Reading is bounded to the trailing 64 KB — same
+window as `last_usage_tokens` — so the cost stays O(1) per session
+regardless of transcript size.
 
-Rows whose tail has no parseable `tool_use` simply render without a
-tooltip, rather than shadowing macOS's own *"right-click for menu"*
-hint with an empty value.
+The first cut attached the summary as the main row's NSMenuItem
+tooltip, but macOS auto-expands the submenu on hover and that win
+races out the tooltip in practice — a dedicated submenu row is both
+discoverable and reliably visible. Rows whose tail has no parseable
+`tool_use` simply omit the line.
 
 ### Context-burn warning between title and age
 

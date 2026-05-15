@@ -2075,12 +2075,6 @@ def _print_session_row(session: Session) -> None:
         "font=Menlo",
         "ansi=true",
     ]
-    # Tooltip surfaces what Claude is doing right now (last tool call)
-    # so a hover answers the question without expanding the submenu.
-    # No tooltip when the tail had no parseable tool_use — empty string
-    # would just shadow the system "right-click for menu" hint.
-    if session.last_tool_use:
-        main_params.append(f"tooltip={_swiftbar_quote(session.last_tool_use)}")
     print(f"{label} | {' '.join(main_params)}")
 
     if session.group is RenderGroup.FRESH:
@@ -2117,6 +2111,15 @@ def _print_session_row(session: Session) -> None:
         "terminal=false refresh=false "
         "sfimage=folder.fill sfcolor=systemGray"
     )
+    # "Currently doing" — read-only row showing the freshest tool_use
+    # from the JSONL tail. Lives in the submenu rather than as the
+    # main row's NSMenuItem.toolTip because macOS auto-expands the
+    # submenu on hover, which would race the tooltip and usually win.
+    if session.last_tool_use:
+        print(
+            f"--{session.last_tool_use} | "
+            "font=Menlo color=#999999 sfimage=bolt.fill"
+        )
     if session.git_branch:
         # Branch line doubles as the cwd surface: the path is verbose
         # enough that promoting it to the visible label would crowd the
