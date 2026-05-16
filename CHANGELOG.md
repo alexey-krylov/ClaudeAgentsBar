@@ -7,6 +7,35 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### A session only enters the menu after real agent activity
+
+Tightening over the previous "don't paint sessions yellow or green
+on tab switches" fix. The earlier branch still let untouched
+sessions leak in as blue (`ACKNOWLEDGED`): Claude Code writes a
+`SessionStart` event into the JSONL transcript on every IDE tab
+switch, which updates the file's mtime — and `collect_sessions`
+treated any in-window JSONL as a renderable session, falling back to
+`idle` for those without a TSV row. So clicking through a sidebar
+full of sessions filled the menu with blue rows you'd never actually
+worked with.
+
+The new rule: a session appears in the menu only after a real hook
+event has fired for it. `SessionStart` is no longer registered at
+all (it doesn't reflect agent activity), `collect_sessions` filters
+out any JSONL whose session id is missing from `agent-state.tsv`,
+and `_doctor_check_hook_registration` now expects 5 events instead
+of 6. The five surviving hooks — `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, `Notification`, `Stop` — between them cover every
+state transition the menu cares about.
+
+`hooks/agent-state.sh` is back to a plain `{working,waiting,idle}`
+switch; the `session-start` pseudo-state introduced one branch ago
+is gone (an unknown argument is still a silent no-op, so stale
+registrations from a previous version don't crash). `setup.sh`
+already idempotently purges old `agent-state.sh` matchers from
+`settings.json`, including the obsolete `SessionStart` one, so a
+re-run cleans up after itself.
+
 ### Don't flash sessions yellow or green on IDE tab switches
 
 `SessionStart` fires not only on a genuine cold start but also when

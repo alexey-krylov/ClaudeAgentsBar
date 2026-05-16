@@ -1803,8 +1803,17 @@ def collect_sessions(now: int) -> list[Session]:
             gc_forget(orphan_forget)
             for sid in orphan_forget:
                 forget.pop(sid, None)
+    # Only sessions the hook has actually written a row for are eligible
+    # for rendering. A JSONL transcript on its own is not enough — Claude
+    # Code touches the transcript on every IDE tab switch (SessionStart
+    # source=resume / source=compact), which is why we deliberately don't
+    # register the SessionStart hook. Filtering here means a session
+    # appears in the menu only after a real working/waiting/idle event
+    # has fired (UserPromptSubmit, PreToolUse, etc.).
     sessions = [
-        build_session(p, sidecar, clicks, now) for p in iter_active_jsonls(now)
+        build_session(p, sidecar, clicks, now)
+        for p in iter_active_jsonls(now)
+        if p.stem in sidecar
     ]
     # Drop headless sessions unconditionally — they're scripted runs the
     # user can't usefully interact with, and they otherwise clutter the menu.
@@ -2275,10 +2284,13 @@ def _print_shell_strings() -> None:
 
 #: Hook events the plugin needs registered in ``~/.claude/settings.json``.
 #: The doctor warns when any of these is missing; ``setup.sh`` writes
-#: all six. State keywords on the hook command line live in
+#: all five. ``SessionStart`` is intentionally absent: it fires on
+#: every IDE tab switch (with ``source=resume``), so registering it
+#: would put untouched sessions into the menu just because the user
+#: clicked on them. The five hooks below all reflect actual agent
+#: activity. State keywords on the hook command line live in
 #: ``settings-hooks.json`` next to the script itself.
 _REQUIRED_HOOK_EVENTS = frozenset((
-    "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
@@ -2333,7 +2345,7 @@ def _has_agent_state_hook(entries: object) -> bool:
 
 
 def _doctor_check_hook_registration() -> tuple[str, str]:
-    """Are all six required hooks pointing at ``agent-state.sh``?"""
+    """Are all five required hooks pointing at ``agent-state.sh``?"""
     settings_path = HOME / ".claude" / "settings.json"
     if not settings_path.exists():
         return "err", f"{settings_path} missing (run `claude-agents-bar setup`)"
@@ -2351,7 +2363,7 @@ def _doctor_check_hook_registration() -> tuple[str, str]:
             f"hooks missing for {len(missing)} event(s): {', '.join(missing)} "
             "— re-run `claude-agents-bar setup`"
         )
-    return "ok", "all 6 hook events registered"
+    return "ok", "all 5 hook events registered"
 
 
 def _doctor_check_swiftbar_plugin() -> tuple[str, str]:

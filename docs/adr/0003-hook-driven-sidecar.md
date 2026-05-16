@@ -35,39 +35,38 @@ TSV schema (tab-separated, last write wins):
 
 Mapping from event to state lives in `settings-hooks.json`:
 
-| Event              | Written state                       |
-|--------------------|-------------------------------------|
-| `SessionStart`     | depends on `payload.source` (below) |
-| `UserPromptSubmit` | `working`                           |
-| `PreToolUse`       | `working`                           |
-| `PostToolUse`      | `working`                           |
-| `Notification`     | `waiting`                           |
-| `Stop`             | `idle`                              |
+| Event              | Written state |
+|--------------------|---------------|
+| `UserPromptSubmit` | `working`     |
+| `PreToolUse`       | `working`     |
+| `PostToolUse`      | `working`     |
+| `Notification`     | `waiting`     |
+| `Stop`             | `idle`        |
 
-`SessionStart` fires both on a genuine cold start and when the user
-merely *opens* an existing session in the IDE (the VSCode extension
-emits it on every tab switch, with `source=resume`). Treating it as
-`working` made every tab switch flash the menu yellow — see
-[this branch's fix](#). The hook now branches on `payload.source`:
+`SessionStart` is **deliberately not registered**. It fires both on a
+genuine cold start and when the user merely *opens* an existing
+session in the IDE (the VSCode extension emits it on every tab
+switch, with `source=resume`). Earlier versions tried to handle this
+by branching on `payload.source` and writing different states for
+different sources, but the simplest fix is the right one: don't
+write anything on SessionStart at all. The five events above already
+cover every flavour of "real agent activity"; anything else is
+noise.
 
-| `source`            | Action                                                       |
-|---------------------|--------------------------------------------------------------|
-| `startup` / `clear` | Write `idle` (fresh session, awaits first prompt)            |
-| `resume` / `compact`| Leave existing row untouched; if none exists, write nothing  |
+To make this stick, `collect_sessions` filters out any session whose
+JSONL transcript has no corresponding row in `agent-state.tsv`. This
+flips the earlier behavior described in *Costs* below: previously,
+sessions without a sidecar row showed up as `idle` via the JSONL
+mtime fallback in `build_session`. That fallback now only paths
+through code that's effectively dead — the filter strips the
+transcript before `build_session` runs — but the code itself is
+kept defensively in case a future caller skips the filter.
 
-For `resume` / `compact` without an existing row we deliberately
-**do not** synthesise an `idle` row: the plugin already falls back
-to the JSONL transcript's mtime when a session is missing from the
-TSV (see `build_session`), and writing a row with the *current*
-timestamp would make the classifier paint the session `FRESH`
-("Stop fired just now") on every IDE tab switch — see the FRESH
-guard in `_classify`, which additionally requires
-`last_event_kind == "Stop"` before granting the FRESH grace window.
-
-This is implemented inside `hooks/agent-state.sh` rather than via
-two separate hook registrations because Claude Code dispatches all
-`SessionStart` matchers identically — there is no per-source filter
-in `settings.json`.
+The classifier (`_classify`) additionally requires
+`last_event_kind == "Stop"` before granting the FRESH grace window,
+so that even if a stray idle row sneaks into the TSV by some other
+path (e.g. the watchdog downgrading a stuck `working`), the menu
+won't paint it green.
 
 ## Consequences
 
@@ -82,8 +81,12 @@ in `settings.json`.
 **Costs:**
 
 * Sessions started **before** the hook was installed don't appear in
-  the sidecar and look `idle` by default until they emit their next
-  hook event.
+  the menu at all until they emit their next hook event. The earlier
+  JSONL-mtime fallback used to render them as `idle` immediately, but
+  that path also let pure IDE-tab-switch noise into the menu (since
+  Claude Code touches the JSONL on every `SessionStart`), so the
+  filter in `collect_sessions` now keeps untracked sessions
+  out entirely.
 * Hook adds ~5 ms to every Claude Code event. Negligible.
 * The sidecar grows monotonically without explicit cleanup; addressed
   by [ADR-0004](./0004-mkdir-lock-vs-flock.md) (lock) and a plugin-side

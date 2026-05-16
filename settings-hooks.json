@@ -1,12 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh session-start", "async": true }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [

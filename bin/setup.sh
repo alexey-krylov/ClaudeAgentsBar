@@ -140,13 +140,13 @@ say "merged"
 
 step "6. Sanity check hook script"
 # Round-trip a fake event through the hook and verify the row lands in the
-# TSV. Clean up the test row afterwards so we don't pollute the index. We
-# use ``session-start`` with ``source=startup`` so the smoke test exercises
-# the same branch a real cold-started Claude Code session would hit (the
-# row should land as ``idle`` — see hooks/agent-state.sh for why).
-echo '{"session_id":"00000000-test","cwd":"/tmp","hook_event_name":"SessionStart","source":"startup"}' \
-    | "$HOOK_DST" session-start >/dev/null
-if /usr/bin/grep -q '^00000000-test	idle' "${HOME}/.claude/agent-state.tsv"; then
+# TSV. Clean up the test row afterwards so we don't pollute the index.
+# PreToolUse → working is the path the hook is most often exercised on
+# (every tool call fires it), so smoke-testing that branch tells us the
+# real wiring works end-to-end.
+echo '{"session_id":"00000000-test","cwd":"/tmp","hook_event_name":"PreToolUse"}' \
+    | "$HOOK_DST" working >/dev/null
+if /usr/bin/grep -q '^00000000-test	working' "${HOME}/.claude/agent-state.tsv"; then
     say "hook works — agent-state.tsv updated"
     /usr/bin/grep -v '^00000000-test	' "${HOME}/.claude/agent-state.tsv" \
         > "${HOME}/.claude/agent-state.tsv.tmp" || true
