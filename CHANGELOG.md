@@ -7,6 +7,46 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Surface tool-approval prompts in the menu and as a banner
+
+Permission dialogs ("Make this edit to X?", "Run this Bash command?")
+are easy to miss — the only signal is an inline panel inside VSCode
+that doesn't beep, doesn't surface in the menu bar, and sits there
+silently while the agent is blocked. Until now ClaudeAgentsBar didn't
+know about them either: the `Notification` hook was registered hoping
+it would fire for approval prompts, but in the VSCode extension it
+doesn't.
+
+`PermissionRequest` does. It's a separate Claude Code hook event
+documented as "fires when a permission dialog appears", and unlike
+`Notification` it lights up reliably for the inline approval flow.
+ClaudeAgentsBar now registers it (writing `waiting` to the TSV, same
+state the `Notification` hook used to target) and the row gets a `❓`
+between the title and the age label while the agent is blocked. The
+state clears automatically on the next hook event — `PostToolUse` if
+the user approves, `UserPromptSubmit`/`Stop` if they deny — so no
+extra dismiss UI is needed.
+
+A new sibling Bash hook `hooks/notify-wait.sh` fires on the same
+event and produces the audible side of the alert: short `Funk.aiff`
+chime, a spoken phrase from `notify_wait_phrases`, and a
+`terminal-notifier` banner whose click deep-links straight back into
+the waiting session. Two new config keys gate the behaviour:
+
+| Key | Default | Effect |
+|---|---|---|
+| `notify_on_wait` | `true` | Set to `false` to silence permission notifications without affecting completion notifications |
+| `notify_wait_phrases` | `["Need instructions", "Awaiting input", "Decision needed", "Your call"]` | Replace to customise the spoken/banner text |
+
+No `notify_threshold_sec` analogue — every approval prompt is
+deliberate and worth surfacing.
+
+`Notification` is kept registered as a fallback in case future
+Claude Code releases start firing it for approval dialogs. Re-running
+`setup.sh` is idempotent: it adds the `PermissionRequest` matcher,
+symlinks `notify-wait.sh` into `~/.claude/hooks/`, and cleans up any
+duplicate `agent-state.sh` matchers a previous version left behind.
+
 ### A session only enters the menu after real agent activity
 
 Tightening over the previous "don't paint sessions yellow or green

@@ -257,6 +257,35 @@ rewrite a single row of `agent-state.tsv`. The plugin uses the **same**
 mutex (`_sidecar_lock` in Python) when it garbage-collects stale rows,
 so concurrent hook writes and plugin cleanups can't race.
 
+The state column is driven by which Claude Code event the hook fires
+on (see `hooks/settings-hooks.json`):
+
+| Claude Code event | Written state |
+|---|---|
+| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | `working` |
+| `Notification` / `PermissionRequest` | `waiting` |
+| `Stop` | `idle` |
+
+`PermissionRequest` is the reliable signal that Claude is blocked on a
+tool-approval dialog — `Notification` is registered too but doesn't
+fire for inline approval prompts in the VSCode extension. Both write
+the same `waiting` state, so the plugin doesn't care which one
+delivered it. See the [Claude Code hooks reference][cc-hooks] for the
+full event list.
+
+Two sibling Bash hooks ship alongside `agent-state.sh` and produce
+side effects (sound, banner) rather than touching the TSV:
+
+| Hook | Fires on | What it does |
+|---|---|---|
+| `hooks/notify-stop.sh` | `Stop` | Plays `Hero.aiff`, speaks a phrase from `notify_phrases`, shows a `terminal-notifier` banner. Has a `notify_threshold_sec` knob so quick one-liners don't beep. |
+| `hooks/notify-wait.sh` | `PermissionRequest` | Plays `Funk.aiff`, speaks a phrase from `notify_wait_phrases`, shows a banner whose click jumps straight to the waiting session. No threshold — every approval prompt is intentional. |
+
+Both read the same JSON config the plugin uses and degrade gracefully
+when `terminal-notifier` / `jq` / the icon asset isn't present.
+
+[cc-hooks]: https://code.claude.com/docs/en/hooks.md
+
 The two action scripts that also write into `~/.claude/`
 (`bin/open-session.sh` against `agent-state.clicks`, `bin/forget-sessions.sh`
 against both TSVs) use the same `mkdir`-based scheme, each against its

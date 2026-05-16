@@ -64,5 +64,11 @@
   "notify_threshold_sec": 30,
 
   "// notify_phrases": "Phrases spoken aloud via 'say' and shown in the notification banner. One is chosen at random on each Stop. Default is a short built-in list.",
-  "notify_phrases": ["Check it", "Done", "Ready for review", "Your turn"]
+  "notify_phrases": ["Check it", "Done", "Ready for review", "Your turn"],
+
+  "// notify_on_wait": "Play a chime, speak a phrase, and show a macOS notification banner when Claude is blocked on a tool-approval dialog (PermissionRequest event). Requires terminal-notifier. Default: true.",
+  "notify_on_wait": true,
+
+  "// notify_wait_phrases": "Phrases spoken aloud via 'say' and shown in the notification banner when Claude is waiting for permission. One is chosen at random on each PermissionRequest. Default is a short built-in list.",
+  "notify_wait_phrases": ["Need instructions", "Awaiting input", "Decision needed", "I'm blocked"]
 }

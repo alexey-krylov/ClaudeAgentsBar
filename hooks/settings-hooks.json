@@ -28,6 +28,18 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh waiting", "async": true }
+        ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/notify-wait.sh", "async": true }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

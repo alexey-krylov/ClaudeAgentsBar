@@ -45,6 +45,8 @@ restart needed.
 | `notify_on_stop` | `true` | Play a chime, speak a phrase, and show a macOS notification banner when a session finishes. Requires `terminal-notifier` (`brew install terminal-notifier`). Set to `false` to silence all completion notifications. |
 | `notify_threshold_sec` | `30` | Skip the notification if the last user turn was less than this many seconds ago. Avoids noise from quick one-liner exchanges. |
 | `notify_phrases` | `["Check it", "Done", "Ready for review", "Your turn"]` | Phrases spoken aloud (via `say`) and shown in the notification banner. One is chosen at random on each `Stop`. Replace the list entirely to customise the voice lines. |
+| `notify_on_wait` | `true` | Play a chime, speak a phrase, and show a macOS notification banner when Claude is blocked on a tool-approval dialog (`PermissionRequest` event). Requires `terminal-notifier`. Set to `false` to silence permission-prompt notifications while keeping completion notifications. |
+| `notify_wait_phrases` | `["Need instructions", "Awaiting input", "Decision needed", "I'm blocked"]` | Phrases spoken aloud and shown in the notification banner when Claude needs permission. One is chosen at random on each `PermissionRequest`. |
 
 Fractional values are accepted where they make sense — e.g.
 `"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`

@@ -27,6 +27,7 @@ REPO_DIR="$(cd "$HERE/../.." && pwd -P)"
 PLUGIN_SRC="${REPO_DIR}/claude-agents.5s.py"
 HOOK_SRC="${REPO_DIR}/hooks/agent-state.sh"
 NOTIFY_HOOK_SRC="${REPO_DIR}/hooks/notify-stop.sh"
+NOTIFY_WAIT_HOOK_SRC="${REPO_DIR}/hooks/notify-wait.sh"
 HOOK_PATCH="${REPO_DIR}/hooks/settings-hooks.json"
 
 # Resolve the SwiftBar plugins folder. Override with SWIFTBAR_PLUGINS_DIR=...
@@ -54,6 +55,7 @@ PLUGIN_DST="${SWIFTBAR_PLUGINS_DIR}/claude-agents.5s.py"
 HOOKS_DIR="${HOME}/.claude/hooks"
 HOOK_DST="${HOOKS_DIR}/agent-state.sh"
 NOTIFY_HOOK_DST="${HOOKS_DIR}/notify-stop.sh"
+NOTIFY_WAIT_HOOK_DST="${HOOKS_DIR}/notify-wait.sh"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
@@ -71,7 +73,7 @@ fi
 
 
 step "2. Make scripts executable"
-chmod +x "$PLUGIN_SRC" "$HOOK_SRC" "$NOTIFY_HOOK_SRC"
+chmod +x "$PLUGIN_SRC" "$HOOK_SRC" "$NOTIFY_HOOK_SRC" "$NOTIFY_WAIT_HOOK_SRC"
 say "ok"
 
 
@@ -99,6 +101,12 @@ if [ -L "$NOTIFY_HOOK_DST" ] || [ -e "$NOTIFY_HOOK_DST" ]; then
 fi
 ln -s "$NOTIFY_HOOK_SRC" "$NOTIFY_HOOK_DST"
 say "linked: $NOTIFY_HOOK_DST -> $NOTIFY_HOOK_SRC"
+if [ -L "$NOTIFY_WAIT_HOOK_DST" ] || [ -e "$NOTIFY_WAIT_HOOK_DST" ]; then
+    say "existing entry at $NOTIFY_WAIT_HOOK_DST — replacing"
+    rm -f "$NOTIFY_WAIT_HOOK_DST"
+fi
+ln -s "$NOTIFY_WAIT_HOOK_SRC" "$NOTIFY_WAIT_HOOK_DST"
+say "linked: $NOTIFY_WAIT_HOOK_DST -> $NOTIFY_WAIT_HOOK_SRC"
 
 
 step "5. Merge hook registrations into $SETTINGS"
@@ -130,7 +138,7 @@ say "backup written: $SETTINGS_BACKUP"
 #   2. Additively append our patch's matchers to whatever survived.
 #      For events the user had no hooks on, the array is created fresh.
 /usr/bin/jq --argjson patch "$PATCH_EXPANDED" '
-    def is_ours: (.command // "") | (contains("agent-state.sh") or contains("notify-stop.sh"));
+    def is_ours: (.command // "") | (contains("agent-state.sh") or contains("notify-stop.sh") or contains("notify-wait.sh"));
     .hooks = (.hooks // {})
     | .hooks |= with_entries(
         .value |= (

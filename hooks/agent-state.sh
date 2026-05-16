@@ -2,10 +2,10 @@
 #
 # Claude Code hook that maintains a live state index for ClaudeAgentsBar.
 #
-# Registered against SessionStart / UserPromptSubmit / PreToolUse /
-# PostToolUse / Notification / Stop. The Claude Code runtime invokes this
-# script on every matching event, piping a JSON payload to stdin of the
-# shape:
+# Registered against UserPromptSubmit / PreToolUse / PostToolUse /
+# Notification / PermissionRequest / Stop. The Claude Code runtime invokes
+# this script on every matching event, piping a JSON payload to stdin of
+# the shape:
 #
 #     {
 #       "session_id":      "<uuid>",
@@ -28,7 +28,7 @@
 # plugin only renders sessions that have a TSV row, so leaving
 # SessionStart unregistered keeps "I just clicked the tab" out of the
 # menu — a session only appears once a real event (UserPromptSubmit,
-# PreToolUse, PostToolUse, Notification, Stop) has fired.
+# PreToolUse, PostToolUse, Notification, PermissionRequest, Stop) has fired.
 #
 # TSV schema (tab-separated, one line per session, latest event wins):
 #     <session_id> <state> <last_event_ts> <last_event_kind> <cwd> <state_since>
