@@ -1,18 +1,26 @@
-"""Unit tests for the pure helpers and the config loader in ``claude-agents.5s.py``.
+"""Unit tests for the pure helpers and the config loader in the
+:mod:`claude_agents_bar` package.
 
 Run with::
 
     /usr/bin/python3 -m unittest discover -s tests -v
 
-Stdlib only — no pytest, no third-party deps. We load the plugin module
-manually because its filename (``claude-agents.5s.py``) isn't a legal Python
-identifier and SwiftBar's filename convention prevents us from renaming it.
+Stdlib only — no pytest, no third-party deps. The plugin file in the
+repo root (``claude-agents.5s.py``) is a thin SwiftBar shim; the real
+implementation lives one directory below in the regular ``claude_agents_bar``
+package, which we import normally after pinning ``sys.path`` to the repo
+root.
+
+Most patches use ``patch.object(plugin.core, ...)`` rather than
+``patch.object(plugin, ...)`` — module-level globals (``CONFIG``,
+``SIDECAR_PATH``, ``HOME``, ``_lang``) are read via the submodule
+namespace (e.g. ``core.CONFIG.title_max``) so the substitution must
+land on the *defining* module, not the re-export.
 """
 
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 import os
 import sys
@@ -22,25 +30,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_PLUGIN_PATH = Path(__file__).resolve().parent.parent / "claude-agents.5s.py"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-
-def _load_plugin():
-    """Import the plugin file under a clean module name.
-
-    ``sys.modules[name] = module`` *before* ``exec_module`` is required so the
-    plugin's ``@dataclass`` decorators can resolve their own ``__module__``
-    when introspecting class annotations.
-    """
-    spec = importlib.util.spec_from_file_location("claude_agents_plugin", _PLUGIN_PATH)
-    assert spec and spec.loader, f"could not locate {_PLUGIN_PATH}"
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-plugin = _load_plugin()
+import claude_agents_bar as plugin  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -703,11 +697,11 @@ class TestRightLabel(unittest.TestCase):
         # Pin the locale so assertions stay independent of the dev machine's
         # system language — without this the duration carries Russian / Chinese
         # suffixes on workstations whose default locale isn't English.
-        self._orig_lang_cache = plugin._LANG_CACHE
-        plugin._LANG_CACHE = "en"
+        self._orig_lang_cache = plugin.core._LANG_CACHE
+        plugin.core._LANG_CACHE = "en"
 
     def tearDown(self):
-        plugin._LANG_CACHE = self._orig_lang_cache
+        plugin.core._LANG_CACHE = self._orig_lang_cache
 
     def test_working_shows_state_duration(self):
         # Yellow bullet already encodes "working", so the right-hand text is
@@ -864,16 +858,16 @@ class TestAckFresh(unittest.TestCase):
         self._orig_dismiss = plugin.DISMISS_PATH
         self._orig_sidecar_lock = plugin._SIDECAR_LOCK_DIR
         self._orig_clicks_lock = plugin._CLICKS_LOCK_DIR
-        plugin.PROJECTS_DIR = projects
-        plugin.SIDECAR_PATH = sidecar
-        plugin.CLICKS_PATH = clicks
+        plugin.core.PROJECTS_DIR = projects
+        plugin.core.SIDECAR_PATH = sidecar
+        plugin.core.CLICKS_PATH = clicks
         # Redirect DISMISS_PATH too — without this the user's real cutoff
         # file (set by *Forget all sessions*) leaks into the test and
         # filters out every fake session whose synthetic ``now`` predates
         # the real cutoff.
-        plugin.DISMISS_PATH = dismiss
-        plugin._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
-        plugin._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
+        plugin.core.DISMISS_PATH = dismiss
+        plugin.core._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
+        plugin.core._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
         self.projects = projects
         self.sidecar = sidecar
         self.clicks = clicks
@@ -882,12 +876,12 @@ class TestAckFresh(unittest.TestCase):
 
     def tearDown(self):
         import shutil
-        plugin.PROJECTS_DIR = self._orig_projects
-        plugin.SIDECAR_PATH = self._orig_sidecar
-        plugin.CLICKS_PATH = self._orig_clicks
-        plugin.DISMISS_PATH = self._orig_dismiss
-        plugin._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
-        plugin._CLICKS_LOCK_DIR = self._orig_clicks_lock
+        plugin.core.PROJECTS_DIR = self._orig_projects
+        plugin.core.SIDECAR_PATH = self._orig_sidecar
+        plugin.core.CLICKS_PATH = self._orig_clicks
+        plugin.core.DISMISS_PATH = self._orig_dismiss
+        plugin.core._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
+        plugin.core._CLICKS_LOCK_DIR = self._orig_clicks_lock
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _make_session(self, sid, mtime, sidecar_row=None):
@@ -983,10 +977,10 @@ class TestReadDismissTs(unittest.TestCase):
         )
         self._tmp.close()
         self._original = plugin.DISMISS_PATH
-        plugin.DISMISS_PATH = Path(self._tmp.name)
+        plugin.core.DISMISS_PATH = Path(self._tmp.name)
 
     def tearDown(self):
-        plugin.DISMISS_PATH = self._original
+        plugin.core.DISMISS_PATH = self._original
         Path(self._tmp.name).unlink(missing_ok=True)
 
     def test_missing_file_returns_zero(self):
@@ -1031,14 +1025,14 @@ class TestForgetSidecar(unittest.TestCase):
         self._orig_sidecar_lock = plugin._SIDECAR_LOCK_DIR
         self._orig_clicks_lock = plugin._CLICKS_LOCK_DIR
         self._orig_forget_lock = plugin._FORGET_LOCK_DIR
-        plugin.PROJECTS_DIR = projects
-        plugin.SIDECAR_PATH = sidecar
-        plugin.CLICKS_PATH = clicks
-        plugin.FORGET_PATH = forget
-        plugin.DISMISS_PATH = dismiss
-        plugin._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
-        plugin._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
-        plugin._FORGET_LOCK_DIR = forget.with_suffix(forget.suffix + ".lock.d")
+        plugin.core.PROJECTS_DIR = projects
+        plugin.core.SIDECAR_PATH = sidecar
+        plugin.core.CLICKS_PATH = clicks
+        plugin.core.FORGET_PATH = forget
+        plugin.core.DISMISS_PATH = dismiss
+        plugin.core._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
+        plugin.core._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
+        plugin.core._FORGET_LOCK_DIR = forget.with_suffix(forget.suffix + ".lock.d")
         self.projects = projects
         self.sidecar = sidecar
         self.forget = forget
@@ -1046,14 +1040,14 @@ class TestForgetSidecar(unittest.TestCase):
 
     def tearDown(self):
         import shutil
-        plugin.PROJECTS_DIR = self._orig_projects
-        plugin.SIDECAR_PATH = self._orig_sidecar
-        plugin.CLICKS_PATH = self._orig_clicks
-        plugin.FORGET_PATH = self._orig_forget
-        plugin.DISMISS_PATH = self._orig_dismiss
-        plugin._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
-        plugin._CLICKS_LOCK_DIR = self._orig_clicks_lock
-        plugin._FORGET_LOCK_DIR = self._orig_forget_lock
+        plugin.core.PROJECTS_DIR = self._orig_projects
+        plugin.core.SIDECAR_PATH = self._orig_sidecar
+        plugin.core.CLICKS_PATH = self._orig_clicks
+        plugin.core.FORGET_PATH = self._orig_forget
+        plugin.core.DISMISS_PATH = self._orig_dismiss
+        plugin.core._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
+        plugin.core._CLICKS_LOCK_DIR = self._orig_clicks_lock
+        plugin.core._FORGET_LOCK_DIR = self._orig_forget_lock
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _make_session(self, sid, mtime, sidecar_row=None):
@@ -1302,11 +1296,11 @@ class TestMenubarIconPieces(unittest.TestCase):
         # ``Config`` is frozen; rebuild the singleton in place.
         from dataclasses import replace
         self._original_config = plugin.CONFIG
-        plugin.CONFIG = replace(plugin.CONFIG, menubar_icon=value)
+        plugin.core.CONFIG = replace(plugin.CONFIG, menubar_icon=value)
         self.addCleanup(self._restore)
 
     def _restore(self):
-        plugin.CONFIG = self._original_config
+        plugin.core.CONFIG = self._original_config
 
     def test_plain_glyph_passes_through(self):
         self._set_icon("✨")
@@ -1328,7 +1322,7 @@ class TestMenubarIconPieces(unittest.TestCase):
         test is actually exercising.
         """
         original = plugin._resized_menubar_image
-        plugin._resized_menubar_image = lambda src: src
+        plugin.render._resized_menubar_image = lambda src: src
         self.addCleanup(lambda: setattr(plugin, "_resized_menubar_image", original))
 
     def test_template_prefix_emits_base64_template_image(self):
@@ -1369,7 +1363,7 @@ class TestMenubarIconPieces(unittest.TestCase):
         # ``menubar_icon_fallback`` glyph instead of an empty icon.
         from dataclasses import replace
         original = plugin.CONFIG
-        plugin.CONFIG = replace(
+        plugin.core.CONFIG = replace(
             original,
             menubar_icon="template:/no/such/file/at/all.png",
             menubar_icon_fallback="🤖",
@@ -1379,7 +1373,7 @@ class TestMenubarIconPieces(unittest.TestCase):
             self.assertEqual(params, "")
             self.assertEqual(glyph, "🤖")
         finally:
-            plugin.CONFIG = original
+            plugin.core.CONFIG = original
 
 
 # --------------------------------------------------------------------------- #
@@ -1505,11 +1499,11 @@ class TestLiveSessionIdsSecurity(unittest.TestCase):
         import tempfile
         self._tmpdir = Path(tempfile.mkdtemp())
         self._original = plugin.PROJECTS_DIR
-        plugin.PROJECTS_DIR = self._tmpdir
+        plugin.core.PROJECTS_DIR = self._tmpdir
 
     def tearDown(self):
         import shutil
-        plugin.PROJECTS_DIR = self._original
+        plugin.core.PROJECTS_DIR = self._original
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def test_skips_unsafe_filenames(self):
@@ -1570,7 +1564,7 @@ class TestStatsHelpers(unittest.TestCase):
     def test_format_stats_dialog_empty_state(self):
         # Brand new install: zero sessions, no tokens, no top projects.
         # Force English so assertions don't depend on the host locale.
-        with patch.object(plugin, "_lang", return_value="en"):
+        with patch.object(plugin.core, "_lang", return_value="en"):
             body = plugin._format_stats_dialog({
                 "sessions": 0, "turns": 0,
                 "total_tokens": 0, "prompt_tokens": 0, "cache_read_tokens": 0,
@@ -1582,7 +1576,7 @@ class TestStatsHelpers(unittest.TestCase):
         self.assertNotIn("Top projects", body)
 
     def test_format_stats_dialog_with_projects(self):
-        with patch.object(plugin, "_lang", return_value="en"):
+        with patch.object(plugin.core, "_lang", return_value="en"):
             body = plugin._format_stats_dialog({
                 "sessions": 5, "turns": 100,
                 "total_tokens": 1_000_000, "prompt_tokens": 200_000,
@@ -1612,14 +1606,14 @@ class TestDoctorChecks(unittest.TestCase):
     def test_tsv_fresh_returns_ok(self):
         sidecar = self.tmpdir / "agent-state.tsv"
         sidecar.write_text("abc\tidle\t1\tSessionStart\t/x\t1\n", encoding="utf-8")
-        with patch.object(plugin, "SIDECAR_PATH", sidecar):
+        with patch.object(plugin.core, "SIDECAR_PATH", sidecar):
             status, _ = plugin._doctor_check_tsv_freshness(int(time.time()))
         self.assertEqual(status, "ok")
 
     def test_tsv_stale_returns_warn(self):
         sidecar = self.tmpdir / "agent-state.tsv"
         sidecar.write_text("row\n", encoding="utf-8")
-        with patch.object(plugin, "SIDECAR_PATH", sidecar):
+        with patch.object(plugin.core, "SIDECAR_PATH", sidecar):
             # Simulate "last written 2 hours ago" — easier than sleeping
             # by setting an explicit mtime.
             os.utime(sidecar, (time.time(), time.time() - 7200))
@@ -1629,7 +1623,7 @@ class TestDoctorChecks(unittest.TestCase):
 
     def test_tsv_missing_returns_warn(self):
         missing = self.tmpdir / "no-such.tsv"
-        with patch.object(plugin, "SIDECAR_PATH", missing):
+        with patch.object(plugin.core, "SIDECAR_PATH", missing):
             status, _ = plugin._doctor_check_tsv_freshness(int(time.time()))
         self.assertEqual(status, "warn")
 
@@ -1646,7 +1640,7 @@ class TestDoctorChecks(unittest.TestCase):
             }
         }
         settings.write_text(json.dumps(payload), encoding="utf-8")
-        with patch.object(plugin, "HOME", self.tmpdir):
+        with patch.object(plugin.core, "HOME", self.tmpdir):
             status, _ = plugin._doctor_check_hook_registration()
         self.assertEqual(status, "ok")
 
@@ -1665,7 +1659,7 @@ class TestDoctorChecks(unittest.TestCase):
             }
         }
         settings.write_text(json.dumps(payload), encoding="utf-8")
-        with patch.object(plugin, "HOME", self.tmpdir):
+        with patch.object(plugin.core, "HOME", self.tmpdir):
             status, message = plugin._doctor_check_hook_registration()
         self.assertEqual(status, "warn")
         self.assertIn("Notification", message)
@@ -1674,7 +1668,7 @@ class TestDoctorChecks(unittest.TestCase):
     def test_hook_registration_missing_settings_returns_err(self):
         # No settings.json on disk at all — a hard error, the plugin
         # can't possibly receive events without it.
-        with patch.object(plugin, "HOME", self.tmpdir):
+        with patch.object(plugin.core, "HOME", self.tmpdir):
             status, _ = plugin._doctor_check_hook_registration()
         self.assertEqual(status, "err")
 
@@ -1682,8 +1676,8 @@ class TestDoctorChecks(unittest.TestCase):
         # CONFIG is frozen → can't mutate; swap the whole singleton.
         new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="vscode://")
         with patch.object(
-            plugin, "_EDITOR_SCHEME_APP", {"vscode://": str(self.tmpdir)},
-        ), patch.object(plugin, "CONFIG", new_config):
+            plugin.doctor, "_EDITOR_SCHEME_APP", {"vscode://": str(self.tmpdir)},
+        ), patch.object(plugin.core, "CONFIG", new_config):
             status, message = plugin._doctor_check_editor_app()
         self.assertEqual(status, "ok")
         self.assertIn(str(self.tmpdir), message)
@@ -1692,8 +1686,8 @@ class TestDoctorChecks(unittest.TestCase):
         missing = self.tmpdir / "Nope.app"
         new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="vscode://")
         with patch.object(
-            plugin, "_EDITOR_SCHEME_APP", {"vscode://": str(missing)},
-        ), patch.object(plugin, "CONFIG", new_config):
+            plugin.doctor, "_EDITOR_SCHEME_APP", {"vscode://": str(missing)},
+        ), patch.object(plugin.core, "CONFIG", new_config):
             status, message = plugin._doctor_check_editor_app()
         self.assertEqual(status, "warn")
         self.assertIn("isn't installed", message)
@@ -1704,8 +1698,8 @@ class TestDoctorChecks(unittest.TestCase):
         # know which .app knows the scheme — say so explicitly rather
         # than warning by default.
         new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="myeditor://")
-        with patch.object(plugin, "_EDITOR_SCHEME_APP", {}), \
-             patch.object(plugin, "CONFIG", new_config):
+        with patch.object(plugin.doctor, "_EDITOR_SCHEME_APP", {}), \
+             patch.object(plugin.core, "CONFIG", new_config):
             status, _ = plugin._doctor_check_editor_app()
         self.assertEqual(status, "ok")
 

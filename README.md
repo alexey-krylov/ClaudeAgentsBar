@@ -105,6 +105,9 @@ Symlinks and hook entries are removed (a fresh `settings.json` backup
 is taken first). The four sidecar files under `~/.claude/` are left
 in place — they may contain forget/dismiss cutoffs you want to keep.
 
+> **No Homebrew?** See [docs/install-manual.md](./docs/install-manual.md)
+> for a git-clone install path.
+
 > Hacking on the plugin? Clone the repo instead of `brew install`-ing —
 > see [PLUGIN.md](./PLUGIN.md).
 
