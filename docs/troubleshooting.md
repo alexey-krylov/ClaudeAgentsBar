@@ -125,6 +125,19 @@ grep -v '^00000000-test	' ~/.claude/agent-state.tsv \
   && mv ~/.claude/agent-state.tsv.tmp ~/.claude/agent-state.tsv
 ```
 
+## Session deleted in VSCode still appears in the menu
+
+When you delete a session from the Claude Code extension sidebar, the IDE
+does **not** remove the transcript file — it marks the session as hidden
+inside its own internal database. ClaudeAgentsBar reads the transcript files
+directly and has no access to the editor's internal state, so the session
+keeps showing up until it ages out of the `window_minutes` cutoff.
+
+To remove it immediately, open the session's submenu and choose **Forget**.
+This records a cutoff timestamp in the per-session sidecar and the row
+disappears on the next tick. It is the editor-agnostic equivalent of the
+IDE's "delete" action.
+
 ## Rows for sessions started before install
 
 Sessions started **before** the hooks were registered have no entries

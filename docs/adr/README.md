@@ -26,6 +26,7 @@ prior one.
 | [0011](./0011-configurable-context-window.md) | Context-window total comes from config, not auto-detection | Accepted |
 | [0012](./0012-open-config-from-menu.md) | Open the config file from the Tools menu | Accepted |
 | [0013](./0013-completion-notification-hook.md) | Completion-notification hook bundled in the repo | Accepted |
+| [0014](./0014-no-vscode-hidden-sessions-sync.md) | Don't sync with VSCode's hiddenSessionIds | Accepted |
 
 ## Workflow
 
