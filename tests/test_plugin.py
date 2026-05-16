@@ -1835,7 +1835,7 @@ class TestSetupMerge(unittest.TestCase):
     """
 
     PATCH_PATH = (
-        Path(__file__).resolve().parent.parent / "settings-hooks.json"
+        Path(__file__).resolve().parent.parent / "hooks" / "settings-hooks.json"
     )
 
     def setUp(self):

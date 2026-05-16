@@ -66,7 +66,7 @@ Fix is in three layers:
   so a hung session doesn't get retroactively painted green.
 
 Re-run `claude-agents-bar setup` to pick up the new
-[settings-hooks.json](./settings-hooks.json) registration — the hook
+[settings-hooks.json](./hooks/settings-hooks.json) registration — the hook
 script itself is symlinked, so it updates with `git pull` alone.
 
 ### `setup.sh` is now idempotent across command-line changes

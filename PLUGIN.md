@@ -55,14 +55,25 @@ plugin trivial to test (just run the script) and trivial to reason about.
 ```
 ClaudeAgentsBar/
 ├── claude-agents.5s.py      ← plugin entry point, all rendering logic
-├── hooks/agent-state.sh     ← hook: writes ~/.claude/agent-state.tsv
-├── bin/open-session.sh      ← row click: records click + opens in VSCode
-├── bin/forget-session.sh    ← submenu action: hide one row (cutoff-based)
-├── bin/delete-session.sh    ← submenu action: delete a session
-├── bin/forget-sessions.sh   ← Tools action: wipe TSV + clicks, set dismiss cutoff
-├── config.example.json      ← copy → ~/.config/claude-agents-bar/config.json
-├── settings-hooks.json      ← fragment merged into ~/.claude/settings.json
-├── install.sh / uninstall.sh
+├── hooks/
+│   ├── agent-state.sh       ← hook: writes ~/.claude/agent-state.tsv
+│   └── settings-hooks.json  ← hook registrations merged into ~/.claude/settings.json
+├── bin/
+│   ├── claude-agents-bar    ← main dispatcher (setup/teardown entry point)
+│   ├── install/
+│   │   ├── setup.sh         ← symlink plugin + hook, merge settings
+│   │   └── teardown.sh      ← reverse setup
+│   └── app/
+│       ├── open-session.sh  ← row click: records click + opens in editor
+│       ├── ack-session.sh   ← submenu: mark one session as read
+│       ├── ack-fresh.sh     ← Tools: acknowledge all fresh sessions
+│       ├── forget-session.sh ← submenu: hide one session
+│       ├── forget-sessions.sh ← Tools: wipe TSV + clicks, set dismiss cutoff
+│       ├── delete-session.sh ← submenu: delete a session
+│       ├── reveal-session.sh ← submenu: open in Finder
+│       ├── open-config.sh   ← Tools: open config.json
+│       └── stats-today.sh   ← Tools: show session activity summary
+├── config.example.json      ← bundled starter config
 ├── tests/                   ← unittest suite for pure helpers + config
 ├── docs/adr/                ← architecture decision records (MADR)
 ├── CHANGELOG.md
@@ -77,13 +88,33 @@ When in doubt about *why* a structural choice was made, consult
 SwiftBar uses the filename to learn the refresh cadence. `5s` means
 "refresh every 5 seconds". Don't rename without updating the README.
 
-### Why a separate `bin/` for `delete-session.sh`?
+### Why separate `hooks/`, `bin/install/`, and `bin/app/`?
 
-`hooks/` are scripts Claude Code itself invokes. `bin/` are scripts the
-menu invokes. Keeping them in different directories prevents an
-accidental "treat this like a hook" registration.
+- `hooks/` — scripts Claude Code runtime invokes on events (agent-state.sh)
+- `bin/install/` — install/uninstall lifecycle (setup.sh, teardown.sh)
+- `bin/app/` — actions the SwiftBar menu invokes (open, delete, ack, etc.)
+
+Separating lifecycle from app actions makes intent clear and prevents
+accidentally registering an action script as a Claude Code hook.
 
 ## Dev setup
+
+### First-time bootstrap
+
+```bash
+git clone https://github.com/alexey-krylov/ClaudeAgentsBar
+cd ClaudeAgentsBar
+brew install --cask swiftbar               # if not already installed
+brew install jq                            # if not already installed
+bash install.sh                            # or: bin/claude-agents-bar setup
+```
+
+> ⚠️ **Don't place this project inside the SwiftBar plugins folder.**
+> SwiftBar would scan it and try to run `setup`/`teardown` scripts as
+> plugins. Anywhere else is fine. `install.sh` refuses to run if it
+> detects this misconfiguration.
+
+### Iterating
 
 You don't need to reinstall anything to iterate on the plugin code —
 `install.sh` only creates symlinks, so editing files in the repo
@@ -238,7 +269,7 @@ exactly one `jq` invocation — adding more would visibly slow hot paths.
 
 If you add new events:
 
-1. Add the matcher to `settings-hooks.json`.
+1. Add the matcher to `hooks/settings-hooks.json`.
 2. Re-run `bash install.sh` to merge it into `~/.claude/settings.json`.
 3. Check `tail -f ~/.claude/agent-state.tsv` to confirm rows update.
 

@@ -30,11 +30,11 @@ VERSION="1.0.0"
 case "${1:-help}" in
     setup)
         shift
-        exec bash "$HERE/setup.sh" "$@"
+        exec bash "$HERE/install/setup.sh" "$@"
         ;;
     teardown)
         shift
-        exec bash "$HERE/teardown.sh" "$@"
+        exec bash "$HERE/install/teardown.sh" "$@"
         ;;
     version|--version|-v)
         echo "claude-agents-bar $VERSION"

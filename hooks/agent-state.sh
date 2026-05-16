@@ -20,7 +20,7 @@
 # Usage:
 #     hooks/agent-state.sh {working|waiting|idle}
 #
-# The state argument is chosen by the caller (see settings-hooks.json) —
+# The state argument is chosen by the caller (see hooks/settings-hooks.json) —
 # this script just stores whatever it was told. ``SessionStart`` is
 # deliberately **not** registered: Claude Code fires it not only on a
 # cold start but also when the user merely re-opens an existing session

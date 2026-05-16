@@ -148,6 +148,43 @@ turn. The three places to check are:
 - `config.example.json` — bundled starter config
 - `tests/` — unit tests for the Config dataclass + helpers
 
+## README structure (don't reshuffle without thinking)
+
+The top-level [README.md](./README.md) is laid out in a deliberate
+order. If you're editing it, **preserve the section order** unless the
+user explicitly asks for a restructure. The flow is:
+
+1. **Tagline + ASCII demo** — value-prop in one line, then a picture.
+   No "Built as a SwiftBar plugin" framing in the tagline; that's
+   implementation detail and belongs in *How it works*.
+2. **Why I built this** — honest first-person motivation. *Before*
+   install, because readers decide whether to keep reading here. This
+   replaced an earlier "The problem" section that duplicated it in a
+   marketing voice — don't reintroduce a second motivation section.
+3. **What it shows** — features, *before* Install. A reader needs to
+   know what they're getting before they decide to run `brew install`.
+   Keep it compact: counter table, one paragraph on the dropdown, one
+   on the row submenu, one on the Tools submenu. Deeper detail belongs
+   in [docs/configuration.md](./docs/configuration.md), not here.
+4. **Install** — Homebrew only. The git-clone path lives in
+   [PLUGIN.md § Dev setup](./PLUGIN.md), because it's a contributor
+   concern, not a user one. Don't re-add it to the README.
+5. **Configuration** — three-field table + link to the full reference.
+   Don't expand the table; if a new knob is interesting enough to
+   surface, replace one of the three rather than growing the list.
+6. **How it works** — one or two paragraphs of architecture, then
+   pointer to PLUGIN.md and ADRs.
+7. **Troubleshooting** — top 1–2 issues only (notch, standalone run),
+   each one line plus a link to `docs/troubleshooting.md`. Resist the
+   urge to inline more cases here; the docs/ file is canonical.
+8. **Contributing** — pointer to PLUGIN.md and CHANGELOG.md.
+
+### Voice
+
+Peer-to-peer technical register. No marketing copy, no overselling,
+no "✨ powerful ✨" adjectives. If you find yourself writing "seamlessly"
+or "delightful experience", back up.
+
 ## Things not to do
 
 - **Don't roll your own merge into `~/.claude/settings.json`.**
@@ -174,8 +211,18 @@ turn. The three places to check are:
 ```
 ClaudeAgentsBar/
 ├── claude-agents.5s.py      ← SwiftBar plugin (Python 3.9, stdlib only)
-├── hooks/agent-state.sh     ← Claude Code hook → ~/.claude/agent-state.tsv
-├── bin/                     ← scripts invoked from menu rows / Tools submenu
+├── hooks/
+│   ├── agent-state.sh       ← Claude Code hook → ~/.claude/agent-state.tsv
+│   └── settings-hooks.json  ← hook registrations fragment
+├── bin/
+│   ├── claude-agents-bar    ← CLI dispatcher (setup/teardown/doctor/version)
+│   ├── install/
+│   │   ├── setup.sh         ← wires plugin, hook, and settings
+│   │   └── teardown.sh      ← reverses setup
+│   └── app/                 ← actions invoked from menu rows / Tools
+│       ├── open-session.sh, delete-session.sh, forget-*.sh, ack-*.sh
+│       ├── open-config.sh, reveal-session.sh, stats-today.sh
+│       └── (all executable, called by SwiftBar with session id, paths, etc.)
 ├── tests/                   ← unittest suite (stdlib only)
 ├── locales/                 ← i18n JSON per language
 ├── docs/
@@ -183,8 +230,6 @@ ClaudeAgentsBar/
 │   ├── troubleshooting.md   ← notch + display + hook issues
 │   └── adr/                 ← architecture decision records (MADR)
 ├── config.example.json      ← bundled starter config
-├── settings-hooks.json      ← fragment merged into ~/.claude/settings.json
-├── install.sh / uninstall.sh
 ├── README.md                ← landing page for users
 ├── PLUGIN.md                ← architecture + contributor guide
 ├── CLAUDE.md                ← (this file) notes for Claude Code agents

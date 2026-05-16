@@ -33,7 +33,7 @@ TSV schema (tab-separated, last write wins):
 <session_id> <state> <last_event_ts> <last_event_kind> <cwd>
 ```
 
-Mapping from event to state lives in `settings-hooks.json`:
+Mapping from event to state lives in `hooks/settings-hooks.json`:
 
 | Event              | Written state |
 |--------------------|---------------|
