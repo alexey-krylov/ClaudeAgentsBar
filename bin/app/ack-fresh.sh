@@ -14,7 +14,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-PLUGIN="${HERE}/../claude-agents.5s.py"
+PLUGIN="${HERE}/../../claude-agents.5s.py"
 
 /usr/bin/python3 "$PLUGIN" --ack-fresh
 

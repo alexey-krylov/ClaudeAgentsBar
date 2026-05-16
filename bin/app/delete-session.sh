@@ -32,7 +32,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-PLUGIN="${HERE}/../claude-agents.5s.py"
+PLUGIN="${HERE}/../../claude-agents.5s.py"
 
 # Pull localized dialog strings (MSG_DIALOG_*) from the plugin so we don't
 # duplicate the string tables here. The plugin uses ``shlex.quote`` on every
