@@ -33,6 +33,11 @@
         "hooks": [
           { "type": "command", "command": "${HOME}/.claude/hooks/agent-state.sh idle", "async": true }
         ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "${HOME}/.claude/hooks/notify-stop.sh", "async": true }
+        ]
       }
     ]
   }

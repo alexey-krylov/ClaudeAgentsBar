@@ -21,12 +21,13 @@
 
 set -euo pipefail
 
-# This script lives in <repo>/bin/. The repo root is one level up.
+# This script lives in <repo>/bin/install/. The repo root is two levels up.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_DIR="$(cd "$HERE/.." && pwd -P)"
+REPO_DIR="$(cd "$HERE/../.." && pwd -P)"
 PLUGIN_SRC="${REPO_DIR}/claude-agents.5s.py"
 HOOK_SRC="${REPO_DIR}/hooks/agent-state.sh"
-HOOK_PATCH="${REPO_DIR}/settings-hooks.json"
+NOTIFY_HOOK_SRC="${REPO_DIR}/hooks/notify-stop.sh"
+HOOK_PATCH="${REPO_DIR}/hooks/settings-hooks.json"
 
 # Resolve the SwiftBar plugins folder. Override with SWIFTBAR_PLUGINS_DIR=...
 # if you've moved it; otherwise we ask SwiftBar itself and fall back to a
@@ -52,6 +53,7 @@ fi
 PLUGIN_DST="${SWIFTBAR_PLUGINS_DIR}/claude-agents.5s.py"
 HOOKS_DIR="${HOME}/.claude/hooks"
 HOOK_DST="${HOOKS_DIR}/agent-state.sh"
+NOTIFY_HOOK_DST="${HOOKS_DIR}/notify-stop.sh"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
@@ -69,7 +71,7 @@ fi
 
 
 step "2. Make scripts executable"
-chmod +x "$PLUGIN_SRC" "$HOOK_SRC"
+chmod +x "$PLUGIN_SRC" "$HOOK_SRC" "$NOTIFY_HOOK_SRC"
 say "ok"
 
 
@@ -83,7 +85,7 @@ ln -s "$PLUGIN_SRC" "$PLUGIN_DST"
 say "linked: $PLUGIN_DST -> $PLUGIN_SRC"
 
 
-step "4. Symlink hook into $HOOKS_DIR"
+step "4. Symlink hooks into $HOOKS_DIR"
 mkdir -p "$HOOKS_DIR"
 if [ -L "$HOOK_DST" ] || [ -e "$HOOK_DST" ]; then
     say "existing entry at $HOOK_DST — replacing"
@@ -91,6 +93,12 @@ if [ -L "$HOOK_DST" ] || [ -e "$HOOK_DST" ]; then
 fi
 ln -s "$HOOK_SRC" "$HOOK_DST"
 say "linked: $HOOK_DST -> $HOOK_SRC"
+if [ -L "$NOTIFY_HOOK_DST" ] || [ -e "$NOTIFY_HOOK_DST" ]; then
+    say "existing entry at $NOTIFY_HOOK_DST — replacing"
+    rm -f "$NOTIFY_HOOK_DST"
+fi
+ln -s "$NOTIFY_HOOK_SRC" "$NOTIFY_HOOK_DST"
+say "linked: $NOTIFY_HOOK_DST -> $NOTIFY_HOOK_SRC"
 
 
 step "5. Merge hook registrations into $SETTINGS"
@@ -122,7 +130,7 @@ say "backup written: $SETTINGS_BACKUP"
 #   2. Additively append our patch's matchers to whatever survived.
 #      For events the user had no hooks on, the array is created fresh.
 /usr/bin/jq --argjson patch "$PATCH_EXPANDED" '
-    def is_ours: (.command // "") | contains("agent-state.sh");
+    def is_ours: (.command // "") | (contains("agent-state.sh") or contains("notify-stop.sh"));
     .hooks = (.hooks // {})
     | .hooks |= with_entries(
         .value |= (
@@ -138,7 +146,26 @@ say "backup written: $SETTINGS_BACKUP"
 say "merged"
 
 
-step "6. Sanity check hook script"
+step "6. Notification icon"
+ASSETS_DIR="${HOOKS_DIR}/assets"
+ICON_DST="${ASSETS_DIR}/claude-icon.png"
+mkdir -p "$ASSETS_DIR"
+if [ -f "$ICON_DST" ]; then
+    say "already present: $ICON_DST"
+else
+    CLAUDE_ICNS="/Applications/Claude.app/Contents/Resources/AppIcon.icns"
+    if [ -f "$CLAUDE_ICNS" ]; then
+        sips -s format png "$CLAUDE_ICNS" --out "$ICON_DST" \
+            --resampleHeightWidth 256 256 >/dev/null 2>&1 \
+            && say "extracted from Claude.app → $ICON_DST" \
+            || say "WARN: sips failed — notifications will show without custom icon"
+    else
+        say "Claude.app not found — notifications will show without custom icon"
+    fi
+fi
+
+
+step "7. Sanity check hook script"
 # Round-trip a fake event through the hook and verify the row lands in the
 # TSV. Clean up the test row afterwards so we don't pollute the index.
 # PreToolUse → working is the path the hook is most often exercised on

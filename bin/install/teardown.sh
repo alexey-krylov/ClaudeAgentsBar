@@ -13,14 +13,15 @@
 
 set -euo pipefail
 
-# This script lives in <repo>/bin/. The repo root is one level up.
+# This script lives in <repo>/bin/install/. The repo root is two levels up.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_DIR="$(cd "$HERE/.." && pwd -P)"
+REPO_DIR="$(cd "$HERE/../.." && pwd -P)"
 
 SWIFTBAR_PLUGINS_DIR="${SWIFTBAR_PLUGINS_DIR:-$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null \
     || echo "${HOME}/SwiftBar")}"
 PLUGIN_DST="${SWIFTBAR_PLUGINS_DIR}/claude-agents.5s.py"
 HOOK_DST="${HOME}/.claude/hooks/agent-state.sh"
+NOTIFY_HOOK_DST="${HOME}/.claude/hooks/notify-stop.sh"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
@@ -36,11 +37,16 @@ else
 fi
 
 
-step "2. Remove hook symlink"
+step "2. Remove hook symlinks"
 if [ -L "$HOOK_DST" ]; then
     rm "$HOOK_DST" && say "removed $HOOK_DST"
 else
-    say "not present"
+    say "not present: $HOOK_DST"
+fi
+if [ -L "$NOTIFY_HOOK_DST" ]; then
+    rm "$NOTIFY_HOOK_DST" && say "removed $NOTIFY_HOOK_DST"
+else
+    say "not present: $NOTIFY_HOOK_DST"
 fi
 
 
@@ -56,7 +62,7 @@ if [ -f "$SETTINGS" ]; then
         | .hooks |= with_entries(
             .value |= map(
                 .hooks |= map(
-                    select((.command // "") | test("agent-state\\.sh") | not)
+                    select((.command // "") | test("agent-state\\.sh|notify-stop\\.sh") | not)
                 )
             )
             | .value |= map(select((.hooks // []) | length > 0))

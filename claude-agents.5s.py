@@ -38,10 +38,10 @@ sidecar files:
   session, holding the latest state (``waiting`` / ``working`` / ``idle``),
   event timestamp, and cwd.
 * ``~/.claude/agent-state.clicks`` — ``{session_id: click_ts}`` sidecar
-  written by ``bin/open-session.sh``. Drives the 🟢 *fresh* → 🔵 *acknowledged*
+  written by ``bin/app/open-session.sh``. Drives the 🟢 *fresh* → 🔵 *acknowledged*
   promotion and restarts the stale countdown on each click.
 * ``~/.claude/agent-state.dismiss`` — single-timestamp cutoff written by
-  ``bin/forget-sessions.sh``; sessions whose last activity is at or before
+  ``bin/app/forget-sessions.sh``; sessions whose last activity is at or before
   it are filtered out until a fresh hook event surfaces them again.
 
 Each tick we merge those into :class:`Session` records, classify them into a
@@ -57,7 +57,7 @@ the README.
 
 The plugin also exposes a single non-render subcommand: ``--ack-fresh``
 bulk-promotes every currently-FRESH session to ACKNOWLEDGED. It's wired up
-from ``bin/ack-fresh.sh`` (Tools → Acknowledge all).
+from ``bin/app/ack-fresh.sh`` (Tools → Acknowledge all).
 
 This file is intentionally self-contained: standard library only, single
 process, no daemon. Side effects are writing to ``stdout``, opportunistic
@@ -89,13 +89,13 @@ HOME = Path.home()
 PROJECTS_DIR = HOME / ".claude" / "projects"
 SIDECAR_PATH = HOME / ".claude" / "agent-state.tsv"
 
-#: Cutoff timestamp set by ``bin/forget-sessions.sh`` (the *Tools → Forget
+#: Cutoff timestamp set by ``bin/app/forget-sessions.sh`` (the *Tools → Forget
 #: all sessions* action). Sessions whose latest activity is at or before this
 #: moment are filtered out of the rendered menu; live sessions reappear on
 #: their next hook event.
 DISMISS_PATH = HOME / ".claude" / "agent-state.dismiss"
 
-#: ``{session_id: click_ts}`` sidecar maintained by ``bin/open-session.sh``.
+#: ``{session_id: click_ts}`` sidecar maintained by ``bin/app/open-session.sh``.
 #: One row per session, last click wins. Used to decide whether an idle
 #: session has been "acknowledged" by the user — see :class:`RenderGroup`.
 CLICKS_PATH = HOME / ".claude" / "agent-state.clicks"
@@ -104,7 +104,7 @@ CLICKS_PATH = HOME / ".claude" / "agent-state.clicks"
 #: recorder. Same ``mkdir``-based scheme as the main sidecar lock.
 _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 
-#: ``{session_id: forget_ts}`` sidecar maintained by ``bin/forget-session.sh``
+#: ``{session_id: forget_ts}`` sidecar maintained by ``bin/app/forget-session.sh``
 #: (the per-row *Forget* action). A session whose ``last_event_ts`` is at or
 #: before its ``forget_ts`` is filtered out of the menu — same cutoff semantics
 #: as :data:`DISMISS_PATH` but per-session instead of global. A fresh hook
@@ -114,7 +114,7 @@ _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 FORGET_PATH = HOME / ".claude" / "agent-state.forget"
 
 #: Mutex on :data:`FORGET_PATH`, shared between plugin (gc) and
-#: ``bin/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
+#: ``bin/app/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
 #: locks.
 _FORGET_LOCK_DIR = FORGET_PATH.with_suffix(FORGET_PATH.suffix + ".lock.d")
 
@@ -158,7 +158,7 @@ _ANSI_ACK_BAR = "\x1b[1;94m"     # bold bright blue
 #: every shape that could weaponise downstream consumers:
 #:
 #:   * shell arguments (``param1=`` to ``bin/*.sh``),
-#:   * AppleScript dialogs in ``bin/delete-session.sh``,
+#:   * AppleScript dialogs in ``bin/app/delete-session.sh``,
 #:   * field-anchored TSV lookups,
 #:   * SwiftBar ``paramN=`` tokens, which break on embedded newlines.
 #:
@@ -167,7 +167,7 @@ _ANSI_ACK_BAR = "\x1b[1;94m"     # bold bright blue
 #: id whose source we don't fully control (TSV row written by a hook,
 #: JSONL filename created by another process under the same uid) is
 #: rejected at the boundary so every downstream consumer stays simple.
-#: See the SECURITY note at the top of ``bin/delete-session.sh`` and the
+#: See the SECURITY note at the top of ``bin/app/delete-session.sh`` and the
 #: SwiftBar quoting helper for context.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -1055,7 +1055,7 @@ def _stale_sidecar_ids(snapshots: dict[str, HookSnapshot], now: int) -> set[str]
     A row is stale when:
 
     * its transcript no longer exists on disk (the session was deleted out
-      of band — typically by ``bin/delete-session.sh`` or by the user
+      of band — typically by ``bin/app/delete-session.sh`` or by the user
       directly), or
     * its last event is older than :attr:`Config.window_sec` (the row will
       never be rendered again from this point on, so it's pure overhead).
@@ -1141,12 +1141,12 @@ def _sidecar_lock(timeout_sec: float = 2.0):
 
 
 def _clicks_lock(timeout_sec: float = 2.0):
-    """Mutex shared with ``bin/open-session.sh`` for ``agent-state.clicks``."""
+    """Mutex shared with ``bin/app/open-session.sh`` for ``agent-state.clicks``."""
     return _mkdir_lock(_CLICKS_LOCK_DIR, timeout_sec)
 
 
 def _forget_lock(timeout_sec: float = 2.0):
-    """Mutex shared with ``bin/forget-session.sh`` for ``agent-state.forget``."""
+    """Mutex shared with ``bin/app/forget-session.sh`` for ``agent-state.forget``."""
     return _mkdir_lock(_FORGET_LOCK_DIR, timeout_sec)
 
 
@@ -2069,7 +2069,7 @@ def _print_session_row(session: Session) -> None:
     """Emit one main row plus the submenu for one session.
 
     Main row: state icon + title + coloured right-label. Clicking it
-    invokes ``bin/open-session.sh`` which records the click into the
+    invokes ``bin/app/open-session.sh`` which records the click into the
     clicks sidecar (so the row turns 🔵 on the next tick) and then opens
     the session in the user's editor via the
     ``<editor_url_scheme>anthropic.claude-code/open`` URI handler.
@@ -2098,7 +2098,7 @@ def _print_session_row(session: Session) -> None:
         f"{warning_segment}{session.right_label_ansi}"
     )
     href = f"{CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
-    bin_dir = Path(__file__).resolve().parent / "bin"
+    bin_dir = Path(__file__).resolve().parent / "bin" / "app"
     open_script = bin_dir / "open-session.sh"
     main_params = [
         f"shell={_swiftbar_quote(str(open_script))}",
@@ -2200,7 +2200,7 @@ def _print_footer() -> None:
     """System actions at the bottom of the menu — manual refresh + Tools submenu."""
     print(f"{_t('menu.refresh')} | refresh=true sfimage=arrow.clockwise")
     plugin_dir = Path(__file__).resolve().parent
-    bin_dir = plugin_dir / "bin"
+    bin_dir = plugin_dir / "bin" / "app"
     ack_fresh_script = bin_dir / "ack-fresh.sh"
     forget_script = bin_dir / "forget-sessions.sh"
     open_config_script = bin_dir / "open-config.sh"
@@ -2289,7 +2289,7 @@ def _print_shell_strings() -> None:
 #: would put untouched sessions into the menu just because the user
 #: clicked on them. The five hooks below all reflect actual agent
 #: activity. State keywords on the hook command line live in
-#: ``settings-hooks.json`` next to the script itself.
+#: ``hooks/settings-hooks.json`` in the plugin repo.
 _REQUIRED_HOOK_EVENTS = frozenset((
     "UserPromptSubmit",
     "PreToolUse",
@@ -2424,6 +2424,22 @@ def _doctor_check_editor_app() -> tuple[str, str]:
         f"editor scheme {scheme!r} expects {expected} which isn't installed "
         "— clicks on rows will do nothing until you install it or change "
         "``editor_url_scheme`` in the config"
+    )
+
+
+def _doctor_check_terminal_notifier() -> tuple[str, str]:
+    """Is terminal-notifier installed (needed for notify-stop.sh)?"""
+    result = subprocess.run(
+        ["which", "terminal-notifier"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return "ok", f"terminal-notifier found at {result.stdout.strip()}"
+    return "warn", (
+        "terminal-notifier not found — completion notifications won't fire. "
+        "Install with: brew install terminal-notifier. "
+        "Or set ``notify_on_stop: false`` in the config to silence this warning."
     )
 
 
@@ -2616,7 +2632,7 @@ def _run_stats_today() -> int:
     body = _format_stats_dialog(stats)
     title = _t("stats.title")
     # AppleScript wrapper is read from stdin and dialog values arrive as
-    # argv elements — same pattern as bin/delete-session.sh — so the
+    # argv elements — same pattern as bin/app/delete-session.sh — so the
     # body (which may contain user-controlled project names from disk)
     # can't escape into AppleScript source.
     script = (
@@ -2649,6 +2665,7 @@ def _run_doctor() -> int:
         ("plugin/", _doctor_check_swiftbar_plugin()),
         ("perms/", _doctor_check_sidecar_permissions()),
         ("editor/", _doctor_check_editor_app()),
+        ("notify/", _doctor_check_terminal_notifier()),
     )
     any_err = False
     label_width = max(len(name) for name, _ in checks)

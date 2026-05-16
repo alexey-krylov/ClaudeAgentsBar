@@ -55,5 +55,14 @@
   "context_window_tokens": 1000000,
 
   "// context_warning_threshold": "Percent of context-window usage above which the row gets an inline '⚠ {pct}%' marker between the title and the age label. Default 80 (matches the yellow zone in Claude Code's own CLI). The marker turns red once usage crosses 90 %. Set to 100 to disable the warning while keeping the submenu gauge. Valid range: 1..100; out-of-range or non-int values fall back to 80.",
-  "context_warning_threshold": 80
+  "context_warning_threshold": 80,
+
+  "// notify_on_stop": "Show a macOS notification (and play a chime + spoken phrase) when a session finishes. Requires terminal-notifier (brew install terminal-notifier). Default: true.",
+  "notify_on_stop": true,
+
+  "// notify_threshold_sec": "Skip notifications for sessions whose last user turn was less than this many seconds ago — avoids noise from quick one-liner exchanges. Default: 30.",
+  "notify_threshold_sec": 30,
+
+  "// notify_phrases": "Phrases spoken aloud via 'say' and shown in the notification banner. One is chosen at random on each Stop. Default is a short built-in list.",
+  "notify_phrases": ["Check it", "Done", "Ready for review", "Your turn"]
 }

@@ -25,6 +25,7 @@ prior one.
 | [0010](./0010-compact-menubar-ansi-bullets.md) | Compact menu-bar mode: ANSI-coloured `●` bullets | Accepted |
 | [0011](./0011-configurable-context-window.md) | Context-window total comes from config, not auto-detection | Accepted |
 | [0012](./0012-open-config-from-menu.md) | Open the config file from the Tools menu | Accepted |
+| [0013](./0013-completion-notification-hook.md) | Completion-notification hook bundled in the repo | Accepted |
 
 ## Workflow
 

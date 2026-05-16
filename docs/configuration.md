@@ -42,6 +42,9 @@ restart needed.
 | `compact` | `false` | When `true`, drops the icon and replaces `🟡🟢🔵` with ANSI-coloured `●` bullets (`●2 ●1 ●3`). Saves ~30 px — useful on notched MacBooks. See *Compact mode* below. |
 | `context_window_tokens` | `1000000` | Total context-window size used to compute the per-session `{N}% — {used}k/{total}k` indicator. Matches Claude Opus 4.7 / 4.6 and Sonnet 4.6 (Anthropic's API default since 2026-04-23). Override to `200000` when running Haiku 4.5 or Sonnet 4.5. See [ADR-0011](./adr/0011-configurable-context-window.md) for the alternatives we considered. |
 | `context_warning_threshold` | `80` | Percent of context-window usage above which the main row gets an inline `⚠ {pct}%` marker between the title and the age label. Yellow up to 90 %, red beyond — same zones Claude Code's CLI uses. Set to `100` to suppress the inline marker while keeping the submenu gauge. Valid range `1..100`; out-of-range and non-numeric values fall back to `80`. |
+| `notify_on_stop` | `true` | Play a chime, speak a phrase, and show a macOS notification banner when a session finishes. Requires `terminal-notifier` (`brew install terminal-notifier`). Set to `false` to silence all completion notifications. |
+| `notify_threshold_sec` | `30` | Skip the notification if the last user turn was less than this many seconds ago. Avoids noise from quick one-liner exchanges. |
+| `notify_phrases` | `["Check it", "Done", "Ready for review", "Your turn"]` | Phrases spoken aloud (via `say`) and shown in the notification banner. One is chosen at random on each `Stop`. Replace the list entirely to customise the voice lines. |
 
 Fractional values are accepted where they make sense — e.g.
 `"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`
