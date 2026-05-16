@@ -18,10 +18,26 @@
 # SwiftBar plugin reads that file every 5 s to colour the menu.
 #
 # Usage:
-#     hooks/agent-state.sh {working|waiting|idle}
+#     hooks/agent-state.sh {working|waiting|idle|session-start}
 #
 # The state argument is chosen by the caller (see settings-hooks.json) —
-# this script just stores whatever it was told.
+# for the three literal states this script just stores whatever it was
+# told. ``session-start`` is a pseudo-state for the ``SessionStart``
+# hook: Claude Code fires ``SessionStart`` not only on a cold start but
+# also when the user *opens* an existing session (the VSCode extension
+# fires it on every tab switch, with ``source=resume``). Treating that
+# as ``working`` made every tab switch flash the menu yellow even
+# though the agent wasn't actually doing anything. With ``session-start``
+# we instead branch on ``payload.source``:
+#
+#     * startup / clear / other → write ``idle`` (fresh session, awaiting
+#       the first prompt — UserPromptSubmit will flip it to working).
+#     * resume / compact         → leave the existing row untouched. If no
+#       row exists yet, write **nothing**: the plugin already falls back
+#       to the JSONL transcript's mtime when a session is missing from
+#       the TSV, and writing an ``idle`` row with the current timestamp
+#       would falsely paint the session FRESH ("Stop fired just now")
+#       on every tab switch.
 #
 # TSV schema (tab-separated, one line per session, latest event wins):
 #     <session_id> <state> <last_event_ts> <last_event_kind> <cwd> <state_since>
@@ -41,7 +57,7 @@ LOCK_DIR="${STATE_FILE}.lock.d"
 # Reject anything we don't understand silently — the plugin can't render an
 # unknown state and we'd rather drop the event than corrupt the TSV.
 case "$STATE_NEW" in
-    working|waiting|idle) ;;
+    working|waiting|idle|session-start) ;;
     *) exit 0 ;;
 esac
 
@@ -50,15 +66,30 @@ esac
 PAYLOAD="$(cat 2>/dev/null || true)"
 [ -z "$PAYLOAD" ] && exit 0
 
-# Pull the three fields we care about in a single jq invocation — fork/exec is
-# the dominant cost in a hook this small, so we want exactly one.
-IFS=$'\t' read -r SID CWD KIND < <(
-    /usr/bin/jq -r '[.session_id // "", .cwd // "", .hook_event_name // ""] | @tsv' \
+# Pull the four fields we care about in a single jq invocation — fork/exec is
+# the dominant cost in a hook this small, so we want exactly one. ``source``
+# is only populated for ``SessionStart`` events; for the others it falls back
+# to an empty string and is ignored.
+IFS=$'\t' read -r SID CWD KIND SOURCE < <(
+    /usr/bin/jq -r '[.session_id // "", .cwd // "", .hook_event_name // "", .source // ""] | @tsv' \
         <<<"$PAYLOAD"
 )
 
 # Without a session_id there's no row to update — drop the event.
 [ -z "${SID:-}" ] && exit 0
+
+# Resolve the ``session-start`` pseudo-state into a concrete action. ``resume``
+# and ``compact`` mean "user re-attached to an existing session" — we must not
+# clobber whatever state the session was in (that's the bug this branch fixes).
+# ``startup`` and ``clear`` are genuinely fresh starts, so ``idle`` is the
+# honest answer: the session exists but no prompt has been submitted yet.
+KEEP_EXISTING=0
+if [ "$STATE_NEW" = "session-start" ]; then
+    case "$SOURCE" in
+        resume|compact) KEEP_EXISTING=1; STATE_NEW="idle" ;;
+        *)              STATE_NEW="idle" ;;
+    esac
+fi
 
 TS="$(date +%s)"
 
@@ -98,19 +129,36 @@ TMP="${STATE_FILE}.$$"
     -v new_state="$STATE_NEW" \
     -v new_kind="$KIND" \
     -v new_cwd="$CWD" \
-    -v ts="$TS" '
+    -v ts="$TS" \
+    -v keep_existing="$KEEP_EXISTING" '
     BEGIN              { FS = OFS = "\t"; written = 0 }
     $1 == sid {
         if (!written) {
-            since = ($2 == new_state && NF >= 6 && $6 ~ /^[0-9]+$/) ? $6 : ts
-            print sid, new_state, ts, new_kind, new_cwd, since
+            if (keep_existing) {
+                # SessionStart with source=resume|compact: a row already
+                # exists for this session — leave it untouched so we do not
+                # falsely flip a working/waiting/idle session back to idle
+                # just because the user re-opened it in the IDE.
+                print
+            } else {
+                since = ($2 == new_state && NF >= 6 && $6 ~ /^[0-9]+$/) ? $6 : ts
+                print sid, new_state, ts, new_kind, new_cwd, since
+            }
             written = 1
         }
         next
     }
                        { print }
     END {
-        if (!written) print sid, new_state, ts, new_kind, new_cwd, ts
+        # No row matched. For a literal state (working/waiting/idle from a
+        # real event) we append it. For ``session-start`` with
+        # source=resume|compact (keep_existing=1) we write **nothing**: the
+        # plugin will fall back to the JSONL mtime and the kind-less row
+        # cannot be misclassified as FRESH. Writing here would paint the
+        # session green on every IDE tab switch.
+        if (!written && !keep_existing) {
+            print sid, new_state, ts, new_kind, new_cwd, ts
+        }
     }
 ' "$STATE_FILE" > "$TMP" && mv "$TMP" "$STATE_FILE"
 

@@ -7,6 +7,52 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Don't flash sessions yellow or green on IDE tab switches
+
+`SessionStart` fires not only on a genuine cold start but also when
+the user merely re-opens an existing session in the IDE — the VSCode
+extension emits it on every tab switch, with `source=resume` in the
+payload. The hook used to write `working` unconditionally, so each
+tab switch turned the corresponding menu row yellow (`ACTIVE`) even
+though the agent wasn't actually doing anything.
+
+Fix is in three layers:
+
+* `hooks/agent-state.sh` now accepts a new pseudo-state
+  `session-start` and branches on `payload.source`. `startup` /
+  `clear` write `idle` (fresh session, awaits its first prompt —
+  `UserPromptSubmit` will flip it to working). `resume` / `compact`
+  leave the existing row untouched, and **write nothing** when no
+  row exists yet: the plugin already falls back to the JSONL
+  transcript's mtime in that case.
+* `_classify` now requires `last_event_kind == "Stop"` before
+  granting the FRESH grace window. Without this guard, any
+  idle-with-a-recent-timestamp row painted the session green
+  ("Stop fired, you haven't looked yet"), so writing an `idle`
+  fallback during a tab switch turned every clicked session into
+  a fake-green row. Non-Stop idles now collapse straight into
+  ACKNOWLEDGED or STALE.
+* The watchdog downgrade in `build_session` clears
+  `last_event_kind` when it turns a stuck `working` into `idle`,
+  so a hung session doesn't get retroactively painted green.
+
+Re-run `claude-agents-bar setup` to pick up the new
+[settings-hooks.json](./settings-hooks.json) registration — the hook
+script itself is symlinked, so it updates with `git pull` alone.
+
+### `setup.sh` is now idempotent across command-line changes
+
+The settings.json merge was previously additive — re-running setup
+after a bundled hook command changed (e.g. the `SessionStart` arg
+above) appended a second matcher alongside the stale one, and both
+fired on every event. `bin/setup.sh` now purges its own prior
+matchers (anything whose command references `agent-state.sh`) before
+appending the patch, so a re-run *replaces* the registration. User
+hooks on the same events — anything whose command does not mention
+`agent-state.sh` — are preserved untouched, including the edge case
+where a user packed our hook into a matcher of their own (only that
+hook entry is scrubbed; the rest of the matcher survives).
+
 ### "Currently doing" tooltip on the context-usage row
 
 The context-window line in each session's submenu (`{N}% — {used}k/{total}k`)

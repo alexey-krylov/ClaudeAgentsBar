@@ -866,6 +866,7 @@ def _classify(
     now: int,
     stop_ts: int,
     effective_click_ts: int,
+    last_event_kind: str,
 ) -> RenderGroup:
     """Map raw hook state + timestamps onto a :class:`RenderGroup`.
 
@@ -881,6 +882,16 @@ def _classify(
     * After that it falls into ⚪ ``STALE`` until the global window evicts
       it from the menu.
 
+    Crucially, FRESH only fires when the last hook event was an actual
+    ``Stop`` — i.e. an agent turn that genuinely *ended*. Any other
+    flavour of idle (a ``SessionStart`` with no following work, the
+    watchdog downgrading a stuck ``working`` to ``idle``, the sidecar
+    fallback for sessions with no TSV row yet) collapses the FRESH
+    window to zero, so the session lands in ACKNOWLEDGED or STALE
+    immediately. Without this guard, just *opening* a session in the
+    IDE — which fires ``SessionStart`` — would paint the row green as
+    if a turn had just completed. See CHANGELOG entry for this branch.
+
     ``effective_click_ts`` is ``0`` when no click happened *after* the
     last Stop. Clicks made while the session was still working are
     handled by the caller (filtered out before this is reached) so they
@@ -888,7 +899,8 @@ def _classify(
     """
     if hook_state in ACTIVE_HOOK_STATES:
         return RenderGroup.ACTIVE
-    ack_ts = effective_click_ts if effective_click_ts else stop_ts + CONFIG.fresh_sec
+    fresh_window = CONFIG.fresh_sec if last_event_kind == "Stop" else 0
+    ack_ts = effective_click_ts if effective_click_ts else stop_ts + fresh_window
     if now < ack_ts:
         return RenderGroup.FRESH
     if now < ack_ts + CONFIG.ack_sec:
@@ -1681,11 +1693,16 @@ def build_session(
         hook_state = snapshot.state
         sidecar_cwd = snapshot.cwd
         state_since = snapshot.state_since
+        last_event_kind = snapshot.last_event_kind
     else:
         last_ts = jsonl_mtime
         hook_state = "idle"
         sidecar_cwd = ""
         state_since = jsonl_mtime
+        # Empty kind means "no hook event seen for this session" — the
+        # classifier uses this to refuse the FRESH window (no Stop event
+        # ever fired, so we have nothing to be "fresh" about).
+        last_event_kind = ""
 
     # Liveness signal: Claude Code writes the transcript continuously while
     # running (assistant streams, tool results, …). If the process is killed,
@@ -1697,6 +1714,10 @@ def build_session(
     if hook_state == "working" and (now - liveness_ts) > CONFIG.watchdog_sec:
         hook_state = "idle"
         last_ts = liveness_ts
+        # Watchdog-driven downgrade is not a real Stop — clear the kind so
+        # the classifier doesn't paint the row FRESH on a stale "working"
+        # row whose timestamp happens to fall inside fresh_sec.
+        last_event_kind = ""
 
     # "Effective click" = a click that landed after the most recent Stop.
     # Clicks made while the session was still running don't carry over: the
@@ -1737,7 +1758,7 @@ def build_session(
     return Session(
         id=jsonl.stem,
         hook_state=hook_state,
-        group=_classify(hook_state, now, last_ts, effective_click_ts),
+        group=_classify(hook_state, now, last_ts, effective_click_ts, last_event_kind),
         last_event_ts=interaction_ts,
         age_sec=age,
         title=meta.display_title or _t("title.no_title"),

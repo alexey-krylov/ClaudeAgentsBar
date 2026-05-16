@@ -35,14 +35,39 @@ TSV schema (tab-separated, last write wins):
 
 Mapping from event to state lives in `settings-hooks.json`:
 
-| Event              | Written state |
-|--------------------|---------------|
-| `SessionStart`     | `working`     |
-| `UserPromptSubmit` | `working`     |
-| `PreToolUse`       | `working`     |
-| `PostToolUse`      | `working`     |
-| `Notification`     | `waiting`     |
-| `Stop`             | `idle`        |
+| Event              | Written state                       |
+|--------------------|-------------------------------------|
+| `SessionStart`     | depends on `payload.source` (below) |
+| `UserPromptSubmit` | `working`                           |
+| `PreToolUse`       | `working`                           |
+| `PostToolUse`      | `working`                           |
+| `Notification`     | `waiting`                           |
+| `Stop`             | `idle`                              |
+
+`SessionStart` fires both on a genuine cold start and when the user
+merely *opens* an existing session in the IDE (the VSCode extension
+emits it on every tab switch, with `source=resume`). Treating it as
+`working` made every tab switch flash the menu yellow — see
+[this branch's fix](#). The hook now branches on `payload.source`:
+
+| `source`            | Action                                                       |
+|---------------------|--------------------------------------------------------------|
+| `startup` / `clear` | Write `idle` (fresh session, awaits first prompt)            |
+| `resume` / `compact`| Leave existing row untouched; if none exists, write nothing  |
+
+For `resume` / `compact` without an existing row we deliberately
+**do not** synthesise an `idle` row: the plugin already falls back
+to the JSONL transcript's mtime when a session is missing from the
+TSV (see `build_session`), and writing a row with the *current*
+timestamp would make the classifier paint the session `FRESH`
+("Stop fired just now") on every IDE tab switch — see the FRESH
+guard in `_classify`, which additionally requires
+`last_event_kind == "Stop"` before granting the FRESH grace window.
+
+This is implemented inside `hooks/agent-state.sh` rather than via
+two separate hook registrations because Claude Code dispatches all
+`SessionStart` matchers identically — there is no per-source filter
+in `settings.json`.
 
 ## Consequences
 

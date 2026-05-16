@@ -11,8 +11,13 @@
 #   3. Merge our hook registrations into ~/.claude/settings.json (with
 #      a timestamped backup taken first).
 #
-# Re-running is safe — existing symlinks are replaced and the
-# settings.json merge is additive (existing hooks of yours are preserved).
+# Re-running is safe — existing symlinks are replaced, and the
+# settings.json merge first purges any prior ``agent-state.sh`` matchers
+# (so when the bundled command line changes, e.g. ``working`` →
+# ``session-start``, a re-run *updates* the registration rather than
+# appending a duplicate alongside the stale one). Hooks belonging to
+# the user — anything whose command does not contain ``agent-state.sh``
+# — are preserved untouched.
 
 set -euo pipefail
 
@@ -104,11 +109,27 @@ PATCH_EXPANDED="$(/usr/bin/python3 -c \
 cp "$SETTINGS" "$SETTINGS_BACKUP"
 say "backup written: $SETTINGS_BACKUP"
 
-# Deep-merge our patch into the existing settings: for each event in the
-# patch's "hooks" map, append our matcher objects to whatever the user
-# already had. Never overwrites existing hooks.
+# Two-phase merge:
+#   1. Purge any *existing* matchers under .hooks that reference
+#      ``agent-state.sh`` — these were written by a previous setup run
+#      and need to be replaced rather than duplicated (when our bundled
+#      command line changes, e.g. argument rename or path change, the
+#      old matcher would otherwise keep firing alongside the new one).
+#      Inside each surviving matcher we also drop individual hook
+#      entries whose command mentions ``agent-state.sh``, in case the
+#      user has merged our hook into a matcher of their own. Anything
+#      else is preserved.
+#   2. Additively append our patch's matchers to whatever survived.
+#      For events the user had no hooks on, the array is created fresh.
 /usr/bin/jq --argjson patch "$PATCH_EXPANDED" '
+    def is_ours: (.command // "") | contains("agent-state.sh");
     .hooks = (.hooks // {})
+    | .hooks |= with_entries(
+        .value |= (
+            map(.hooks |= map(select(is_ours | not)))
+            | map(select(((.hooks // []) | length) > 0))
+        )
+    )
     | reduce ($patch.hooks | to_entries[]) as $kv (
         .;
         .hooks[$kv.key] = ((.hooks[$kv.key] // []) + $kv.value)
@@ -119,10 +140,13 @@ say "merged"
 
 step "6. Sanity check hook script"
 # Round-trip a fake event through the hook and verify the row lands in the
-# TSV. Clean up the test row afterwards so we don't pollute the index.
-echo '{"session_id":"00000000-test","cwd":"/tmp","hook_event_name":"SessionStart"}' \
-    | "$HOOK_DST" working >/dev/null
-if /usr/bin/grep -q '^00000000-test	working' "${HOME}/.claude/agent-state.tsv"; then
+# TSV. Clean up the test row afterwards so we don't pollute the index. We
+# use ``session-start`` with ``source=startup`` so the smoke test exercises
+# the same branch a real cold-started Claude Code session would hit (the
+# row should land as ``idle`` — see hooks/agent-state.sh for why).
+echo '{"session_id":"00000000-test","cwd":"/tmp","hook_event_name":"SessionStart","source":"startup"}' \
+    | "$HOOK_DST" session-start >/dev/null
+if /usr/bin/grep -q '^00000000-test	idle' "${HOME}/.claude/agent-state.tsv"; then
     say "hook works — agent-state.tsv updated"
     /usr/bin/grep -v '^00000000-test	' "${HOME}/.claude/agent-state.tsv" \
         > "${HOME}/.claude/agent-state.tsv.tmp" || true

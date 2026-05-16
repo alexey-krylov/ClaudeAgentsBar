@@ -467,9 +467,13 @@ class TestDisplayTitleFallback(unittest.TestCase):
 class TestClassify(unittest.TestCase):
     """End-to-end rules for the four render buckets.
 
-    ``_classify(state, now, stop_ts, effective_click_ts)`` — we synthesise
-    timestamps relative to ``CONFIG`` so the tests stay readable even when
-    the defaults change.
+    ``_classify(state, now, stop_ts, effective_click_ts, last_event_kind)``
+    — we synthesise timestamps relative to ``CONFIG`` so the tests stay
+    readable even when the defaults change. The default kind is ``Stop``
+    so the legacy idle-lifecycle tests still cover the FRESH grace
+    window; tests at the bottom of this class pin the behavior for
+    non-Stop kinds (the case that paints the row green on every IDE
+    tab switch — see CHANGELOG).
     """
 
     def setUp(self):
@@ -481,7 +485,9 @@ class TestClassify(unittest.TestCase):
 
     def test_waiting_is_active(self):
         self.assertEqual(
-            plugin._classify("waiting", self.stop_ts, self.stop_ts, self.no_click),
+            plugin._classify(
+                "waiting", self.stop_ts, self.stop_ts, self.no_click, "Notification",
+            ),
             plugin.RenderGroup.ACTIVE,
         )
 
@@ -490,7 +496,9 @@ class TestClassify(unittest.TestCase):
         # them upstream in ``build_session`` before this is called.
         very_old = self.stop_ts + 10_000_000
         self.assertEqual(
-            plugin._classify("working", very_old, self.stop_ts, self.no_click),
+            plugin._classify(
+                "working", very_old, self.stop_ts, self.no_click, "PreToolUse",
+            ),
             plugin.RenderGroup.ACTIVE,
         )
 
@@ -498,7 +506,7 @@ class TestClassify(unittest.TestCase):
         # First minute after Stop, no click yet → 🟢.
         now = self.stop_ts + 60
         self.assertEqual(
-            plugin._classify("idle", now, self.stop_ts, self.no_click),
+            plugin._classify("idle", now, self.stop_ts, self.no_click, "Stop"),
             plugin.RenderGroup.FRESH,
         )
 
@@ -506,7 +514,7 @@ class TestClassify(unittest.TestCase):
         # fresh_sec has elapsed without a click → auto-promote to 🔵.
         now = self.stop_ts + self.fresh + 1
         self.assertEqual(
-            plugin._classify("idle", now, self.stop_ts, self.no_click),
+            plugin._classify("idle", now, self.stop_ts, self.no_click, "Stop"),
             plugin.RenderGroup.ACKNOWLEDGED,
         )
 
@@ -514,7 +522,7 @@ class TestClassify(unittest.TestCase):
         # Both fresh and ack windows have elapsed without any click → ⚪.
         now = self.stop_ts + self.fresh + self.ack + 1
         self.assertEqual(
-            plugin._classify("idle", now, self.stop_ts, self.no_click),
+            plugin._classify("idle", now, self.stop_ts, self.no_click, "Stop"),
             plugin.RenderGroup.STALE,
         )
 
@@ -525,7 +533,7 @@ class TestClassify(unittest.TestCase):
         click_ts = self.stop_ts + 30
         now = self.stop_ts + 90
         self.assertEqual(
-            plugin._classify("idle", now, self.stop_ts, click_ts),
+            plugin._classify("idle", now, self.stop_ts, click_ts, "Stop"),
             plugin.RenderGroup.ACKNOWLEDGED,
         )
 
@@ -536,11 +544,51 @@ class TestClassify(unittest.TestCase):
         now_just_after = click_ts + self.ack - 1
         now_after_window = click_ts + self.ack + 1
         self.assertEqual(
-            plugin._classify("idle", now_just_after, self.stop_ts, click_ts),
+            plugin._classify("idle", now_just_after, self.stop_ts, click_ts, "Stop"),
             plugin.RenderGroup.ACKNOWLEDGED,
         )
         self.assertEqual(
-            plugin._classify("idle", now_after_window, self.stop_ts, click_ts),
+            plugin._classify("idle", now_after_window, self.stop_ts, click_ts, "Stop"),
+            plugin.RenderGroup.STALE,
+        )
+
+    # ------------------------- FRESH guard tests ----------------------- #
+    # These are the cases that triggered the "everything turned green
+    # after I clicked through some tabs" report. FRESH must only fire on
+    # an actual Stop event; anything else collapses the fresh window.
+
+    def test_idle_session_start_kind_is_not_fresh(self):
+        # An IDE tab switch fires SessionStart → our hook resolves to
+        # idle with last_event_kind="SessionStart". This must NOT paint
+        # the row green: nothing was just "finished".
+        now = self.stop_ts + 60
+        self.assertEqual(
+            plugin._classify(
+                "idle", now, self.stop_ts, self.no_click, "SessionStart",
+            ),
+            plugin.RenderGroup.ACKNOWLEDGED,
+        )
+
+    def test_idle_empty_kind_is_not_fresh(self):
+        # Empty kind = session has no TSV row at all (fallback in
+        # build_session) OR watchdog cleared the kind on a stale
+        # "working". Neither is a real Stop, so no green.
+        now = self.stop_ts + 60
+        self.assertEqual(
+            plugin._classify(
+                "idle", now, self.stop_ts, self.no_click, "",
+            ),
+            plugin.RenderGroup.ACKNOWLEDGED,
+        )
+
+    def test_idle_non_stop_kind_falls_through_to_stale(self):
+        # Same as above but timestamps are old: no FRESH grace, no ACK
+        # grace either — straight to STALE.
+        now = self.stop_ts + self.ack + 1
+        self.assertEqual(
+            plugin._classify(
+                "idle", now, self.stop_ts, self.no_click, "SessionStart",
+            ),
             plugin.RenderGroup.STALE,
         )
 
@@ -873,13 +921,16 @@ class TestAckFresh(unittest.TestCase):
         self.assertEqual(plugin.ack_fresh(self.now), 1)
         self.assertEqual(self._read_clicks(), {"fresh": self.now})
 
-    def test_promotes_session_without_sidecar_row(self):
-        # No Stop hook captured — only JSONL mtime. This is the case that
-        # the sidecar-only implementation missed and motivated routing
-        # ack_fresh through collect_sessions.
+    def test_session_without_sidecar_row_is_not_fresh(self):
+        # No Stop hook captured — only JSONL mtime. After tightening
+        # _classify to require last_event_kind=="Stop" for FRESH, a
+        # session with no sidecar row sits in ACK/STALE rather than
+        # FRESH, so ack_fresh has nothing to promote. This pins that
+        # behavior: without a real Stop we don't pretend the session is
+        # freshly finished.
         self._make_session("untracked", self.now - 60)
-        self.assertEqual(plugin.ack_fresh(self.now), 1)
-        self.assertEqual(self._read_clicks(), {"untracked": self.now})
+        self.assertEqual(plugin.ack_fresh(self.now), 0)
+        self.assertEqual(self._read_clicks(), {})
 
     def test_skips_working_session(self):
         self._make_session("alive", self.now - 5, ("working", self.now - 5))
@@ -1648,13 +1699,293 @@ class TestDoctorChecks(unittest.TestCase):
     def test_editor_app_custom_scheme_is_ok_without_check(self):
         # Schemes outside the allowlist are still legal at runtime
         # (extended via the editor_url_scheme allowlist) and we can't
-        # know which .app handles them — say so explicitly rather than
-        # warning by default.
+        # know which .app knows the scheme — say so explicitly rather
+        # than warning by default.
         new_config = plugin.replace(plugin.CONFIG, editor_url_scheme="myeditor://")
         with patch.object(plugin, "_EDITOR_SCHEME_APP", {}), \
              patch.object(plugin, "CONFIG", new_config):
             status, _ = plugin._doctor_check_editor_app()
         self.assertEqual(status, "ok")
+
+
+# --------------------------------------------------------------------------- #
+# hooks/agent-state.sh — shell-level behavior                                  #
+# --------------------------------------------------------------------------- #
+
+
+class TestAgentStateHook(unittest.TestCase):
+    """End-to-end checks for the shell hook that writes ``agent-state.tsv``.
+
+    The hook is a Bash script, so we run it under a temporary ``$HOME``
+    via subprocess and inspect the resulting TSV. These tests guard the
+    ``session-start`` branch in particular: Claude Code fires
+    ``SessionStart`` not only on a cold start but also on every IDE
+    tab switch (with ``source=resume``), and the hook must not clobber
+    existing state in that case.
+    """
+
+    HOOK = Path(__file__).resolve().parent.parent / "hooks" / "agent-state.sh"
+
+    def setUp(self):
+        # Fresh $HOME per test — the hook writes ~/.claude/agent-state.tsv
+        # and we want each test to start from an empty index.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name)
+        (self.home / ".claude").mkdir()
+        self.tsv = self.home / ".claude" / "agent-state.tsv"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, arg: str, payload: dict) -> None:
+        import subprocess
+        env = os.environ.copy()
+        env["HOME"] = str(self.home)
+        subprocess.run(
+            ["/bin/bash", str(self.HOOK), arg],
+            input=json.dumps(payload).encode("utf-8"),
+            env=env, check=True, timeout=10,
+        )
+
+    def _row(self, sid: str) -> list[str] | None:
+        if not self.tsv.exists():
+            return None
+        for line in self.tsv.read_text(encoding="utf-8").splitlines():
+            cols = line.split("\t")
+            if cols and cols[0] == sid:
+                return cols
+        return None
+
+    def test_working_writes_row(self):
+        # Baseline: a normal PreToolUse → working still works end-to-end.
+        self._run("working", {
+            "session_id": "sid-1", "cwd": "/x",
+            "hook_event_name": "PreToolUse",
+        })
+        row = self._row("sid-1")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[1], "working")
+        self.assertEqual(row[3], "PreToolUse")
+
+    def test_session_start_startup_writes_idle(self):
+        # Cold start: no existing row, source=startup → land as idle.
+        # working would be a lie (no prompt submitted yet) and would
+        # flash the menu yellow on every fresh session.
+        self._run("session-start", {
+            "session_id": "sid-2", "cwd": "/x",
+            "hook_event_name": "SessionStart", "source": "startup",
+        })
+        row = self._row("sid-2")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[1], "idle")
+
+    def test_session_start_resume_keeps_existing_working_row(self):
+        # Regression for the original bug: an in-flight session that
+        # the user re-opens in the IDE must NOT be flipped back to idle.
+        self._run("working", {
+            "session_id": "sid-3", "cwd": "/x",
+            "hook_event_name": "PreToolUse",
+        })
+        self._run("session-start", {
+            "session_id": "sid-3", "cwd": "/x",
+            "hook_event_name": "SessionStart", "source": "resume",
+        })
+        row = self._row("sid-3")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[1], "working")
+
+    def test_session_start_compact_keeps_existing_idle_row(self):
+        # source=compact also means "session continues" — preserve state.
+        self._run("idle", {
+            "session_id": "sid-4", "cwd": "/x",
+            "hook_event_name": "Stop",
+        })
+        self._run("session-start", {
+            "session_id": "sid-4", "cwd": "/x",
+            "hook_event_name": "SessionStart", "source": "compact",
+        })
+        row = self._row("sid-4")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[1], "idle")
+        self.assertEqual(row[3], "Stop")  # last_event_kind unchanged too
+
+    def test_session_start_resume_without_existing_row_writes_nothing(self):
+        # Resume can fire before any prior hook event landed (sessions
+        # started before the user installed claude-agents-bar, or just a
+        # plain IDE tab switch on a session whose TSV row was GC'd).
+        # We must NOT write a synthetic idle row with the current
+        # timestamp — that would falsely paint the session FRESH on
+        # every tab switch. The plugin falls back to the JSONL mtime
+        # for missing-TSV sessions, which is the right answer.
+        self._run("session-start", {
+            "session_id": "sid-5", "cwd": "/x",
+            "hook_event_name": "SessionStart", "source": "resume",
+        })
+        self.assertIsNone(self._row("sid-5"))
+
+
+# --------------------------------------------------------------------------- #
+# bin/setup.sh — settings.json merge idempotency                               #
+# --------------------------------------------------------------------------- #
+
+
+class TestSetupMerge(unittest.TestCase):
+    """``setup.sh`` must be able to *update* its own hook registrations.
+
+    The original merge was purely additive (``jq +``), so re-running setup
+    after the bundled command line changed (e.g. ``SessionStart working`` →
+    ``SessionStart session-start``) appended a duplicate matcher alongside
+    the stale one and both fired on every event. These tests pin the
+    "purge-then-append" behavior: old ``agent-state.sh`` matchers are
+    removed before our patch is appended, while unrelated user hooks are
+    preserved untouched.
+
+    The jq program is duplicated here from ``bin/setup.sh``. If you change
+    the merge logic in one place, update the other.
+    """
+
+    # Mirrors the jq pipeline in bin/setup.sh, step 5. Keep in sync.
+    MERGE_JQ = r"""
+        def is_ours: (.command // "") | contains("agent-state.sh");
+        .hooks = (.hooks // {})
+        | .hooks |= with_entries(
+            .value |= (
+                map(.hooks |= map(select(is_ours | not)))
+                | map(select(((.hooks // []) | length) > 0))
+            )
+        )
+        | reduce ($patch.hooks | to_entries[]) as $kv (
+            .;
+            .hooks[$kv.key] = ((.hooks[$kv.key] // []) + $kv.value)
+        )
+    """
+
+    PATCH_PATH = (
+        Path(__file__).resolve().parent.parent / "settings-hooks.json"
+    )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _merge(self, settings: dict) -> dict:
+        """Run the merge jq program against ``settings`` and return the result."""
+        import subprocess
+        path = self.tmpdir / "settings.json"
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        # Expand ${HOME} the way bin/setup.sh does before feeding the patch.
+        patch_raw = self.PATCH_PATH.read_text(encoding="utf-8")
+        patch_expanded = patch_raw.replace("${HOME}", os.environ["HOME"])
+        result = subprocess.run(
+            ["/usr/bin/jq", "--argjson", "patch", patch_expanded, self.MERGE_JQ,
+             str(path)],
+            check=True, capture_output=True, timeout=10,
+        )
+        return json.loads(result.stdout)
+
+    def _agent_state_matchers(self, hooks_for_event: list) -> list:
+        return [
+            matcher for matcher in hooks_for_event
+            for hook in matcher.get("hooks", [])
+            if "agent-state.sh" in hook.get("command", "")
+        ]
+
+    def test_first_install_creates_exactly_one_matcher_per_event(self):
+        result = self._merge({})
+        for event in (
+            "SessionStart", "UserPromptSubmit", "PreToolUse",
+            "PostToolUse", "Notification", "Stop",
+        ):
+            with self.subTest(event=event):
+                ours = self._agent_state_matchers(result["hooks"][event])
+                self.assertEqual(len(ours), 1)
+
+    def test_rerun_replaces_stale_argument_does_not_duplicate(self):
+        # This is the bug: existing SessionStart -> working, new patch has
+        # SessionStart -> session-start. After a rerun, only the new one
+        # must remain (otherwise both fire on every event).
+        existing = {
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": f"{os.environ['HOME']}/.claude/hooks/agent-state.sh working",
+                        "async": True,
+                    }],
+                }],
+            },
+        }
+        result = self._merge(existing)
+        matchers = self._agent_state_matchers(result["hooks"]["SessionStart"])
+        self.assertEqual(len(matchers), 1)
+        cmd = matchers[0]["hooks"][0]["command"]
+        self.assertIn("session-start", cmd)
+        self.assertNotIn("agent-state.sh working", cmd)
+
+    def test_user_hooks_on_same_event_are_preserved(self):
+        # A hook the user has registered themselves on SessionStart must
+        # survive setup.sh — we only purge our own matchers.
+        existing = {
+            "hooks": {
+                "SessionStart": [
+                    {"hooks": [{"type": "command", "command": "/usr/local/bin/my-hook.sh"}]},
+                    {"hooks": [{
+                        "type": "command",
+                        "command": f"{os.environ['HOME']}/.claude/hooks/agent-state.sh working",
+                    }]},
+                ],
+            },
+        }
+        result = self._merge(existing)
+        commands = [
+            hook["command"]
+            for matcher in result["hooks"]["SessionStart"]
+            for hook in matcher.get("hooks", [])
+        ]
+        self.assertIn("/usr/local/bin/my-hook.sh", commands)
+        # Exactly one agent-state.sh registration, and it's the new one.
+        ours = [c for c in commands if "agent-state.sh" in c]
+        self.assertEqual(len(ours), 1)
+        self.assertIn("session-start", ours[0])
+
+    def test_user_hook_sharing_a_matcher_with_ours_is_preserved(self):
+        # Edge case: someone has packed our hook into the same matcher
+        # as their own. We must scrub only the agent-state.sh entry and
+        # leave their hook in place, even though the matcher object
+        # itself stays.
+        existing = {
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [
+                        {"type": "command", "command": "/usr/local/bin/my-hook.sh"},
+                        {"type": "command",
+                         "command": f"{os.environ['HOME']}/.claude/hooks/agent-state.sh working"},
+                    ],
+                }],
+            },
+        }
+        result = self._merge(existing)
+        commands = [
+            hook["command"]
+            for matcher in result["hooks"]["SessionStart"]
+            for hook in matcher.get("hooks", [])
+        ]
+        self.assertIn("/usr/local/bin/my-hook.sh", commands)
+        ours = [c for c in commands if "agent-state.sh" in c]
+        self.assertEqual(len(ours), 1)
+        self.assertIn("session-start", ours[0])
+
+    def test_unrelated_top_level_settings_are_preserved(self):
+        existing = {
+            "theme": "dark",
+            "permissions": {"allow": ["Bash(git diff:*)"]},
+        }
+        result = self._merge(existing)
+        self.assertEqual(result["theme"], "dark")
+        self.assertEqual(result["permissions"], {"allow": ["Bash(git diff:*)"]})
 
 
 if __name__ == "__main__":
