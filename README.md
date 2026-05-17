@@ -70,13 +70,31 @@ without expanding anything.
 today's activity summary, a feedback link, and one-click jump to
 your `config.json`.
 
+**Audible nudges** — when a session finishes (`Stop`) or stalls on a
+permission prompt (`PermissionRequest`), the plugin plays a short
+chime, speaks a random phrase via macOS `say` (default sets:
+`"Done"` / `"Your turn"` for stop, `"Awaiting input"` / `"I'm blocked"`
+for permission), and shows a clickable banner that jumps straight to
+the waiting session. Both phrase lists are config knobs — replace
+them with whatever you find funnier (jokes, your cat's name, a Star
+Wars soundboard). One-liner exchanges are skipped via
+`notify_threshold_sec`. Requires `terminal-notifier`; see
+[docs/configuration.md § Notifications](./docs/configuration.md#notifications)
+to silence one channel without losing the other.
+
 ## Install
 
 ```bash
 brew install --cask swiftbar               # if not already installed
+brew install terminal-notifier             # optional, enables banners + chime
 brew install alexey-krylov/claude-agents-bar/claude-agents-bar
 claude-agents-bar setup
 ```
+
+`terminal-notifier` is optional — the menu-bar UI works without it,
+but stop/permission banners and their click-to-jump-to-session
+behaviour don't fire until it's installed. `claude-agents-bar doctor`
+warns when it's missing.
 
 `setup` symlinks the plugin into SwiftBar's plugins directory,
 registers the Claude Code hook in `~/.claude/hooks/`, and merges
@@ -162,6 +180,8 @@ menu-bar rendering is hiding it. Otherwise:
 
 ## Contributing
 
-[PLUGIN.md](./PLUGIN.md) has everything for hackers. User-visible
-changes go in [CHANGELOG.md](./CHANGELOG.md). For installing or
-upgrading via a Claude Code agent, see [CLAUDE.md](./CLAUDE.md).
+Suggestions and bug reports — open an issue. If you want to make a
+change, fork the repo and send a PR. [PLUGIN.md](./PLUGIN.md) covers
+the architecture and dev workflow. User-visible changes go in
+[CHANGELOG.md](./CHANGELOG.md). For installing or upgrading via a
+Claude Code agent, see [CLAUDE.md](./CLAUDE.md).

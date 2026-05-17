@@ -64,6 +64,36 @@ correctly — only the menu-bar rendering is hiding it.
   ClaudeAgentsBar to the always-visible group so it never falls into
   the hidden bucket.
 
+## Icon missing even without a notch — too many menu-bar apps
+
+Same failure mode as the notch case, different cause. macOS doesn't
+wrap menu-bar items to a second row: once status icons fill the strip
+to the right of the active app's menu titles, anything that doesn't
+fit is silently clipped — running but undrawn. On a non-notched
+display this happens when you've accumulated a lot of third-party
+status apps (cloud-sync clients, password managers, clipboard
+utilities, system monitors, update agents…), especially under apps
+with wide localised menu titles.
+
+**Symptoms** are identical to the notched case: `doctor` is happy,
+the standalone plugin run prints valid output, but the icon never
+shows up on the bar.
+
+**How to confirm it's clipping, not a plugin bug:**
+
+1. Quit the SwiftBar app entirely, then relaunch it. If the icon
+   appears briefly and then disappears as another app loads, it's
+   clipping.
+2. Or just start disabling menu-bar items one by one (right-click →
+   *Quit*, or *System Settings → Control Center* for Apple-managed
+   indicators). The moment ClaudeAgentsBar reappears, the previous
+   one was the straw breaking the bar.
+
+**Fixes** are the same as in the notched section above: compact mode,
+prune Control Center entries, quit dead-weight menu-bar apps, or use
+[Ice](https://github.com/jordanbaird/Ice) / Bartender / Hidden Bar to
+push overflow behind a toggle.
+
 ## Plugin appears stuck or empty
 
 Run the plugin standalone:
@@ -80,8 +110,9 @@ What to look for:
 - **One line per session** active in the last `window_minutes`.
 
 If the output is well-formed but SwiftBar shows nothing, the issue is
-either (a) menu-bar clipping (see notch section above) or (b) SwiftBar
-hasn't picked up the plugin yet — force a refresh:
+either (a) menu-bar clipping (see the notch and overflow sections
+above) or (b) SwiftBar hasn't picked up the plugin yet — force a
+refresh:
 
 ```bash
 open "swiftbar://refreshallplugins"
@@ -95,35 +126,6 @@ If the output itself errors or is empty, check:
   and is it being updated?
 - `tail ~/.claude/agent-state.tsv` after a Claude Code session emits
   any event — should show one row updated within seconds.
-
-## Sessions show as `idle` even when working
-
-The hooks aren't registered or aren't firing.
-
-```bash
-jq '.hooks' ~/.claude/settings.json
-```
-
-Should list entries pointing at `~/.claude/hooks/agent-state.sh` for
-`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`Notification`, `Stop`. If they're missing, re-run `bash install.sh`
-in the project root (idempotent — safe to run multiple times).
-
-Test the hook directly:
-
-```bash
-echo '{"session_id":"00000000-test","cwd":"/tmp","hook_event_name":"SessionStart"}' \
-  | ~/.claude/hooks/agent-state.sh working
-grep '^00000000-test' ~/.claude/agent-state.tsv  # should print one row
-```
-
-Clean up the test row afterwards:
-
-```bash
-grep -v '^00000000-test	' ~/.claude/agent-state.tsv \
-  > ~/.claude/agent-state.tsv.tmp \
-  && mv ~/.claude/agent-state.tsv.tmp ~/.claude/agent-state.tsv
-```
 
 ## Session deleted in VSCode still appears in the menu
 
@@ -168,6 +170,83 @@ it from a VSIX or open-vsx. See
 `open -t` follows the system *Default text editor* binding. To change
 it, right-click any `.json` file in Finder → *Get Info* → *Open with*
 → pick your editor → *Change All…*.
+
+## No banner / no chime / no voice on `Stop` or permission prompts
+
+Walk down the list — these are the usual suspects:
+
+- **`terminal-notifier` not installed.** Required for the banner;
+  without it the chime and `say` still fire but no notification
+  appears. `claude-agents-bar doctor` flags this under the `notify/`
+  check. Fix:
+
+  ```bash
+  brew install terminal-notifier
+  ```
+
+- **macOS Focus / Do Not Disturb is on.** On Sonoma+ this also
+  silences the chime, not just the banner. Check the Control Center
+  toggle or *System Settings → Focus*.
+
+- **Notifications are denied for `terminal-notifier`.** *System
+  Settings → Notifications → terminal-notifier* must be allowed,
+  with *Alert style* set to Banners or Alerts (not None). If the
+  entry isn't there, run `terminal-notifier -message hi` once from
+  the terminal — the first invocation is what makes macOS register
+  it in the Notifications pane.
+
+- **Sound output is muted at the system level.** `Hero.aiff` /
+  `Funk.aiff` go through normal audio output. Test directly:
+
+  ```bash
+  afplay /System/Library/Sounds/Hero.aiff
+  say "test"
+  ```
+
+  If both are silent, the issue is the system audio, not the plugin.
+
+- **Stop notifications skipped on short turns.** By design — the
+  `notify_threshold_sec` knob (default 30 s) silences quick
+  one-liners. Set it to `0` if you want every stop to ring.
+
+- **One channel on, the other off?** Confirm the relevant config knob
+  is `true`:
+
+  ```bash
+  jq '.notify_on_stop, .notify_on_wait' \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/claude-agents-bar/config.json"
+  ```
+
+- **Hook not registered.** Check that `notify-stop.sh` and
+  `notify-wait.sh` are wired up:
+
+  ```bash
+  jq '.hooks.Stop, .hooks.PermissionRequest' ~/.claude/settings.json
+  ```
+
+  Both should list a command containing `notify-stop.sh` /
+  `notify-wait.sh`. If they're missing, re-run `claude-agents-bar
+  setup` (idempotent).
+
+- **Hook fires but stays silent.** Trigger it by hand to see the
+  underlying error:
+
+  ```bash
+  echo '{"session_id":"00000000-test","cwd":"/tmp","hook_event_name":"Stop"}' \
+    | ~/.claude/hooks/notify-stop.sh
+  ```
+
+  Missing `jq` or a malformed `config.json` will surface here.
+
+## Permission banner clicks open the wrong editor (or nothing)
+
+The banner uses the same `editor_url_scheme` config knob as the
+dropdown row clicks. If row clicks already work, banner clicks
+should too — if they don't, see *Clicking a row does nothing* above.
+A common gotcha on first install: the banner is delivered by
+`terminal-notifier`, which on a brand-new install may need *Open
+URLs* permission granted in *System Settings → Notifications →
+terminal-notifier* (the click is a no-op until that's granted).
 
 ## Compact bullets render as literal `^[[33m`
 

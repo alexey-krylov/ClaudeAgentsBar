@@ -107,6 +107,58 @@ to read at a glance.
 Rationale for picking ANSI bullets over SF Symbols, narrower emoji,
 or plain numbers: [ADR-0010](./adr/0010-compact-menubar-ansi-bullets.md).
 
+## Notifications
+
+Two Claude Code events trigger an audible nudge:
+
+| Event | When | Sound | Phrase source | Suppressible? |
+|---|---|---|---|---|
+| `Stop` | A session finishes its turn | `Hero.aiff` | `notify_phrases` | `notify_on_stop: false` |
+| `PermissionRequest` | Claude is blocked on a tool-approval dialog | `Funk.aiff` | `notify_wait_phrases` | `notify_on_wait: false` |
+
+For each event the plugin (1) plays the chime, (2) speaks a random
+phrase from the matching list via macOS `say`, and (3) shows a
+`terminal-notifier` banner. Clicking the permission banner deep-links
+straight back to the waiting session in your editor — no need to
+hunt through the menu bar.
+
+**Why two knobs, not one.** Stop notifications are most useful for
+long turns and noisy for quick one-liners — that's what
+`notify_threshold_sec` (default 30 s) silences. Permission
+notifications have no threshold: every approval prompt is
+intentional, and Claude is genuinely stuck until you respond.
+Silencing one channel doesn't affect the other.
+
+**Customising the phrases.** Replace `notify_phrases` /
+`notify_wait_phrases` with whatever you want spoken aloud — your
+name, inside jokes, lines from a movie, your dog's name. `say` reads
+any UTF-8 string, so non-ASCII works too. One phrase is picked at
+random on each event, so a longer list gives more variety. To pick a
+specific voice, edit `hooks/notify-stop.sh` / `hooks/notify-wait.sh`
+(`say -v Samantha …`) — `say -v '?'` lists what's installed on your
+Mac.
+
+**Dependencies.** Banners require [`terminal-notifier`][tn]
+(`brew install terminal-notifier`); without it the chime and `say`
+still fire but no banner appears. `claude-agents-bar doctor` reports
+its presence under the `notify/` check.
+
+[tn]: https://github.com/julienXX/terminal-notifier
+
+**Silencing everything temporarily.** macOS Focus / Do Not Disturb
+suppresses the banner (and on Sonoma+, the chime as well) — usually
+the right escape hatch when you don't want to edit config. For a
+permanent off-switch:
+
+```json
+{ "notify_on_stop": false, "notify_on_wait": false }
+```
+
+Underlying hooks: `hooks/notify-stop.sh` and `hooks/notify-wait.sh`.
+Both are plain Bash, read the same JSON config the plugin uses, and
+degrade silently when `terminal-notifier` / `jq` / the icon asset is
+missing.
+
 ## Changing the refresh rate
 
 SwiftBar derives the polling cadence from the filename —
@@ -162,6 +214,20 @@ Force Russian UI:
 
 ```json
 { "language": "ru" }
+```
+
+Custom voice lines, no chime on quick turns, banner only on permission prompts:
+
+```json
+{
+  "notify_on_stop": false,
+  "notify_wait_phrases": [
+    "Need a human",
+    "Permission, captain",
+    "Halt and catch fire",
+    "Standing by"
+  ]
+}
 ```
 
 ## Files on disk
