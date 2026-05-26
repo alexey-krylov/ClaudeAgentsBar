@@ -44,5 +44,10 @@
   "stats.turns_short": "{n} lượt",
   "stats.tokens": "Token: {total} (prompt {prompt}, cache {cache_hit} %)",
   "stats.tokens_empty": "Token: chưa có dữ liệu",
-  "stats.top_projects": "Dự án hàng đầu:"
+  "stats.top_projects": "Dự án hàng đầu:",
+
+  "row.subagent_badge": "🤖×{n}",
+  "menu.subagents_header": "🤖 Tác nhân con ({n}/{total})",
+  "menu.subagent_working": "đang chạy · {duration}",
+  "menu.subagent_done": "xong · {age} trước"
 }

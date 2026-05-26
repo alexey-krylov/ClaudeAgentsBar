@@ -44,5 +44,10 @@
   "stats.turns_short": "{n} реплик",
   "stats.tokens": "Токенов: {total} (промпт {prompt}, попаданий в кэш {cache_hit}%)",
   "stats.tokens_empty": "Токенов: данных пока нет",
-  "stats.top_projects": "Самые активные проекты:"
+  "stats.top_projects": "Самые активные проекты:",
+
+  "row.subagent_badge": "🤖×{n}",
+  "menu.subagents_header": "🤖 Субагенты ({n}/{total})",
+  "menu.subagent_working": "работает · {duration}",
+  "menu.subagent_done": "готов · {age} назад"
 }

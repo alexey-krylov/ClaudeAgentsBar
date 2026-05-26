@@ -44,5 +44,10 @@
   "stats.turns_short": "{n} 轮",
   "stats.tokens": "Token：{total}（输入 {prompt}，缓存命中 {cache_hit}%）",
   "stats.tokens_empty": "Token：暂无数据",
-  "stats.top_projects": "活跃项目："
+  "stats.top_projects": "活跃项目：",
+
+  "row.subagent_badge": "🤖×{n}",
+  "menu.subagents_header": "🤖 子代理（{n}/{total}）",
+  "menu.subagent_working": "运行中 · {duration}",
+  "menu.subagent_done": "已完成 · {age} 前"
 }

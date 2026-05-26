@@ -66,6 +66,22 @@ _FORGET_LOCK_DIR = FORGET_PATH.with_suffix(FORGET_PATH.suffix + ".lock.d")
 #: filesystem and doesn't need ``util-linux``, unlike ``flock``.
 _SIDECAR_LOCK_DIR = SIDECAR_PATH.with_suffix(SIDECAR_PATH.suffix + ".lock.d")
 
+#: TSV that records every subagent (``Task``) the parent has spawned, written
+#: by the same ``hooks/agent-state.sh`` script when the hook payload carries
+#: an ``agent_id`` field. One row per ``(parent_sid, agent_id)``; the same
+#: schema documented in :data:`SubagentSnapshot`.
+#:
+#: Lives next to :data:`SIDECAR_PATH` so all sidecar locks share a directory.
+#: The plugin reads it on every tick to (a) keep the parent ACTIVE while any
+#: subagent is live and (b) render the 🤖×N badge + the subagent block in the
+#: parent's submenu. See ``docs/specs/0004-subagent-grouping.md``.
+SUBAGENTS_SIDECAR_PATH = HOME / ".claude" / "agent-state.subagents.tsv"
+
+#: Mutex on :data:`SUBAGENTS_SIDECAR_PATH`, shared with ``hooks/agent-state.sh``.
+_SUBAGENTS_SIDECAR_LOCK_DIR = SUBAGENTS_SIDECAR_PATH.with_suffix(
+    SUBAGENTS_SIDECAR_PATH.suffix + ".lock.d"
+)
+
 #: Bytes mmap'd from the JSONL tail when searching for the most recent
 #: ``gitBranch`` — bounded so huge transcripts (base64 attachments) stay cheap.
 #: The same window is used by ``last_usage_tokens`` to find the freshest
@@ -143,7 +159,7 @@ _EDITOR_URL_SCHEME_ALLOWLIST = frozenset({
 })
 
 
-#: States that ``hooks/agent-state.sh`` may write.
+#: States that ``hooks/agent-state.sh`` may write to the **parent** sidecar.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
 
 #: The subset of :data:`HOOK_STATES` that mean "session is in flight" — i.e.
@@ -152,6 +168,29 @@ HOOK_STATES = frozenset({"waiting", "working", "idle"})
 #: conflates these two (see its docstring); this is the same conflation at
 #: the per-state level.
 ACTIVE_HOOK_STATES = frozenset({"working", "waiting"})
+
+#: States that the hook may write to the **subagent** sidecar. ``stopped``
+#: replaces ``idle`` because subagents announce their end through the
+#: ``SubagentStop`` hook event, whose semantics (Task finished, control
+#: returned to the parent) differ from the parent ``Stop`` (turn ended,
+#: row goes 🟡 → 🟢). ``waiting`` is absent: subagent-side events never
+#: carry ``Notification`` / ``PermissionRequest`` — those always reach the
+#: parent.
+SUBAGENT_STATES = frozenset({"working", "stopped"})
+
+#: The subset of :data:`SUBAGENT_STATES` that still hold the parent ACTIVE.
+SUBAGENT_LIVE_STATES = frozenset({"working"})
+
+#: Agent ids in Claude Code 2.1.x are 16-char hex tokens (e.g.
+#: ``a2a96465dfa0eee5d``). Same threat model as :data:`_SESSION_ID_RE` —
+#: keep the allow-list narrow so values from the TSV are safe to drop into
+#: SwiftBar ``paramN=`` slots and shell arguments without further escaping.
+_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _is_valid_agent_id(value: str) -> bool:
+    """True iff ``value`` matches the safe-agent-id allow-list."""
+    return bool(_AGENT_ID_RE.match(value))
 
 #: ``entrypoint`` values that count as interactive — these are the sessions a
 #: human is actively typing into. Everything else (notably ``sdk-cli`` for
@@ -286,6 +325,12 @@ class Config:
     compact: bool = False
     context_window_tokens: int = 1_000_000
     context_warning_threshold: int = 80
+    #: Toggle for the per-row model badge (ⓞ/ⓢ/ⓗ/ⓜ next to the title when
+    #: the session's model differs from the user's default) and the model
+    #: line in each session's submenu. Defaults ``True``; flip to
+    #: ``False`` to suppress the glyph and the row entirely. See
+    #: ``docs/specs/0004-subagent-grouping.md`` § Model badge & submenu row.
+    model_badge: bool = True
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -378,6 +423,8 @@ class Config:
         # == True so we can't use the generic take() helper here.
         if "compact" in data and isinstance(data["compact"], bool):
             coerced["compact"] = data["compact"]
+        if "model_badge" in data and isinstance(data["model_badge"], bool):
+            coerced["model_badge"] = data["model_badge"]
 
         # Drop unknown keys silently — they're forward-compatibility hooks.
         valid_names = {f.name for f in fields(cls)}
@@ -608,6 +655,37 @@ class HookSnapshot:
 
 
 @dataclass(frozen=True)
+class SubagentSnapshot:
+    """A single row of ``agent-state.subagents.tsv`` — the last hook fact
+    about a subagent (``Task`` spawn).
+
+    The plugin uses this to (a) keep the parent ACTIVE when at least one
+    of its subagents is ``working`` and (b) render the subagent block in
+    the parent's submenu. See ``docs/specs/0004-subagent-grouping.md``.
+
+    Subagents share the parent's ``session_id`` in Claude Code 2.1.x —
+    confirmed by the spike — so rows are keyed on ``(parent_sid, agent_id)``.
+    """
+
+    parent_sid: str
+    agent_id: str
+    agent_type: str
+    state: str
+    state_since: int
+    last_event_ts: int
+
+    @property
+    def is_live(self) -> bool:
+        """True iff this subagent is still running.
+
+        Watchdog demotion to ``stopped`` happens in :mod:`render`, not here —
+        the snapshot is the raw row from disk. Live here means the last
+        hook event said ``working``.
+        """
+        return self.state in SUBAGENT_LIVE_STATES
+
+
+@dataclass(frozen=True)
 class TranscriptMeta:
     """Subset of a JSONL transcript needed to render a menu row."""
 
@@ -670,6 +748,31 @@ class Session:
     #: hover tooltip on the main row so a quick glance answers
     #: "what is Claude doing right now?".
     last_tool_use: str = ""
+    #: Model string from the latest assistant event in the transcript
+    #: (e.g. ``claude-opus-4-7``). ``None`` for older transcripts whose
+    #: tail has no parseable ``"model":"..."`` match — :func:`_model_badge`
+    #: then falls through to the ⓜ glyph and the submenu model row is
+    #: omitted. Drives both the per-row badge and the submenu line.
+    model: str | None = None
+    #: Subagents (``Task`` spawns) attached to this parent session,
+    #: ordered by ``state_since`` ascending so the oldest is first. Empty
+    #: when the session has never spawned a subagent (the common case).
+    #: A snapshot here means the row exists in
+    #: :data:`SUBAGENTS_SIDECAR_PATH` — it might still be working, stopped
+    #: recently, or stopped long ago but inside the per-row fresh window.
+    #: ``render.build_session`` filters / promotes these before render.
+    subagents: tuple[SubagentSnapshot, ...] = ()
+
+    @property
+    def live_subagent_count(self) -> int:
+        """How many subagents are still ``working`` right now.
+
+        Drives the ``🤖×N`` badge on the row. Snapshots with ``state ==
+        stopped`` aren't counted even when they're inside the fresh
+        window — the badge answers "what's running", the submenu block
+        answers "what just finished".
+        """
+        return sum(1 for s in self.subagents if s.is_live)
 
     @property
     def right_label(self) -> str:
@@ -724,6 +827,90 @@ _USAGE_BLOCK_RE = re.compile(
     rb'"cache_creation_input_tokens":(\d+)[^}]*?'
     rb'"cache_read_input_tokens":(\d+)'
 )
+
+#: Captures the ``model`` of the most recent event in a JSONL transcript
+#: tail. The same tail window that backs :data:`_USAGE_BLOCK_RE` catches
+#: this signal — Claude Code writes ``"model":"..."`` next to every
+#: assistant event's ``usage`` block — so the read cost is shared.
+#:
+#: ``[^"]+`` is loose on purpose: we want to capture non-Claude provider
+#: strings too (OpenRouter, custom endpoints) so the submenu row can
+#: surface them; :func:`_model_badge` maps those to the ⓜ fallback.
+_MODEL_RE = re.compile(rb'"model":"([^"]+)"')
+
+
+#: Prefix → badge glyph for Claude model families. Order matters only for
+#: documentation; prefixes are mutually exclusive in the current API.
+_MODEL_FAMILY_BADGES: tuple[tuple[str, str], ...] = (
+    ("claude-opus-", "ⓞ"),
+    ("claude-sonnet-", "ⓢ"),
+    ("claude-haiku-", "ⓗ"),
+)
+
+#: Fallback badge for non-Claude providers and unparseable models. Spec
+#: 0004 § Model badge & submenu row.
+_MODEL_FALLBACK_BADGE = "ⓜ"
+
+
+def _model_badge(model: str | None, default_model: str | None) -> str:
+    """Return the inline badge for a session's model, or ``""`` when the
+    badge should be suppressed.
+
+    Rules from `docs/specs/0004-subagent-grouping.md` § model surface:
+
+    * ``model is None`` (older JSONL with no parseable ``"model":"..."``)
+      → fall back to ⓜ so the badge is never silently absent.
+    * ``model == default_model`` → suppress (the badge is a *difference*
+      marker; the user's default needs no marker).
+    * Family-prefix match → the family glyph.
+    * Otherwise → ⓜ (OpenRouter, custom endpoint, anything we don't
+      recognise).
+
+    When ``default_model is None`` (the user has no ``model`` field in
+    either settings file) every match falls through to the family
+    glyph — “safe degradation”, so a misconfigured user is never
+    surprised by an *absent* badge.
+    """
+    if model is None:
+        return _MODEL_FALLBACK_BADGE
+    if default_model and model == default_model:
+        return ""
+    for prefix, badge in _MODEL_FAMILY_BADGES:
+        if model.startswith(prefix):
+            return badge
+    return _MODEL_FALLBACK_BADGE
+
+
+def _default_model_for(cwd: str) -> str | None:
+    """Resolve the user's default Claude model for a session in ``cwd``.
+
+    Reads ``model`` from ``~/.claude/settings.json``, then overlays
+    ``<cwd>/.claude/settings.local.json`` when that file exists and
+    carries the field. Returns ``None`` when neither file declares one
+    — spec 0004 treats that as "unset everywhere", which makes every
+    row show a badge (safe degradation).
+
+    Cheap: both files are tiny and we only touch them on tick that
+    has at least one renderable session. Bad JSON / unreadable file /
+    non-string value silently fall back to ``None``.
+    """
+    result: str | None = None
+    candidates = [HOME / ".claude" / "settings.json"]
+    if cwd:
+        candidates.append(Path(cwd) / ".claude" / "settings.local.json")
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        value = raw.get("model")
+        if isinstance(value, str) and value:
+            result = value
+    return result
 
 
 def _shorten(text: str) -> str:

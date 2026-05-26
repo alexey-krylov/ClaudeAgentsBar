@@ -40,11 +40,14 @@ from .core import (
     JSONL_TITLE_SCAN_BYTES,
     JSONL_USER_TAIL_BYTES,
     RenderGroup,
+    SUBAGENT_STATES,
+    SubagentSnapshot,
     TranscriptMeta,
     _GIT_BRANCH_RE,
     _USAGE_BLOCK_RE,
     _clean_text,
     _content_to_title,
+    _is_valid_agent_id,
     _is_valid_session_id,
     _warn,
 )
@@ -138,6 +141,90 @@ def _live_session_ids() -> set[str]:
                     continue
                 live_ids.add(sid)
     return live_ids
+
+
+def read_subagents_sidecar() -> dict[str, tuple[SubagentSnapshot, ...]]:
+    """Load ``agent-state.subagents.tsv`` into ``{parent_sid: (snap, ...)}``.
+
+    Rows are returned sorted by ``state_since`` ascending so the oldest
+    subagent for a given parent comes first — matches the natural left-to-
+    right submenu order and means the renderer doesn't need to re-sort.
+
+    Same fail-open stance as :func:`read_sidecar`: a missing file returns
+    ``{}``, a half-written row that doesn't parse is silently skipped.
+    """
+    if not core.SUBAGENTS_SIDECAR_PATH.exists():
+        return {}
+    try:
+        raw = core.SUBAGENTS_SIDECAR_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return _parse_subagents_sidecar(raw)
+
+
+def _parse_subagents_sidecar(raw: str) -> dict[str, tuple[SubagentSnapshot, ...]]:
+    """Decode the raw TSV text into ``{parent_sid: (snap, ...)}``. Pure helper."""
+    groups: dict[str, list[SubagentSnapshot]] = {}
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        parent_sid, agent_id, agent_type, state, since_raw, ts_raw = parts[:6]
+        if not _is_valid_session_id(parent_sid):
+            continue
+        if not _is_valid_agent_id(agent_id):
+            continue
+        if state not in SUBAGENT_STATES:
+            continue
+        try:
+            ts = int(ts_raw)
+            state_since = int(since_raw)
+        except ValueError:
+            continue
+        groups.setdefault(parent_sid, []).append(
+            SubagentSnapshot(
+                parent_sid=parent_sid,
+                agent_id=agent_id,
+                agent_type=agent_type,
+                state=state,
+                state_since=state_since,
+                last_event_ts=ts,
+            )
+        )
+    return {
+        sid: tuple(sorted(snaps, key=lambda s: s.state_since))
+        for sid, snaps in groups.items()
+    }
+
+
+def _subagent_lock(timeout_sec: float = 2.0):
+    """Mutex shared with ``hooks/agent-state.sh`` for ``agent-state.subagents.tsv``."""
+    return _mkdir_lock(core._SUBAGENTS_SIDECAR_LOCK_DIR, timeout_sec)
+
+
+def _stale_subagent_keys(
+    snapshots: dict[str, tuple[SubagentSnapshot, ...]],
+    now: int,
+) -> set[tuple[str, str]]:
+    """Return ``(parent_sid, agent_id)`` rows the subagent sidecar should drop.
+
+    A subagent row is stale when:
+
+    * the parent's transcript no longer exists on disk (the whole session
+      was deleted out of band — orphaned subagents belong with their
+      parent in the bin), or
+    * its ``last_event_ts`` is older than :attr:`Config.window_sec` (the
+      row will never render again — same window as the main sidecar).
+    """
+    live_ids = _live_session_ids()
+    stale: set[tuple[str, str]] = set()
+    for parent_sid, snaps in snapshots.items():
+        for snap in snaps:
+            if parent_sid not in live_ids:
+                stale.add((parent_sid, snap.agent_id))
+            elif now - snap.last_event_ts > core.CONFIG.window_sec:
+                stale.add((parent_sid, snap.agent_id))
+    return stale
 
 
 def _stale_sidecar_ids(snapshots: dict[str, HookSnapshot], now: int) -> set[str]:
@@ -248,6 +335,45 @@ def _gc_two_col_sidecar(
             tmp.replace(path)
         except OSError as exc:
             _warn(f"{label} gc failed: {exc}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def gc_subagents(stale: set[tuple[str, str]]) -> None:
+    """Drop the given ``(parent_sid, agent_id)`` rows from the subagent sidecar.
+
+    Same atomic re-read / re-write under mutex as :func:`gc_sidecar` but
+    keyed on the first two columns instead of just the first. Cheap when
+    there's nothing to drop.
+    """
+    path = core.SUBAGENTS_SIDECAR_PATH
+    if not stale or not path.exists():
+        return
+    with _subagent_lock():
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        original = raw.splitlines()
+        kept: list[str] = []
+        for line in original:
+            parts = line.split("\t", 2)
+            if len(parts) < 2:
+                kept.append(line)
+                continue
+            if (parts[0], parts[1]) in stale:
+                continue
+            kept.append(line)
+        if len(kept) == len(original):
+            return
+        tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+        try:
+            tmp.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            _warn(f"subagent sidecar gc failed: {exc}")
             try:
                 tmp.unlink()
             except OSError:
@@ -712,6 +838,30 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
             if summary:
                 last_summary = summary
     return last_summary
+
+
+def last_session_model(jsonl_path: Path) -> str | None:
+    """Return the model from the most recent ``"model":"..."`` match in the
+    tail, or ``None`` when no match exists.
+
+    Claude Code writes the model alongside every assistant event's usage
+    block, so the same tail buffer that powers :func:`last_usage_tokens`
+    carries this signal too. We take the *last* match (mixed-model
+    sessions — user switched mid-stream via ``/model`` — should answer
+    "what am I jumping into", not "where did the work happen").
+
+    ``None`` on empty / unreadable file, or on transcripts whose tail
+    doesn't contain a parseable ``"model":"..."`` (older sessions or a
+    session that only has the user's first prompt). Callers degrade by
+    omitting the model row and falling the badge through to ⓜ.
+    """
+    data = _read_jsonl_tail(jsonl_path)
+    if not data:
+        return None
+    matches = list(core._MODEL_RE.finditer(data))
+    if not matches:
+        return None
+    return matches[-1].group(1).decode("utf-8", errors="replace")
 
 
 def last_usage_tokens(jsonl_path: Path) -> int | None:

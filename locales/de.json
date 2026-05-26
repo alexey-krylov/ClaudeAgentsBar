@@ -44,5 +44,10 @@
   "stats.turns_short": "{n} Anfragen",
   "stats.tokens": "Tokens: {total} (Prompt {prompt}, Cache-Treffer {cache_hit} %)",
   "stats.tokens_empty": "Tokens: noch keine Nutzungsdaten",
-  "stats.top_projects": "Top-Projekte:"
+  "stats.top_projects": "Top-Projekte:",
+
+  "row.subagent_badge": "🤖×{n}",
+  "menu.subagents_header": "🤖 Subagents ({n}/{total})",
+  "menu.subagent_working": "läuft · {duration}",
+  "menu.subagent_done": "fertig · vor {age}"
 }

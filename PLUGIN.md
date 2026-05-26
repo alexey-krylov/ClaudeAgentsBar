@@ -21,30 +21,36 @@ If you only want to *install* and use it, see [README.md](./README.md).
             │                              │
             ▼                              ▼
    ~/.claude/agent-state.tsv         macOS menu bar  ──┐
-   (live state per session)                            │ user clicks/hovers
-            ▲                                          ▼
-            │                          ┌───────────────────────────┐
-            │                          │  bin/open-session.sh      │
-            │                          │  bin/forget-session.sh    │
-            │                          │  bin/delete-session.sh    │
-            │                          │  bin/forget-sessions.sh   │
-            └──────────────────────────┤  (actions triggered       │
-   ~/.claude/agent-state.clicks        │   from menu rows / Tools) │
-   ~/.claude/agent-state.dismiss       └───────────────────────────┘
+   ~/.claude/agent-state.subagents.tsv                  │ user clicks/hovers
+   (live state per session +                            ▼
+    one row per live subagent)                ┌───────────────────────────┐
+            ▲                                 │  bin/open-session.sh      │
+            │                                 │  bin/forget-session.sh    │
+            │                                 │  bin/delete-session.sh    │
+            │                                 │  bin/forget-sessions.sh   │
+            └─────────────────────────────────┤  (actions triggered       │
+   ~/.claude/agent-state.clicks               │   from menu rows / Tools) │
+   ~/.claude/agent-state.dismiss              └───────────────────────────┘
    ~/.claude/agent-state.forget
    (sidecars written by actions)
 ```
 
 The plugin is **stateless** — every 5 s it rebuilds the entire menu from
-five sources:
+six sources:
 
 1. The JSONL transcripts Claude Code already writes (titles, cwd).
-2. `agent-state.tsv` that `agent-state.sh` maintains (live state, last event).
-3. `agent-state.clicks` that `open-session.sh` writes (which idle sessions
+2. `agent-state.tsv` that `agent-state.sh` maintains (parent state, last
+   event). One row per session.
+3. `agent-state.subagents.tsv` — also written by `agent-state.sh`, but for
+   subagent-side events (events whose payload carries an `agent_id`).
+   One row per `(parent_sid, agent_id)`. Drives the `🤖×N` badge and the
+   parent state rollup so a row stays 🟡 while subagents are in flight,
+   instead of drifting through 🟢 / 🔵 mid-Task.
+4. `agent-state.clicks` that `open-session.sh` writes (which idle sessions
    the user has opened from the menu — drives 🟢 FRESH → 🔵 ACKNOWLEDGED).
-4. `agent-state.dismiss`, a single-timestamp cutoff set by *Forget all
+5. `agent-state.dismiss`, a single-timestamp cutoff set by *Forget all
    sessions* under Tools.
-5. `agent-state.forget`, a `{sid → forget_ts}` map written by the per-row
+6. `agent-state.forget`, a `{sid → forget_ts}` map written by the per-row
    *Forget* action — same cutoff semantics as dismiss, scoped to one row.
 
 There is no daemon, no IPC, no shared in-memory state. This makes the
@@ -260,11 +266,12 @@ so concurrent hook writes and plugin cleanups can't race.
 The state column is driven by which Claude Code event the hook fires
 on (see `hooks/settings-hooks.json`):
 
-| Claude Code event | Written state |
-|---|---|
-| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | `working` |
-| `Notification` / `PermissionRequest` | `waiting` |
-| `Stop` | `idle` |
+| Claude Code event | Written state | Routes to |
+|---|---|---|
+| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | `working` | parent or subagent TSV (by `agent_id`) |
+| `Notification` / `PermissionRequest` | `waiting` | parent TSV (subagents don't emit these) |
+| `Stop` | `idle` | parent TSV |
+| `SubagentStop` | `stopped` | subagent TSV |
 
 `PermissionRequest` is the reliable signal that Claude is blocked on a
 tool-approval dialog — `Notification` is registered too but doesn't
@@ -272,6 +279,22 @@ fire for inline approval prompts in the VSCode extension. Both write
 the same `waiting` state, so the plugin doesn't care which one
 delivered it. See the [Claude Code hooks reference][cc-hooks] for the
 full event list.
+
+The **subagent split** is the load-bearing routing in the hook: every
+event Claude Code runs *inside* a `Task` (subagent's PreToolUse,
+PostToolUse, etc.) arrives with the parent's `session_id` but also a
+non-empty `agent_id` field. If `agent_id` is present the hook writes
+into `agent-state.subagents.tsv` (keyed on `(parent_sid, agent_id)`)
+instead of clobbering the parent row. Without this split, subagent
+tool calls would overwrite the parent row's `last_event_kind` / `cwd`
+many times per Task. With it, the plugin can both:
+
+* leave the parent row's bookkeeping untouched, and
+* notice that the parent is still doing work (via the subagent row's
+  fresh `last_event_ts`) so the watchdog doesn't demote 🟡 to 🟢 / 🔵
+  mid-Task. See [spec 0004](./docs/specs/0004-subagent-grouping.md)
+  for the spike that confirmed subagents share the parent's
+  `session_id`.
 
 Two sibling Bash hooks ship alongside `agent-state.sh` and produce
 side effects (sound, banner) rather than touching the TSV:
@@ -331,6 +354,9 @@ What's covered:
 | Config defaults / overrides / coercion / bad values | `TestConfigLoad` |
 | `menubar_icon` prefix handling (plain / `sf:` / `template:` / `image:` / fallback) | `TestMenubarIconPieces` |
 | SwiftBar param quoting | `TestSwiftbarQuote` |
+| Subagent hook routing (parent vs subagent TSV) | `TestAgentStateHookSubagentRouting` |
+| Subagent TSV parser + GC | `TestSubagentSidecar` |
+| Parent state rollup from live subagents | `TestSubagentRollup` |
 
 Filesystem-bound paths (`read_transcript_meta`, `current_git_branch`,
 `gc_sidecar`, `gc_clicks`) aren't covered by unit tests — they're

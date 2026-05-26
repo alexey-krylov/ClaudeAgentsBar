@@ -5,6 +5,130 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.1.0 — Unreleased
+
+### Per-session model badge + submenu row
+
+The dropdown gains an axis that wasn't there before: which Claude
+model is running each session. Useful when several agents are live at
+once on the same project — title + branch don't disambiguate three
+Sonnet sessions and one Opus session, but a glyph next to the title
+does.
+
+Each session row picks up an inline badge right of the title **only
+when its model differs from the user's default**:
+
+| Marker | Model family |
+|---|---|
+| ⓞ | `claude-opus-*` |
+| ⓢ | `claude-sonnet-*` |
+| ⓗ | `claude-haiku-*` |
+| ⓜ | anything else (OpenRouter, custom endpoint, …) or older JSONL with no parseable `model` field |
+
+Each session's submenu also picks up a new info row carrying the
+full model string (`claude-opus-4-7`), sitting between the branch
+line and the context-usage line — same `font=Menlo color=#999999`
+style as its neighbours, `cpu` SF Symbol. The row is shown whenever
+the JSONL has a parseable `"model":"..."` field, regardless of
+whether the row badge fires — the submenu always tells you which
+model is live.
+
+Data sources:
+
+* **Session model** — last `"model":"..."` match in the JSONL tail.
+  Re-uses the same shared 128 KB tail buffer that backs the existing
+  usage / tool_use / branch readers, so the cost is folded in.
+  Mixed-model sessions (user switched mid-stream via `/model`) take
+  the *latest* — the badge answers "what am I jumping into".
+* **Default model** — `model` from `~/.claude/settings.json`,
+  overlaid by `<cwd>/.claude/settings.local.json` when that file
+  exists and declares one. "Unset everywhere" → every row gets a
+  badge (safe degradation; the user is never surprised by an
+  *absent* badge).
+
+A new config key `model_badge` (default `true`) suppresses both the
+row badge and the submenu line in one go — escape hatch for users
+who find the universal-badge fallback noisy when they haven't set
+a default. No per-family knobs; the policy is just "≠ default".
+
+Subagent rows in the submenu deliberately do **not** carry their
+own model badge. Subagents inherit the parent's model in current
+Claude Code releases; surfacing per-subagent badges would just be
+noise. If `Task` ever gains explicit per-subagent model selection,
+the row can grow a badge then.
+
+Twenty new tests across `TestModelBadge`, `TestDefaultModelFor`,
+and `TestLastSessionModel`; total is now 215. Spec lives in
+[`docs/specs/0004-subagent-grouping.md`](./docs/specs/0004-subagent-grouping.md)
+§ Model badge & submenu row.
+
+### Subagent activity surface (`🤖×N` badge + submenu block)
+
+Spawning subagents through Claude Code's `Task` tool had two bad
+effects on the menu:
+
+1. Every subagent `PreToolUse` / `PostToolUse` event arrives with
+   the **parent's** `session_id` (confirmed by the spike in
+   [spec 0004](./docs/specs/0004-subagent-grouping.md) — risk #1
+   fired). The pre-1.1 hook wrote those events straight into
+   `agent-state.tsv`, clobbering the parent row's
+   `last_event_kind` / `cwd` on every subagent tool call.
+2. Long subagent runs drifted the parent row 🟡 → 🟢 → 🔵 mid-Task:
+   the parent's own JSONL freezes while a `Task` is in flight, so
+   the watchdog tripped even though work was actively happening
+   underneath. Tracked in
+   [`issues/no-green.md`](./issues/no-green.md).
+
+`hooks/agent-state.sh` now branches on the payload's `agent_id`
+field:
+
+- Parent-side events (no `agent_id`) keep going to
+  `~/.claude/agent-state.tsv` exactly as before.
+- Subagent-side events (with `agent_id`) go to a new sidecar
+  `~/.claude/agent-state.subagents.tsv`, keyed on
+  `(parent_sid, agent_id)`. Schema:
+  `parent_sid \t agent_id \t agent_type \t state \t state_since \t last_event_ts`.
+- A new `SubagentStop` registration writes `state=stopped`. The
+  hook accepts `stopped` only when `agent_id` is present, and
+  `idle` only when it isn't — cross combinations are silent no-ops.
+
+`render.build_session` rolls the subagent sidecar into the parent's
+view:
+
+- While at least one subagent is `working`, the parent stays
+  ACTIVE — watchdog short-circuits, and an `idle` parent (parent
+  `Stop` already fired but a subagent kept running) is promoted
+  back to ACTIVE so the row doesn't flash 🟢 mid-Task.
+- The row label gets a `🤖×N` suffix (live subagent count) between
+  the title and the right-side age label.
+- The submenu picks up a `🤖 Subagents (N/total)` info row plus
+  one row per subagent: `[type] · working · 12s · Bash: grep …`
+  for live ones, `[type] · done · 4m ago` for stopped ones. Rows
+  aren't clickable — Claude Code's deep-link can't reach a
+  subagent transcript.
+- A per-subagent watchdog demotes `working` rows whose
+  `last_event_ts` is older than `watchdog_seconds` to `stopped`,
+  so a crashed Task doesn't pin the parent yellow forever.
+
+Menu-bar counters (🟡 N 🟢 M 🔵 K) keep counting parents — a job
+with five subagents is still one yellow dot, not six.
+
+Locale tables grew four keys across all eight locales
+(`row.subagent_badge`, `menu.subagents_header`,
+`menu.subagent_working`, `menu.subagent_done`).
+[`docs/specs/0004-subagent-grouping.md`](./docs/specs/0004-subagent-grouping.md)
+carries the full spike write-up and the rationale for the new
+schema; the model-surface section in that spec is deferred to a
+follow-up branch.
+
+Re-run `claude-agents-bar setup` to pick up the new `SubagentStop`
+registration in `~/.claude/settings.json`. `bin/install/setup.sh`'s
+existing purge-then-append merge handles the SubagentStop matcher
+identically to the others — no manual edits needed.
+
+Nineteen new tests across `TestAgentStateHookSubagentRouting`,
+`TestSubagentSidecar`, and `TestSubagentRollup`; total is now 195.
+
 ## 1.0.0 — 2026-05-17
 
 ### Surface tool-approval prompts in the menu and as a banner

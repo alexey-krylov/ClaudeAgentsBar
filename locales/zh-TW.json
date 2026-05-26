@@ -45,5 +45,10 @@
   "stats.turns_short": "{n} 輪",
   "stats.tokens": "Token：{total}（輸入 {prompt}，快取命中 {cache_hit}%）",
   "stats.tokens_empty": "Token：暫無資料",
-  "stats.top_projects": "熱門專案："
+  "stats.top_projects": "熱門專案：",
+
+  "row.subagent_badge": "🤖×{n}",
+  "menu.subagents_header": "🤖 子代理（{n}/{total}）",
+  "menu.subagent_working": "執行中 · {duration}",
+  "menu.subagent_done": "已完成 · {age} 前"
 }

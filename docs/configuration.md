@@ -40,6 +40,7 @@ restart needed.
 | `editor_url_scheme` | `"vscode://"` | URL scheme prefix used when opening a session on row click. Full URL: `<scheme>anthropic.claude-code/open?session=<uuid>`. Common values: `"vscode://"` (default, stock VSCode), `"vscodium://"` (VSCodium), `"cursor://"` (Cursor). Other Code-OSS forks may register their own scheme. Must include the trailing `://`. The editor must also have the `anthropic.claude-code` extension installed for the deeplink to land on a session. |
 | `language` | `"auto"` | UI language for menu labels, dialogs, and `X ago` strings. Supported: `en`, `ru`, `zh`, `zh-TW`, `fr`, `de`, `it`, `vi`. `"auto"` detects from macOS `AppleLocale`, falling back to `$LANG`. Region tag optional — `zh-TW` picks Taiwan locale; others fall back to the primary subtag (`zh`) then `en`. |
 | `compact` | `false` | When `true`, drops the icon and replaces `🟡🟢🔵` with ANSI-coloured `●` bullets (`●2 ●1 ●3`). Saves ~30 px — useful on notched MacBooks. See *Compact mode* below. |
+| `model_badge` | `true` | Toggle for the per-session model badge (`ⓞ`/`ⓢ`/`ⓗ`/`ⓜ` next to the title when the session's model differs from the user's default, read from `model` in `~/.claude/settings.json` and overlaid by `<cwd>/.claude/settings.local.json`) and the full model row in each session's submenu. Both surfaces share the toggle: set to `false` to hide the glyph and the row entirely. Default `true` — with no default model configured every row gets a family-based badge (safe degradation, so an absent badge never surprises). |
 | `context_window_tokens` | `1000000` | Total context-window size used to compute the per-session `{N}% — {used}k/{total}k` indicator. Matches Claude Opus 4.7 / 4.6 and Sonnet 4.6 (Anthropic's API default since 2026-04-23). Override to `200000` when running Haiku 4.5 or Sonnet 4.5. See [ADR-0011](./adr/0011-configurable-context-window.md) for the alternatives we considered. |
 | `context_warning_threshold` | `80` | Percent of context-window usage above which the main row gets an inline `⚠ {pct}%` marker between the title and the age label. Yellow up to 90 %, red beyond — same zones Claude Code's CLI uses. Set to `100` to suppress the inline marker while keeping the submenu gauge. Valid range `1..100`; out-of-range and non-numeric values fall back to `80`. |
 | `notify_on_stop` | `true` | Play a chime, speak a phrase, and show a macOS notification banner when a session finishes. Requires `terminal-notifier` (`brew install terminal-notifier`). Set to `false` to silence all completion notifications. |
@@ -232,12 +233,13 @@ Custom voice lines, no chime on quick turns, banner only on permission prompts:
 
 ## Files on disk
 
-Four sidecar files live under `~/.claude/`, maintained by the plugin
+Five sidecar files live under `~/.claude/`, maintained by the plugin
 and its hook/action scripts:
 
 | File | Writer(s) | Purpose |
 |---|---|---|
 | `agent-state.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per session: latest hook state + cwd. |
+| `agent-state.subagents.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per live subagent (`Task` spawn), keyed on `(parent_sid, agent_id)`. Drives the 🤖×N badge and keeps the parent row 🟡 while subagents are in flight. |
 | `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
 | `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
 | `agent-state.forget` | `bin/forget-session.sh`, plugin (gc) | `{session_id: forget_ts}` — per-row cutoff. Scoped variant of `agent-state.dismiss`. |

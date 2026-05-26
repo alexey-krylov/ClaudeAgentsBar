@@ -84,9 +84,9 @@ to re-run.
 ### Uninstalling
 
 `claude-agents-bar teardown` (or the legacy `bash uninstall.sh`)
-reverses everything except the four sidecar files under `~/.claude/`
-(`agent-state.tsv`, `agent-state.clicks`, `agent-state.dismiss`,
-`agent-state.forget`). If the user wants a truly clean slate, delete
+reverses everything except the sidecar files under `~/.claude/`
+(`agent-state.tsv`, `agent-state.subagents.tsv`,
+`agent-state.clicks`, `agent-state.dismiss`, `agent-state.forget`). If the user wants a truly clean slate, delete
 those manually. After a Homebrew install, finish with
 `brew uninstall claude-agents-bar` to remove the binary itself.
 

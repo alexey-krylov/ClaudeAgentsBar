@@ -1793,6 +1793,558 @@ class TestAgentStateHook(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# Subagent routing in hooks/agent-state.sh                                     #
+# --------------------------------------------------------------------------- #
+
+
+class TestAgentStateHookSubagentRouting(unittest.TestCase):
+    """The hook splits events by ``agent_id``: subagent-side ones must land
+    in ``agent-state.subagents.tsv``, parent-side ones in
+    ``agent-state.tsv``. See ``docs/specs/0004-subagent-grouping.md``.
+    """
+
+    HOOK = Path(__file__).resolve().parent.parent / "hooks" / "agent-state.sh"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name)
+        (self.home / ".claude").mkdir()
+        self.parent_tsv = self.home / ".claude" / "agent-state.tsv"
+        self.subagent_tsv = self.home / ".claude" / "agent-state.subagents.tsv"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, arg: str, payload: dict, check: bool = True) -> int:
+        import subprocess
+        env = os.environ.copy()
+        env["HOME"] = str(self.home)
+        proc = subprocess.run(
+            ["/bin/bash", str(self.HOOK), arg],
+            input=json.dumps(payload).encode("utf-8"),
+            env=env, check=check, timeout=10,
+        )
+        return proc.returncode
+
+    def test_parent_payload_writes_parent_tsv_only(self):
+        self._run("working", {
+            "session_id": "sid-1", "cwd": "/x",
+            "hook_event_name": "PreToolUse",
+        })
+        self.assertTrue(self.parent_tsv.exists())
+        # Subagent sidecar shouldn't be touched at all for parent-side events.
+        self.assertFalse(self.subagent_tsv.exists())
+
+    def test_subagent_payload_writes_subagent_tsv_only(self):
+        self._run("working", {
+            "session_id": "sid-1", "cwd": "/y",
+            "hook_event_name": "PreToolUse",
+            "agent_id": "aaa111", "agent_type": "Explore",
+        })
+        self.assertFalse(self.parent_tsv.exists())
+        self.assertTrue(self.subagent_tsv.exists())
+        cols = self.subagent_tsv.read_text(encoding="utf-8").strip().split("\t")
+        self.assertEqual(cols[0], "sid-1")
+        self.assertEqual(cols[1], "aaa111")
+        self.assertEqual(cols[2], "Explore")
+        self.assertEqual(cols[3], "working")
+
+    def test_subagent_events_do_not_clobber_parent_row(self):
+        # Original bug from issues/no-green.md: subagent events were
+        # overwriting the parent row's last_event_kind / cwd because they
+        # shared the parent's session_id.
+        self._run("working", {
+            "session_id": "sid-1", "cwd": "/parent-cwd",
+            "hook_event_name": "UserPromptSubmit",
+        })
+        self._run("working", {
+            "session_id": "sid-1", "cwd": "/subagent-cwd",
+            "hook_event_name": "PreToolUse",
+            "agent_id": "aaa111", "agent_type": "Explore",
+        })
+        parent_row = self.parent_tsv.read_text(encoding="utf-8").strip().split("\t")
+        # cwd and kind stay pinned to the parent's UserPromptSubmit.
+        self.assertEqual(parent_row[3], "UserPromptSubmit")
+        self.assertEqual(parent_row[4], "/parent-cwd")
+
+    def test_subagent_stop_writes_state_stopped(self):
+        # SubagentStop registers ``stopped`` arg.
+        self._run("working", {
+            "session_id": "sid-1", "cwd": "/x",
+            "hook_event_name": "PreToolUse",
+            "agent_id": "aaa111", "agent_type": "Explore",
+        })
+        self._run("stopped", {
+            "session_id": "sid-1", "cwd": "/x",
+            "hook_event_name": "SubagentStop",
+            "agent_id": "aaa111", "agent_type": "Explore",
+        })
+        cols = self.subagent_tsv.read_text(encoding="utf-8").strip().split("\t")
+        self.assertEqual(cols[3], "stopped")
+
+    def test_two_subagents_get_separate_rows(self):
+        for agent_id, agent_type in [("aaa111", "Explore"), ("bbb222", "code-reviewer")]:
+            self._run("working", {
+                "session_id": "sid-1", "cwd": "/x",
+                "hook_event_name": "PreToolUse",
+                "agent_id": agent_id, "agent_type": agent_type,
+            })
+        rows = self.subagent_tsv.read_text(encoding="utf-8").splitlines()
+        agent_ids = {r.split("\t")[1] for r in rows}
+        self.assertEqual(agent_ids, {"aaa111", "bbb222"})
+
+    def test_stopped_arg_without_agent_id_is_dropped(self):
+        # ``stopped`` only makes sense for subagent-side events; a payload
+        # without agent_id must be a no-op so the parent TSV doesn't grow
+        # a state outside :data:`core.HOOK_STATES`.
+        self.assertEqual(
+            self._run("stopped", {
+                "session_id": "sid-1", "cwd": "/x",
+                "hook_event_name": "Stop",
+            }, check=False),
+            0,
+        )
+        self.assertFalse(self.parent_tsv.exists())
+        self.assertFalse(self.subagent_tsv.exists())
+
+    def test_idle_arg_with_agent_id_is_dropped(self):
+        # Symmetric: ``idle`` is parent-side only. A misrouted Stop with
+        # agent_id must not pollute the subagent TSV with an unparseable state.
+        self.assertEqual(
+            self._run("idle", {
+                "session_id": "sid-1", "cwd": "/x",
+                "hook_event_name": "Stop",
+                "agent_id": "aaa111", "agent_type": "Explore",
+            }, check=False),
+            0,
+        )
+        self.assertFalse(self.parent_tsv.exists())
+        self.assertFalse(self.subagent_tsv.exists())
+
+
+# --------------------------------------------------------------------------- #
+# Subagent sidecar parser + GC                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class TestSubagentSidecar(unittest.TestCase):
+    """Parser and GC for ``agent-state.subagents.tsv``."""
+
+    def test_parses_valid_rows(self):
+        raw = "p1\taaa111\tExplore\tworking\t100\t200\np2\tbbb222\tcode-reviewer\tstopped\t150\t180\n"
+        parsed = plugin.sidecars._parse_subagents_sidecar(raw)
+        self.assertEqual(set(parsed), {"p1", "p2"})
+        self.assertEqual(parsed["p1"][0].agent_id, "aaa111")
+        self.assertEqual(parsed["p1"][0].state, "working")
+        self.assertEqual(parsed["p1"][0].last_event_ts, 200)
+
+    def test_skips_invalid_state(self):
+        raw = "p1\taaa111\tExplore\tlol\t100\t200\n"
+        self.assertEqual(plugin.sidecars._parse_subagents_sidecar(raw), {})
+
+    def test_skips_invalid_agent_id(self):
+        # spaces / quotes etc. — same threat model as session ids.
+        raw = "p1\tbad id\tExplore\tworking\t100\t200\n"
+        self.assertEqual(plugin.sidecars._parse_subagents_sidecar(raw), {})
+
+    def test_skips_short_rows(self):
+        raw = "p1\taaa111\tExplore\tworking\t100\n"  # only 5 cols
+        self.assertEqual(plugin.sidecars._parse_subagents_sidecar(raw), {})
+
+    def test_groups_multiple_subagents_per_parent_sorted_by_since(self):
+        raw = (
+            "p1\taaa111\tExplore\tworking\t300\t300\n"
+            "p1\tbbb222\tcode-reviewer\tworking\t100\t150\n"
+            "p1\tccc333\tExplore\tstopped\t200\t220\n"
+        )
+        parsed = plugin.sidecars._parse_subagents_sidecar(raw)
+        self.assertEqual(
+            [s.agent_id for s in parsed["p1"]],
+            ["bbb222", "ccc333", "aaa111"],  # by state_since asc
+        )
+
+    def test_stale_keys_orphan_parents(self):
+        snapshots = {
+            "p-alive": (
+                plugin.core.SubagentSnapshot(
+                    parent_sid="p-alive", agent_id="aaa", agent_type="x",
+                    state="working", state_since=100, last_event_ts=200,
+                ),
+            ),
+            "p-dead": (
+                plugin.core.SubagentSnapshot(
+                    parent_sid="p-dead", agent_id="bbb", agent_type="x",
+                    state="working", state_since=100, last_event_ts=200,
+                ),
+            ),
+        }
+        with patch.object(
+            plugin.sidecars, "_live_session_ids", return_value={"p-alive"},
+        ):
+            stale = plugin.sidecars._stale_subagent_keys(snapshots, now=300)
+        self.assertEqual(stale, {("p-dead", "bbb")})
+
+    def test_stale_keys_window_expired(self):
+        import dataclasses
+        snapshots = {
+            "p-alive": (
+                plugin.core.SubagentSnapshot(
+                    parent_sid="p-alive", agent_id="fresh", agent_type="x",
+                    state="working", state_since=100, last_event_ts=10_000,
+                ),
+                plugin.core.SubagentSnapshot(
+                    parent_sid="p-alive", agent_id="ancient", agent_type="x",
+                    state="stopped", state_since=100, last_event_ts=100,
+                ),
+            ),
+        }
+        # now=10_500, window_sec=1000:
+        # ``fresh``  last_event=10_000 → 500 s ago → kept.
+        # ``ancient`` last_event=100   → 10_400 s ago → dropped.
+        new_cfg = dataclasses.replace(plugin.core.CONFIG, window_sec=1000)
+        with patch.object(plugin.sidecars, "_live_session_ids",
+                          return_value={"p-alive"}), \
+             patch.object(plugin.core, "CONFIG", new_cfg):
+            stale = plugin.sidecars._stale_subagent_keys(snapshots, now=10_500)
+        self.assertEqual(stale, {("p-alive", "ancient")})
+
+
+# --------------------------------------------------------------------------- #
+# Parent state rollup from subagent activity                                   #
+# --------------------------------------------------------------------------- #
+
+
+class TestSubagentRollup(unittest.TestCase):
+    """``build_session`` must keep the parent ACTIVE while a child is alive."""
+
+    def _build(
+        self,
+        *,
+        hook_state: str,
+        last_event_kind: str,
+        hook_ts: int,
+        jsonl_mtime: int,
+        subagents: tuple,
+        now: int,
+        watchdog_sec: int = 90,
+    ):
+        import dataclasses
+        from claude_agents_bar import core as core_mod
+        from claude_agents_bar import sidecars as sidecars_mod
+        from claude_agents_bar import render as render_mod
+
+        sidecar = {
+            "sid-1": core_mod.HookSnapshot(
+                state=hook_state,
+                last_event_ts=hook_ts,
+                last_event_kind=last_event_kind,
+                cwd="/cwd",
+                state_since=hook_ts,
+            ),
+        }
+        subagents_by_sid = {"sid-1": subagents} if subagents else {}
+        new_cfg = dataclasses.replace(core_mod.CONFIG, watchdog_sec=watchdog_sec)
+        # Stub out everything that hits the filesystem so the test stays pure.
+        with patch.object(core_mod, "CONFIG", new_cfg), \
+             patch.object(sidecars_mod, "read_transcript_meta",
+                          return_value=core_mod.TranscriptMeta(ai_title="t")), \
+             patch.object(sidecars_mod, "last_user_message_preview",
+                          return_value=""), \
+             patch.object(sidecars_mod, "current_git_branch", return_value=""), \
+             patch.object(sidecars_mod, "fallback_git_branch_from_jsonl",
+                          return_value=""), \
+             patch.object(sidecars_mod, "last_usage_tokens", return_value=None), \
+             patch.object(sidecars_mod, "last_tool_use_summary", return_value=""):
+            jsonl = self._fake_jsonl(jsonl_mtime)
+            return render_mod.build_session(
+                jsonl, sidecar, {}, subagents_by_sid, now,
+            )
+
+    def _fake_jsonl(self, mtime: int):
+        """Build a fake JSONL path whose ``stat().st_mtime`` returns ``mtime``."""
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".jsonl", delete=False, dir=tempfile.gettempdir(),
+        )
+        path = Path(tmp.name)
+        tmp.close()
+        # Rename to a session-id-looking stem so the validator is happy.
+        renamed = path.with_name("sid-1.jsonl")
+        path.rename(renamed)
+        os.utime(renamed, (mtime, mtime))
+        self.addCleanup(lambda: renamed.unlink(missing_ok=True))
+        return renamed
+
+    def test_live_subagent_keeps_parent_active_past_watchdog(self):
+        # Parent's TSV and JSONL haven't moved in 200s (watchdog_sec=90), but a
+        # subagent ticked 5s ago — the row must stay ACTIVE.
+        now = 10_000
+        snap = plugin.core.SubagentSnapshot(
+            parent_sid="sid-1", agent_id="aaa111", agent_type="Explore",
+            state="working", state_since=9_000, last_event_ts=9_995,
+        )
+        session = self._build(
+            hook_state="working",
+            last_event_kind="PreToolUse",
+            hook_ts=9_500,  # 500s old (well past watchdog)
+            jsonl_mtime=9_500,
+            subagents=(snap,),
+            now=now,
+            watchdog_sec=90,
+        )
+        self.assertEqual(session.hook_state, "working")
+        self.assertEqual(session.group, plugin.core.RenderGroup.ACTIVE)
+        self.assertEqual(session.live_subagent_count, 1)
+
+    def test_idle_parent_with_live_subagent_is_promoted_to_active(self):
+        # Parent fired Stop (state=idle, last_event_kind=Stop), but a
+        # subagent is still working — the row must show ACTIVE, not FRESH.
+        now = 10_000
+        snap = plugin.core.SubagentSnapshot(
+            parent_sid="sid-1", agent_id="aaa111", agent_type="Explore",
+            state="working", state_since=9_500, last_event_ts=9_995,
+        )
+        session = self._build(
+            hook_state="idle",
+            last_event_kind="Stop",
+            hook_ts=9_700,
+            jsonl_mtime=9_700,
+            subagents=(snap,),
+            now=now,
+        )
+        self.assertEqual(session.hook_state, "working")
+        self.assertEqual(session.group, plugin.core.RenderGroup.ACTIVE)
+
+    def test_stopped_subagent_does_not_keep_parent_active(self):
+        # If every subagent already stopped, the parent's own watchdog runs.
+        now = 10_000
+        snap = plugin.core.SubagentSnapshot(
+            parent_sid="sid-1", agent_id="aaa111", agent_type="Explore",
+            state="stopped", state_since=9_500, last_event_ts=9_500,
+        )
+        session = self._build(
+            hook_state="working",
+            last_event_kind="PreToolUse",
+            hook_ts=9_500,
+            jsonl_mtime=9_500,
+            subagents=(snap,),
+            now=now,
+            watchdog_sec=90,
+        )
+        self.assertEqual(session.hook_state, "idle")  # watchdog'd
+
+    def test_subagent_watchdog_demotes_stale_working_rows(self):
+        # A subagent whose last hook event was 200s ago and never emitted
+        # SubagentStop is treated as stopped (Task crashed), so it doesn't
+        # keep the parent ACTIVE forever.
+        now = 10_000
+        snap = plugin.core.SubagentSnapshot(
+            parent_sid="sid-1", agent_id="aaa111", agent_type="Explore",
+            state="working", state_since=8_000, last_event_ts=9_800,
+        )
+        session = self._build(
+            hook_state="working",
+            last_event_kind="PreToolUse",
+            hook_ts=9_500,
+            jsonl_mtime=9_500,
+            subagents=(snap,),
+            now=now,
+            watchdog_sec=90,
+        )
+        # Snapshot was demoted to stopped, parent watchdog ran, hook_state=idle.
+        self.assertEqual(session.subagents[0].state, "stopped")
+        self.assertEqual(session.live_subagent_count, 0)
+
+
+# --------------------------------------------------------------------------- #
+# Model surface (Spec 0004 § model badge & submenu row)                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestModelBadge(unittest.TestCase):
+    """Pure logic in :func:`core._model_badge`.
+
+    Rules from `docs/specs/0004-subagent-grouping.md` § model surface:
+    glyph ≠ default → family-based; = default → empty; unparseable → ⓜ.
+    """
+
+    def test_none_falls_back_to_m(self):
+        self.assertEqual(
+            plugin.core._model_badge(None, "claude-opus-4-7"), "ⓜ")
+
+    def test_matches_default_returns_empty(self):
+        self.assertEqual(
+            plugin.core._model_badge("claude-opus-4-7", "claude-opus-4-7"),
+            "",
+        )
+
+    def test_opus_renders_circled_o(self):
+        self.assertEqual(
+            plugin.core._model_badge("claude-opus-4-7", "claude-sonnet-4-6"),
+            "ⓞ",
+        )
+
+    def test_sonnet_renders_circled_s(self):
+        self.assertEqual(
+            plugin.core._model_badge("claude-sonnet-4-6", "claude-opus-4-7"),
+            "ⓢ",
+        )
+
+    def test_haiku_renders_circled_h(self):
+        self.assertEqual(
+            plugin.core._model_badge("claude-haiku-4-5", "claude-opus-4-7"),
+            "ⓗ",
+        )
+
+    def test_non_claude_provider_falls_back_to_m(self):
+        # OpenRouter, custom endpoints, anything we don't recognise.
+        self.assertEqual(
+            plugin.core._model_badge("gpt-4-turbo", "claude-opus-4-7"),
+            "ⓜ",
+        )
+
+    def test_default_none_falls_through_to_family_badge(self):
+        # "Safe degradation" path — user has no default set anywhere.
+        # Every row gets a badge so an absent badge never surprises.
+        self.assertEqual(plugin.core._model_badge("claude-opus-4-7", None), "ⓞ")
+        self.assertEqual(plugin.core._model_badge("claude-haiku-4-5", None), "ⓗ")
+
+    def test_empty_default_treated_as_unset(self):
+        # An empty-string default came from a malformed settings.json;
+        # treat it as "no default" rather than as a literal match.
+        self.assertEqual(plugin.core._model_badge("claude-opus-4-7", ""), "ⓞ")
+
+
+class TestDefaultModelFor(unittest.TestCase):
+    """:func:`core._default_model_for` reads two settings files; the
+    ``<cwd>/.claude/settings.local.json`` overrides ``~/.claude/settings.json``.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name) / "home"
+        self.cwd = Path(self._tmp.name) / "repo"
+        (self.home / ".claude").mkdir(parents=True)
+        (self.cwd / ".claude").mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_home_settings(self, body) -> None:
+        (self.home / ".claude" / "settings.json").write_text(
+            json.dumps(body), encoding="utf-8",
+        )
+
+    def _write_local_settings(self, body) -> None:
+        (self.cwd / ".claude" / "settings.local.json").write_text(
+            json.dumps(body), encoding="utf-8",
+        )
+
+    def _call(self, cwd=None):
+        with patch.object(plugin.core, "HOME", self.home):
+            return plugin.core._default_model_for(cwd or str(self.cwd))
+
+    def test_home_settings_only(self):
+        self._write_home_settings({"model": "claude-opus-4-7"})
+        self.assertEqual(self._call(), "claude-opus-4-7")
+
+    def test_cwd_local_overrides_home(self):
+        self._write_home_settings({"model": "claude-sonnet-4-6"})
+        self._write_local_settings({"model": "claude-opus-4-7"})
+        self.assertEqual(self._call(), "claude-opus-4-7")
+
+    def test_cwd_local_without_model_keeps_home(self):
+        # ``settings.local.json`` exists but doesn't declare a model — the
+        # home-level value must remain (we overlay, not replace).
+        self._write_home_settings({"model": "claude-sonnet-4-6"})
+        self._write_local_settings({"theme": "dark"})
+        self.assertEqual(self._call(), "claude-sonnet-4-6")
+
+    def test_neither_file_returns_none(self):
+        self.assertIsNone(self._call())
+
+    def test_bad_json_falls_back_to_none(self):
+        (self.home / ".claude" / "settings.json").write_text(
+            "{ not json", encoding="utf-8",
+        )
+        self.assertIsNone(self._call())
+
+    def test_non_string_model_field_is_ignored(self):
+        self._write_home_settings({"model": 12345})
+        self.assertIsNone(self._call())
+
+    def test_empty_cwd_only_consults_home(self):
+        # When the session has no cwd we still want the home default.
+        self._write_home_settings({"model": "claude-opus-4-7"})
+        self.assertEqual(self._call(cwd=""), "claude-opus-4-7")
+
+
+class TestLastSessionModel(unittest.TestCase):
+    """JSONL tail parser for the ``"model":"..."`` field."""
+
+    def _write(self, lines: list[str]) -> Path:
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".jsonl", delete=False, dir=tempfile.gettempdir(), mode="w",
+            encoding="utf-8",
+        )
+        for line in lines:
+            tmp.write(line)
+            tmp.write("\n")
+        tmp.close()
+        p = Path(tmp.name)
+        self.addCleanup(lambda: p.unlink(missing_ok=True))
+        return p
+
+    # Real-world JSONL from Claude Code is written with no whitespace
+    # between keys and values (the spike's dump shows this). The regex
+    # in :data:`core._MODEL_RE` matches the compact form only, so tests
+    # use the same ``separators=(",",":")`` form here.
+    _DUMP_COMPACT_KWARGS = {"separators": (",", ":")}
+
+    def test_returns_last_match_when_multiple(self):
+        # Mixed-model session (user switched mid-stream via /model).
+        # Latest model wins — the badge answers "what am I jumping into".
+        p = self._write([
+            json.dumps({"type": "assistant", "message": {
+                "model": "claude-sonnet-4-6", "content": []}},
+                **self._DUMP_COMPACT_KWARGS),
+            json.dumps({"type": "assistant", "message": {
+                "model": "claude-opus-4-7", "content": []}},
+                **self._DUMP_COMPACT_KWARGS),
+        ])
+        self.assertEqual(plugin.sidecars.last_session_model(p), "claude-opus-4-7")
+
+    def test_returns_none_when_no_model_field(self):
+        p = self._write([
+            json.dumps({"type": "user", "message": {"content": "hi"}},
+                       **self._DUMP_COMPACT_KWARGS),
+        ])
+        self.assertIsNone(plugin.sidecars.last_session_model(p))
+
+    def test_returns_none_for_empty_file(self):
+        p = self._write([])
+        self.assertIsNone(plugin.sidecars.last_session_model(p))
+
+    def test_returns_none_for_missing_file(self):
+        p = Path(tempfile.gettempdir()) / "does-not-exist-9999.jsonl"
+        self.assertIsNone(plugin.sidecars.last_session_model(p))
+
+    def test_captures_non_claude_provider(self):
+        # OpenRouter / custom strings come back too — the regex is
+        # deliberately loose so the submenu can surface them; the badge
+        # function maps them to ⓜ.
+        p = self._write([
+            json.dumps({"type": "assistant", "message": {
+                "model": "openrouter/anthropic/claude-3.5-sonnet",
+                "content": []}},
+                **self._DUMP_COMPACT_KWARGS),
+        ])
+        self.assertEqual(
+            plugin.sidecars.last_session_model(p),
+            "openrouter/anthropic/claude-3.5-sonnet",
+        )
+
+
+# --------------------------------------------------------------------------- #
 # bin/setup.sh — settings.json merge idempotency                               #
 # --------------------------------------------------------------------------- #
 
@@ -1865,11 +2417,21 @@ class TestSetupMerge(unittest.TestCase):
         result = self._merge({})
         for event in (
             "UserPromptSubmit", "PreToolUse", "PostToolUse",
-            "Notification", "Stop",
+            "Notification", "Stop", "SubagentStop",
         ):
             with self.subTest(event=event):
                 ours = self._agent_state_matchers(result["hooks"][event])
                 self.assertEqual(len(ours), 1)
+
+    def test_subagent_stop_registers_stopped_argument(self):
+        # New in v1.1: SubagentStop is the only event that calls the hook
+        # with the ``stopped`` argument. Pin it so a future refactor
+        # doesn't silently drop the matcher.
+        result = self._merge({})
+        ours = self._agent_state_matchers(result["hooks"]["SubagentStop"])
+        self.assertEqual(len(ours), 1)
+        cmd = ours[0]["hooks"][0]["command"]
+        self.assertIn("agent-state.sh stopped", cmd)
 
     def test_rerun_purges_obsolete_session_start_registration(self):
         # The original bug: a previous version of claude-agents-bar

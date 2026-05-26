@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
@@ -31,6 +32,7 @@ from .core import (
     INTERACTIVE_ENTRYPOINTS,
     RenderGroup,
     Session,
+    SubagentSnapshot,
     _ANSI_ACK_BAR,
     _ANSI_ACTIVE_BAR,
     _ANSI_FRESH_BAR,
@@ -38,6 +40,8 @@ from .core import (
     _classify,
     _format_context_left,
     _format_context_warning,
+    _humanize_age,
+    _lang,
     _project_name,
     _t,
     _warn,
@@ -64,10 +68,31 @@ def iter_active_jsonls(now: int) -> Iterator[Path]:
                 yield jsonl
 
 
+def _apply_subagent_watchdog(
+    raw: tuple[SubagentSnapshot, ...], now: int
+) -> tuple[SubagentSnapshot, ...]:
+    """Demote ``working`` subagent rows whose ``last_event_ts`` is stale.
+
+    Mirrors the parent-side watchdog in :func:`build_session`: if a
+    subagent stopped emitting hook events for more than
+    :attr:`Config.watchdog_sec` seconds without a `SubagentStop`, the
+    Task has almost certainly crashed and we treat it as stopped so the
+    parent rollup doesn't pin the row 🟡 forever.
+    """
+    out: list[SubagentSnapshot] = []
+    for s in raw:
+        if s.state == "working" and (now - s.last_event_ts) > core.CONFIG.watchdog_sec:
+            out.append(replace(s, state="stopped"))
+        else:
+            out.append(s)
+    return tuple(out)
+
+
 def build_session(
     jsonl: Path,
     sidecar: dict[str, core.HookSnapshot],
     clicks: dict[str, int],
+    subagents_by_sid: dict[str, tuple[SubagentSnapshot, ...]],
     now: int,
 ) -> Session:
     """Assemble a :class:`Session` from sidecar state, clicks, transcript and live git."""
@@ -93,20 +118,46 @@ def build_session(
         # ever fired, so we have nothing to be "fresh" about).
         last_event_kind = ""
 
-    # Liveness signal: Claude Code writes the transcript continuously while
-    # running (assistant streams, tool results, …). If the process is killed,
-    # the file freezes the instant it dies — even when the TSV still says
-    # ``working`` because no ``Stop`` hook ever fired. Treating the JSONL
-    # mtime as the floor for ``last_ts`` lets the watchdog catch crashes
-    # within ``watchdog_sec`` regardless of which side went stale first.
-    liveness_ts = max(last_ts, jsonl_mtime)
-    if hook_state == "working" and (now - liveness_ts) > core.CONFIG.watchdog_sec:
+    subagents = _apply_subagent_watchdog(
+        subagents_by_sid.get(jsonl.stem, ()), now
+    )
+    live_subagents = tuple(s for s in subagents if s.is_live)
+    has_live_subagent = bool(live_subagents)
+    live_subagent_ts = (
+        max(s.last_event_ts for s in live_subagents) if live_subagents else 0
+    )
+
+    # Liveness signal: Claude Code writes the parent transcript continuously
+    # while running, but during a ``Task`` the parent JSONL freezes and only
+    # the subagent transcripts tick. Folding the freshest live subagent's
+    # ``last_event_ts`` into the floor keeps the parent ACTIVE while any
+    # child is doing work — the whole point of the subagent sidecar.
+    liveness_ts = max(last_ts, jsonl_mtime, live_subagent_ts)
+    if (
+        hook_state == "working"
+        and not has_live_subagent
+        and (now - liveness_ts) > core.CONFIG.watchdog_sec
+    ):
         hook_state = "idle"
         last_ts = liveness_ts
         # Watchdog-driven downgrade is not a real Stop — clear the kind so
         # the classifier doesn't paint the row FRESH on a stale "working"
         # row whose timestamp happens to fall inside fresh_sec.
         last_event_kind = ""
+
+    # Parent state rollup: a live subagent forces the parent to ACTIVE even
+    # when the parent's own hook said ``Stop`` (a turn that ended before the
+    # Task did — rare but it happens with backgrounded subagents). Without
+    # this the row would briefly flash 🟢 / 🔵 mid-Task. See
+    # ``docs/specs/0004-subagent-grouping.md`` § Parent state rollup.
+    if has_live_subagent and hook_state not in ACTIVE_HOOK_STATES:
+        hook_state = "working"
+        last_event_kind = ""
+        # Anchor ``state_since`` to the oldest live subagent so the
+        # right-side label reads as "Task running for Xm", not as
+        # "working for 0s" each tick.
+        state_since = min(s.state_since for s in live_subagents)
+        last_ts = max(last_ts, live_subagent_ts)
 
     # "Effective click" = a click that landed after the most recent Stop.
     # Clicks made while the session was still running don't carry over: the
@@ -120,9 +171,10 @@ def build_session(
     # is what the user actually cares about.
     interaction_ts = max(last_ts, effective_click_ts)
     if hook_state in ACTIVE_HOOK_STATES:
-        # While the session is in flight the JSONL mtime is the freshest
-        # signal — it ticks with every streamed token.
-        interaction_ts = max(interaction_ts, jsonl_mtime)
+        # While the session is in flight the JSONL mtime *and* every live
+        # subagent's last_event_ts are fresher signals than the TSV
+        # timestamp — the latter only ticks on parent-side hook events.
+        interaction_ts = max(interaction_ts, jsonl_mtime, live_subagent_ts)
     age = now - interaction_ts
 
     meta = sidecars.read_transcript_meta(jsonl)
@@ -139,6 +191,7 @@ def build_session(
     branch = sidecars.current_git_branch(cwd) or sidecars.fallback_git_branch_from_jsonl(jsonl)
     context_used = sidecars.last_usage_tokens(jsonl)
     tool_summary = sidecars.last_tool_use_summary(jsonl)
+    session_model = sidecars.last_session_model(jsonl)
 
     state_duration_sec = (
         max(0, now - state_since) if hook_state in ACTIVE_HOOK_STATES else 0
@@ -158,6 +211,8 @@ def build_session(
         context_used=context_used,
         state_duration_sec=state_duration_sec,
         last_tool_use=tool_summary,
+        model=session_model,
+        subagents=subagents,
     )
 
 
@@ -173,10 +228,27 @@ def collect_sessions(now: int) -> list[Session]:
     sidecar = sidecars.read_sidecar()
     clicks = sidecars.read_clicks()
     forget = sidecars.read_forget()
+    subagents_by_sid = sidecars.read_subagents_sidecar()
     if stale := sidecars._stale_sidecar_ids(sidecar, now):
         sidecars.gc_sidecar(stale)
         for sid in stale:
             sidecar.pop(sid, None)
+    if subagents_by_sid:
+        # Same GC stance as the main sidecar: drop rows whose parent
+        # transcript is gone or whose last event has fallen out of the
+        # render window. Cheap when there's nothing to drop.
+        stale_subs = sidecars._stale_subagent_keys(subagents_by_sid, now)
+        if stale_subs:
+            sidecars.gc_subagents(stale_subs)
+            for parent_sid, agent_id in stale_subs:
+                remaining = tuple(
+                    s for s in subagents_by_sid.get(parent_sid, ())
+                    if s.agent_id != agent_id
+                )
+                if remaining:
+                    subagents_by_sid[parent_sid] = remaining
+                else:
+                    subagents_by_sid.pop(parent_sid, None)
     # Click and forget rows for sessions whose transcript no longer exists
     # are pure overhead. The transcript — not the state sidecar — is
     # authoritative: plenty of legitimate sessions have a JSONL but no TSV row.
@@ -200,7 +272,7 @@ def collect_sessions(now: int) -> list[Session]:
     # appears in the menu only after a real working/waiting/idle event
     # has fired (UserPromptSubmit, PreToolUse, etc.).
     sessions = [
-        build_session(p, sidecar, clicks, now)
+        build_session(p, sidecar, clicks, subagents_by_sid, now)
         for p in iter_active_jsonls(now)
         if p.stem in sidecar
     ]
@@ -483,9 +555,18 @@ def _print_session_row(session: Session) -> None:
         )
     warning_segment = f"{warning} · " if warning else ""
     waiting_segment = "❓ · " if session.hook_state == "waiting" else ""
+    live_count = session.live_subagent_count
+    subagent_segment = (
+        f"{_t('row.subagent_badge', n=live_count)} · " if live_count else ""
+    )
+    badge = ""
+    if core.CONFIG.model_badge:
+        default_model = core._default_model_for(session.cwd)
+        badge = core._model_badge(session.model, default_model)
+    badge_segment = f" {badge}" if badge else ""
     label = (
-        f"{session.group.icon} {session.title} · "
-        f"{waiting_segment}{warning_segment}{session.right_label_ansi}"
+        f"{session.group.icon} {session.title}{badge_segment} · "
+        f"{subagent_segment}{waiting_segment}{warning_segment}{session.right_label_ansi}"
     )
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
@@ -555,6 +636,15 @@ def _print_session_row(session: Session) -> None:
         print(
             f"--{session.cwd} | font=Menlo color=#999999 sfimage=folder.fill"
         )
+    if core.CONFIG.model_badge and session.model:
+        # Full model string between branch and context — same read-only
+        # `font=Menlo color=#999999` style as its neighbours. Always
+        # shown when we have a parseable model, regardless of whether
+        # the row badge fires (the badge marks a *difference* from the
+        # default; the submenu always tells you which model is live).
+        print(
+            f"--{session.model} | font=Menlo color=#999999 sfimage=cpu"
+        )
     if session.context_used is not None:
         label = _format_context_left(session.context_used, core.CONFIG.context_window_tokens)
         if label:
@@ -572,6 +662,74 @@ def _print_session_row(session: Session) -> None:
                     f" tooltip={_swiftbar_quote(session.last_tool_use)}"
                 )
             print(context_line)
+    if session.subagents:
+        _print_subagent_block(session)
+
+
+def _print_subagent_block(session: Session) -> None:
+    """Render the 🤖 Subagents info block in a parent's submenu.
+
+    Header line carries the live count; one info row per subagent follows,
+    annotated with its current state and a one-line tool_use summary read
+    from the subagent's own JSONL transcript. None of the rows are
+    clickable — deep-links can't reach a subagent transcript, so they
+    serve only as a "what's running underneath" surface.
+    """
+    live_count = session.live_subagent_count
+    header = _t("menu.subagents_header", n=live_count, total=len(session.subagents))
+    print(f"--{header} | font=Menlo color=#888888 sfimage=ant.fill")
+    project_dir = _project_dir_for(session)
+    now = int(time.time())
+    for snap in session.subagents:
+        label = _subagent_row_label(snap, session, project_dir, now)
+        color = "#cc7700" if snap.is_live else "#999999"
+        print(f"--  {label} | font=Menlo color={color}")
+
+
+def _project_dir_for(session: Session) -> Path | None:
+    """Resolve the Claude Code project directory holding the parent JSONL.
+
+    Claude Code stores transcripts under
+    ``~/.claude/projects/<slugified-cwd>/<session_id>.jsonl``; the slug is
+    not derivable from :class:`Session` alone, so we look for the
+    matching file across project directories. ``None`` means the parent
+    transcript wasn't found on disk (race during deletion) — callers
+    degrade by skipping the per-subagent ``tool_use`` summary.
+    """
+    if not core.PROJECTS_DIR.exists():
+        return None
+    for candidate in core.PROJECTS_DIR.iterdir():
+        if not candidate.is_dir():
+            continue
+        if (candidate / f"{session.id}.jsonl").exists():
+            return candidate
+    return None
+
+
+def _subagent_row_label(
+    snap: SubagentSnapshot,
+    session: Session,
+    project_dir: Path | None,
+    now: int,
+) -> str:
+    """Format the one-line label for a subagent row in the submenu."""
+    type_label = f"[{snap.agent_type}]" if snap.agent_type else "[Task]"
+    if snap.is_live:
+        duration = _humanize_age(max(0, now - snap.state_since), _lang())
+        status = _t("menu.subagent_working", duration=duration)
+    else:
+        age = _humanize_age(max(0, now - snap.last_event_ts), _lang())
+        status = _t("menu.subagent_done", age=age)
+    summary = ""
+    if project_dir is not None:
+        sub_jsonl = (
+            project_dir / session.id / "subagents" / f"agent-{snap.agent_id}.jsonl"
+        )
+        if sub_jsonl.exists():
+            summary = sidecars.last_tool_use_summary(sub_jsonl)
+    if summary:
+        return f"{type_label} · {status} · {summary}"
+    return f"{type_label} · {status}"
 
 
 def _swiftbar_quote(value: str) -> str:
