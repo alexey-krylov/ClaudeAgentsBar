@@ -17,6 +17,18 @@
 #   notify_wait_phrases    array   [...]    — phrases spoken aloud and shown
 #                                             in the banner; one chosen at
 #                                             random per event
+#   notify_sound_wait      string  "Funk"   — built-in /System/Library/Sounds
+#                                             name, absolute path, ~-path, or
+#                                             null to skip the chime entirely
+#   notify_voice           string  null     — say(1) voice name; null/absent
+#                                             uses the system default; "off"
+#                                             skips speech entirely (shared
+#                                             with notify-stop.sh)
+#   quiet_hours            string  null     — "HH:MM-HH:MM" window during
+#                                             which notifications are silenced
+#                                             per `quiet_hours_silences`
+#   quiet_hours_silences   array   all      — channels suppressed while quiet:
+#                                             subset of ["sound","voice","banner"]
 #   editor_url_scheme      string  "vscode://" — used to build the deeplink
 #                                             so the banner click jumps
 #                                             straight into the waiting
@@ -25,48 +37,38 @@
 
 set -u
 
-# ── Config path (mirrors XDG logic in claude_agents_bar/core.py) ────────────
-if [ -n "${CLAUDE_AGENTS_BAR_CONFIG:-}" ]; then
-    _CAB_CONFIG="$CLAUDE_AGENTS_BAR_CONFIG"
-else
-    _XDG="${XDG_CONFIG_HOME:-$HOME/.config}"
-    _CAB_CONFIG="${_XDG}/claude-agents-bar/config.json"
+# ── Source the shared helpers ────────────────────────────────────────────────
+__target="${BASH_SOURCE[0]}"
+while [ -L "$__target" ]; do
+    __link=$(/usr/bin/readlink -- "$__target")
+    case "$__link" in
+        /*) __target="$__link" ;;
+        *)  __target="$(cd "$(dirname "$__target")" && pwd -P)/$__link" ;;
+    esac
+done
+__HOOK_DIR="$(cd "$(dirname "$__target")" && pwd -P)"
+if [ ! -f "${__HOOK_DIR}/_notify-common.sh" ]; then
+    echo "[notify-wait] missing ${__HOOK_DIR}/_notify-common.sh; re-run setup" >&2
+    exit 0
 fi
-
-# ── Config readers (graceful no-op when jq or the file is absent) ───────────
-_cfg_bool() {
-    local key="$1" default="$2"
-    [ -f "$_CAB_CONFIG" ] || { echo "$default"; return; }
-    local val
-    val=$(/usr/bin/jq -r \
-        --arg k "$key" \
-        'if .[$k] | type == "boolean" then (if .[$k] then "true" else "false" end) else empty end' \
-        "$_CAB_CONFIG" 2>/dev/null)
-    echo "${val:-$default}"
-}
-
-_cfg_string() {
-    local key="$1" default="$2"
-    [ -f "$_CAB_CONFIG" ] || { echo "$default"; return; }
-    local val
-    val=$(/usr/bin/jq -r \
-        --arg k "$key" --arg d "$default" \
-        'if .[$k] | type == "string" then .[$k] else $d end' \
-        "$_CAB_CONFIG" 2>/dev/null)
-    echo "${val:-$default}"
-}
-
-# Emits one phrase per line; caller collects into an array.
-_cfg_phrases() {
-    [ -f "$_CAB_CONFIG" ] || return
-    /usr/bin/jq -r '.notify_wait_phrases // empty | .[]?' "$_CAB_CONFIG" 2>/dev/null
-}
+# shellcheck source=/dev/null
+. "${__HOOK_DIR}/_notify-common.sh"
 
 # ── Read config ──────────────────────────────────────────────────────────────
 NOTIFY_ON=$(_cfg_bool  "notify_on_wait"        "true")
 [ "$NOTIFY_ON" = "false" ] && exit 0
 
 SCHEME=$(_cfg_string   "editor_url_scheme"     "vscode://")
+
+# Custom audio (spec 0001). Default chime for permission prompts is Funk —
+# shorter and softer than Hero, matching the existing semantic distinction
+# "needs your attention" vs "task complete".
+SOUND_RAW=$(_cfg_string_or_null "notify_sound_wait" "Funk")
+SOUND_PATH=$(_resolve_sound "$SOUND_RAW")
+VOICE=$(_cfg_string             "notify_voice"      "")
+
+# Quiet-hours gate (spec 0002).
+_compute_quiet_state
 
 # ── Parse hook payload ───────────────────────────────────────────────────────
 INPUT=$(cat)
@@ -77,10 +79,14 @@ SESSION_URL=""
 
 # ── Pick a random phrase ─────────────────────────────────────────────────────
 # Bash 3.2 (system /bin/bash on macOS) lacks mapfile, so we use a while loop.
+_emit_phrases() {
+    [ -f "$_CAB_CONFIG" ] || return
+    /usr/bin/jq -r '.notify_wait_phrases // empty | .[]?' "$_CAB_CONFIG" 2>/dev/null
+}
 PHRASES=()
 while IFS= read -r _phrase; do
     [ -n "$_phrase" ] && PHRASES+=("$_phrase")
-done < <(_cfg_phrases)
+done < <(_emit_phrases)
 
 if [ "${#PHRASES[@]}" -eq 0 ]; then
     PHRASES=("Need instructions" "Awaiting input" "Decision needed" "I'm blocked")
@@ -89,21 +95,29 @@ fi
 PHRASE="${PHRASES[$RANDOM % ${#PHRASES[@]}]}"
 
 # ── Sound + speech (fire-and-forget, never block the hook) ───────────────────
-# Funk.aiff is shorter and softer than Hero.aiff (used on Stop) — different
-# semantics: "needs your attention" vs "task complete".
-afplay /System/Library/Sounds/Funk.aiff >/dev/null 2>&1 &
-(sleep 1 && say "$PHRASE") >/dev/null 2>&1 &
+if [ "$SUPPRESS_SOUND" = "false" ] && [ -n "$SOUND_PATH" ]; then
+    afplay "$SOUND_PATH" >/dev/null 2>&1 &
+fi
+if [ "$SUPPRESS_VOICE" = "false" ] && [ "$VOICE" != "off" ]; then
+    if [ -n "$VOICE" ]; then
+        (sleep 1 && say -v "$VOICE" "$PHRASE") >/dev/null 2>&1 &
+    else
+        (sleep 1 && say "$PHRASE") >/dev/null 2>&1 &
+    fi
+fi
 disown 2>/dev/null || true
 
 # ── Banner notification ──────────────────────────────────────────────────────
 # Click jumps straight to the session — the user almost always wants to act
 # on the prompt, not just acknowledge it.
-ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
-NOTIFIER_ARGS=(-title "Claude awaiting input" -subtitle "Claude Code" -message "$PHRASE")
-[ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
-[ -n "$SESSION_URL" ]  && NOTIFIER_ARGS+=(-open "$SESSION_URL")
+if [ "$SUPPRESS_BANNER" = "false" ]; then
+    ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
+    NOTIFIER_ARGS=(-title "Claude awaiting input" -subtitle "Claude Code" -message "$PHRASE")
+    [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
+    [ -n "$SESSION_URL" ]  && NOTIFIER_ARGS+=(-open "$SESSION_URL")
 
-if command -v terminal-notifier >/dev/null 2>&1; then
-    terminal-notifier "${NOTIFIER_ARGS[@]}" >/dev/null 2>&1 &
-    disown 2>/dev/null || true
+    if command -v terminal-notifier >/dev/null 2>&1; then
+        terminal-notifier "${NOTIFIER_ARGS[@]}" >/dev/null 2>&1 &
+        disown 2>/dev/null || true
+    fi
 fi

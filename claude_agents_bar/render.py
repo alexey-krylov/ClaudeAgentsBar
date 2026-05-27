@@ -18,6 +18,7 @@ so unit tests can swap ``CONFIG`` / ``SIDECAR_PATH`` / ``HOME`` via
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import os
 import subprocess
 import time
@@ -26,7 +27,7 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
 
-from . import core, sidecars
+from . import core, keep_awake, sidecars
 from .core import (
     ACTIVE_HOOK_STATES,
     INTERACTIVE_ENTRYPOINTS,
@@ -42,7 +43,10 @@ from .core import (
     _format_context_warning,
     _humanize_age,
     _lang,
+    _model_badge,
     _project_name,
+    _shorten,
+    _shorten_head,
     _t,
     _warn,
 )
@@ -329,7 +333,7 @@ def render(sessions: list[Session]) -> None:
         duration = core._humanize_age(core.CONFIG.window_sec, core._lang())
         print(f"{_t('menu.no_sessions', duration=duration)} | color=gray")
         print("---")
-        _print_footer()
+        _print_footer(sessions)
         return
 
     last_group: RenderGroup | None = None
@@ -340,7 +344,7 @@ def render(sessions: list[Session]) -> None:
         _print_session_row(session)
 
     print("---")
-    _print_footer()
+    _print_footer(sessions)
 
 
 #: Order of counters in the menu-bar title — most-urgent first. STALE is
@@ -559,13 +563,8 @@ def _print_session_row(session: Session) -> None:
     subagent_segment = (
         f"{_t('row.subagent_badge', n=live_count)} · " if live_count else ""
     )
-    badge = ""
-    if core.CONFIG.model_badge:
-        default_model = core._default_model_for(session.cwd)
-        badge = core._model_badge(session.model, default_model)
-    badge_segment = f" {badge}" if badge else ""
     label = (
-        f"{session.group.icon} {session.title}{badge_segment} · "
+        f"{session.group.icon} {session.title} · "
         f"{subagent_segment}{waiting_segment}{warning_segment}{session.right_label_ansi}"
     )
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
@@ -615,19 +614,34 @@ def _print_session_row(session: Session) -> None:
         f"shell={_swiftbar_quote(str(reveal_script))} "
         f"param1={_swiftbar_quote(session.id)} "
         "terminal=false refresh=false "
-        "sfimage=folder.fill sfcolor=systemGray"
+        "sfimage=doc.text.magnifyingglass sfcolor=systemGray"
     )
     if session.git_branch:
-        # Branch line doubles as the cwd surface: the path is verbose
-        # enough that promoting it to the visible label would crowd the
-        # menu, so we keep the branch in view and let macOS render the
-        # full cwd via NSMenuItem's tooltip on hover.
-        branch_line = (
-            f"--{session.git_branch} | "
-            "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
-        )
-        if session.cwd:
-            branch_line += f" tooltip={_swiftbar_quote(session.cwd)}"
+        # Project + branch are split across two submenu lines so each
+        # gets its own SF Symbol (SwiftBar allows one ``sfimage=`` per
+        # item). The cwd tooltip rides on the project line — it's the
+        # natural carrier for the full path; the branch line stays
+        # minimal. When the project name is missing we collapse back to
+        # a single branch line so the cwd tooltip still surfaces.
+        if session.project:
+            project_line = (
+                f"--{session.project} | "
+                "font=Menlo color=#999999 sfimage=folder"
+            )
+            if session.cwd:
+                project_line += f" tooltip={_swiftbar_quote(session.cwd)}"
+            print(project_line)
+            branch_line = (
+                f"--{session.git_branch} | "
+                "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
+            )
+        else:
+            branch_line = (
+                f"--{session.git_branch} | "
+                "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
+            )
+            if session.cwd:
+                branch_line += f" tooltip={_swiftbar_quote(session.cwd)}"
         print(branch_line)
     elif session.cwd:
         # No git branch (cwd isn't a repo, or .git was removed) — surface
@@ -638,10 +652,10 @@ def _print_session_row(session: Session) -> None:
         )
     if core.CONFIG.model_badge and session.model:
         # Full model string between branch and context — same read-only
-        # `font=Menlo color=#999999` style as its neighbours. Always
-        # shown when we have a parseable model, regardless of whether
-        # the row badge fires (the badge marks a *difference* from the
-        # default; the submenu always tells you which model is live).
+        # `font=Menlo color=#999999` style as its neighbours. The row
+        # itself doesn't carry model info, so this submenu line is the
+        # only surface that tells the user which model is live; gated by
+        # ``model_badge`` config for users who want a quieter menu.
         print(
             f"--{session.model} | font=Menlo color=#999999 sfimage=cpu"
         )
@@ -667,23 +681,54 @@ def _print_session_row(session: Session) -> None:
 
 
 def _print_subagent_block(session: Session) -> None:
-    """Render the 🤖 Subagents info block in a parent's submenu.
+    """Render the Subagents info block in a parent's submenu.
 
-    Header line carries the live count; one info row per subagent follows,
-    annotated with its current state and a one-line tool_use summary read
-    from the subagent's own JSONL transcript. None of the rows are
-    clickable — deep-links can't reach a subagent transcript, so they
-    serve only as a "what's running underneath" surface.
+    A submenu separator (``-----``) precedes the header so the block
+    reads as its own visual section, distinct from the project / branch /
+    model / context rows above it. Header carries the live count and
+    shares the SF-symbol icon column with its siblings. Two rows per
+    subagent follow — the user explicitly asked for a statically-
+    expanded block rather than a nested submenu, since the list is
+    short and drilling into a sub-popup just to read four words is
+    friction.
+
+    First subagent row carries: status icon (🟡 / 🟢), the parent's
+    ``Task`` description (read from the meta sidecar) or the agent type
+    when the description is missing, and the in-state duration or
+    time-since-stop. The second row carries the freshest ``tool_use``
+    from the subagent's own transcript — split off the main row because
+    long Bash commands pack the single line past readable. Rows aren't
+    clickable; deep-links can't reach a subagent transcript.
+
+    Status / model / tool glyphs travel inline rather than via
+    ``sfimage=`` because SwiftBar's ``color=`` overrides ``sfcolor=``,
+    which would turn every status circle grey instead of yellow/green.
+    Inline emoji carry their own colour and dodge that conflict.
     """
-    live_count = session.live_subagent_count
-    header = _t("menu.subagents_header", n=live_count, total=len(session.subagents))
-    print(f"--{header} | font=Menlo color=#888888 sfimage=ant.fill")
+    print("-----")
     project_dir = _project_dir_for(session)
     now = int(time.time())
-    for snap in session.subagents:
-        label = _subagent_row_label(snap, session, project_dir, now)
+    visible = sorted(
+        (
+            s for s in session.subagents
+            if s.is_live or (now - s.last_event_ts) <= core.CONFIG.fresh_sec
+        ),
+        key=lambda s: (0 if s.is_live else 1, -s.last_event_ts),
+    )
+    live_count = session.live_subagent_count
+    header = _t("menu.subagents_header", n=live_count, total=len(visible))
+    print(
+        f"--🤖 {header} | "
+        "font=Menlo color=#888888"
+    )
+    for snap in visible:
+        main_label, sub_rows = _subagent_row_parts(
+            snap, session, project_dir, now,
+        )
         color = "#cc7700" if snap.is_live else "#999999"
-        print(f"--  {label} | font=Menlo color={color}")
+        print(f"--{main_label} | color={color}")
+        for sub_row in sub_rows:
+            print(f"----{sub_row}")
 
 
 def _project_dir_for(session: Session) -> Path | None:
@@ -706,30 +751,111 @@ def _project_dir_for(session: Session) -> Path | None:
     return None
 
 
-def _subagent_row_label(
+def _subagent_row_parts(
     snap: SubagentSnapshot,
     session: Session,
     project_dir: Path | None,
     now: int,
-) -> str:
-    """Format the one-line label for a subagent row in the submenu."""
-    type_label = f"[{snap.agent_type}]" if snap.agent_type else "[Task]"
+) -> tuple[str, list[str]]:
+    """Return ``(main_label, [sub_label, ...])`` for a subagent.
+
+    The status glyph (🟡/🟢) travels inline — SwiftBar's ``color=``
+    overrides ``sfcolor=``, so ``sfimage=circle.fill sfcolor=systemYellow``
+    would render grey. Inline emoji carry their own colour. The model
+    sub-row uses ``sfimage=cpu`` (no ``color=``, so sfimage works).
+    The tool sub-row uses inline ``↳``.
+
+    Main label: ``{status-emoji} {agent_type} · {description} · {duration}``.
+    🟡 while the subagent is working, 🟢 once ``SubagentStop``
+    fires — same colour vocabulary as the parent RenderGroup.
+    Description comes from the ``Task`` tool's ``description``
+    field via ``agent-<id>.meta.json``; omitted when missing.
+
+    Sub-rows carry their own SwiftBar params (full "label | params"
+    strings) so each can have a different ``sfimage=``.
+
+    Sub-rows, in order:
+
+    1. ``{model-name} | sfimage=cpu`` — full model string with the
+       CPU SF Symbol. Only shown when the subagent's
+       JSONL has a parseable ``"model":"..."``.
+    2. ``↳ {tool} · 🛠×N · ran Xs`` — inline ``↳`` (U+21B3)
+       carries the "child of" semantics; head-trimmed
+       ``tool_use`` summary so deep paths keep their meaningful
+       tail; cumulative tool count; end-to-end runtime for
+       finished subagents written by the 7-column hook.
+
+    Empty list means "no sub-rows", caller skips printing them.
+    """
+    description = ""
+    model_str: str | None = None
+    summary = ""
+    tool_count = 0
+    if project_dir is not None:
+        subagents_dir = project_dir / session.id / "subagents"
+        meta_path = subagents_dir / f"agent-{snap.agent_id}.meta.json"
+        sub_jsonl = subagents_dir / f"agent-{snap.agent_id}.jsonl"
+        meta = sidecars.read_subagent_meta(meta_path) if meta_path.exists() else None
+        if meta is not None:
+            desc_raw = meta.get("description")
+            if isinstance(desc_raw, str):
+                description = desc_raw.strip()
+        if sub_jsonl.exists():
+            model_str = sidecars.last_session_model(sub_jsonl)
+            summary = sidecars.last_tool_use_summary(sub_jsonl)
+            tool_count = sidecars.count_tool_uses(sub_jsonl)
+
+    # Status emoji travels inline — see the docstring on why an
+    # ``sfimage=circle.fill`` row would have its ``sfcolor`` overridden
+    # by ``color=``.
+    status_icon = (
+        RenderGroup.ACTIVE.icon if snap.is_live else RenderGroup.STALE.icon
+    )
+
     if snap.is_live:
         duration = _humanize_age(max(0, now - snap.state_since), _lang())
-        status = _t("menu.subagent_working", duration=duration)
     else:
-        age = _humanize_age(max(0, now - snap.last_event_ts), _lang())
-        status = _t("menu.subagent_done", age=age)
-    summary = ""
-    if project_dir is not None:
-        sub_jsonl = (
-            project_dir / session.id / "subagents" / f"agent-{snap.agent_id}.jsonl"
+        duration = _humanize_age(max(0, now - snap.last_event_ts), _lang())
+
+    # Build label: status · type · description (trimmed to 40) · duration
+    type_str = snap.agent_type if snap.agent_type else "Task"
+    label_parts = [status_icon + " " + type_str]
+    if description:
+        desc_trimmed = (description[:40] + "…") if len(description) > 40 else description
+        label_parts.append(desc_trimmed)
+    label_parts.append(duration)
+    main_label = " · ".join(label_parts)
+
+    # Each sub-row is a full "label | params" string so model and tool
+    # rows can carry different SwiftBar params (sfimage=cpu for model).
+    sub_rows: list[str] = []
+
+    if model_str:
+        sub_rows.append(
+            f"{model_str} | font=Menlo color=#999999 sfimage=cpu"
         )
-        if sub_jsonl.exists():
-            summary = sidecars.last_tool_use_summary(sub_jsonl)
+
+    tool_segments: list[str] = []
     if summary:
-        return f"{type_label} · {status} · {summary}"
-    return f"{type_label} · {status}"
+        tool_segments.append(_shorten_head(summary))
+    if tool_count:
+        tool_segments.append(f"🛠×{tool_count}")
+    if not snap.is_live and snap.first_event_ts is not None:
+        runtime_sec = max(0, snap.last_event_ts - snap.first_event_ts)
+        if runtime_sec > 0:
+            tool_segments.append(
+                _t(
+                    "menu.subagent_ran",
+                    duration=_humanize_age(runtime_sec, _lang()),
+                )
+            )
+    if tool_segments:
+        tooltip = f" tooltip={_swiftbar_quote(summary)}" if summary else ""
+        sub_rows.append(
+            "↳ " + " · ".join(tool_segments) + f" | font=Menlo color=#999999{tooltip}"
+        )
+
+    return main_label, sub_rows
 
 
 def _swiftbar_quote(value: str) -> str:
@@ -744,8 +870,13 @@ def _swiftbar_quote(value: str) -> str:
     return '"' + value.replace('"', "'") + '"'
 
 
-def _print_footer() -> None:
-    """System actions at the bottom of the menu — manual refresh + Tools submenu."""
+def _print_footer(sessions: list[Session] | None = None) -> None:
+    """System actions at the bottom of the menu — manual refresh + Tools submenu.
+
+    ``sessions`` (optional) is the same list rendered above; passed in so
+    the *Keep awake* status line can quote *holding while N working*
+    without re-walking the disk. ``None`` is treated as "no live work".
+    """
     print(f"{_t('menu.refresh')} | refresh=true sfimage=arrow.clockwise")
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
     ack_fresh_script = bin_dir / "ack-fresh.sh"
@@ -773,6 +904,13 @@ def _print_footer() -> None:
         "terminal=false refresh=false "
         "sfimage=chart.bar.fill sfcolor=systemPurple"
     )
+
+    print("-----")
+    _print_notifications_block(bin_dir)
+
+    print("-----")
+    _print_keep_awake_block(bin_dir, sessions or [])
+
     print("-----")
     print(
         f"--{_t('menu.suggest')} | "
@@ -791,4 +929,165 @@ def _print_footer() -> None:
             f"param2={_swiftbar_quote(str(example_config))} "
             "terminal=false "
             "sfimage=gearshape.fill"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Tools → Notifications block (spec 0002)                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _format_quiet_status(status: dict) -> str:
+    """Translate the kind/numbers dict from :func:`core.quiet_status` to a
+    localised one-liner.
+
+    Centralised here so the duration humanisation can reuse
+    :func:`_humanize_age` (already locale-aware) without core having to
+    depend on the rendering helpers.
+    """
+    kind = status["kind"]
+    lang = _lang()
+    if kind == "off":
+        return _t("quiet.status_off")
+    if kind == "scheduled_active":
+        return _t(
+            "quiet.status_scheduled_active",
+            start=status["start"], end=status["end"],
+            remaining=_humanize_age(status["scheduled_remaining"], lang),
+        )
+    if kind == "scheduled_inactive":
+        return _t(
+            "quiet.status_scheduled_inactive",
+            start=status["start"], end=status["end"],
+            until_start=_humanize_age(status["scheduled_until_start"], lang),
+        )
+    if kind == "bypassed":
+        return _t(
+            "quiet.status_bypassed",
+            remaining=_humanize_age(status["bypass_remaining"], lang),
+        )
+    # Both "paused" and "paused_and_scheduled_active" collapse to the same
+    # user-facing line: the user sees that they're paused, and the *Resume*
+    # click only clears the ad-hoc sidecar (leaving any scheduled window
+    # untouched). Listing the scheduled overlay would crowd the row without
+    # changing what the buttons do.
+    return _t(
+        "quiet.status_paused",
+        remaining=_humanize_age(status["paused_remaining"], lang),
+    )
+
+
+def _print_notifications_block(bin_dir: Path) -> None:
+    """Tools → Notifications: status line + Pause / Resume / Bypass actions."""
+    until_dt = sidecars.read_quiet_until()
+    bypass_until_dt = sidecars.read_quiet_bypass_until()
+    status = core.quiet_status(
+        _dt.datetime.now(),
+        core.CONFIG.quiet_hours,
+        until_dt,
+        bypass_until_dt,
+    )
+    print(
+        f"--{_t('menu.notifications')} | "
+        "font=Menlo color=#888888 sfimage=bell.fill"
+    )
+    print(
+        f"--  {_format_quiet_status(status)} | "
+        "font=Menlo color=#888888"
+    )
+
+    pause_script = bin_dir / "quiet-pause.sh"
+    resume_script = bin_dir / "quiet-resume.sh"
+    bypass_script = bin_dir / "quiet-bypass.sh"
+    bypass_cancel_script = bin_dir / "quiet-bypass-cancel.sh"
+
+    kind = status["kind"]
+    if kind in ("paused", "paused_and_scheduled_active"):
+        # Paused — only "Resume" makes sense. Bypass would be a
+        # contradiction (user has just said "no notifications").
+        print(
+            f"--  {_t('quiet.resume')} | "
+            f"shell={_swiftbar_quote(str(resume_script))} "
+            "terminal=false refresh=true "
+            "sfimage=bell.fill sfcolor=systemGreen"
+        )
+    elif kind == "bypassed":
+        # Bypass active — offer the inverse so the user can revert
+        # without waiting for the window to end.
+        print(
+            f"--  {_t('quiet.bypass_cancel')} | "
+            f"shell={_swiftbar_quote(str(bypass_cancel_script))} "
+            "terminal=false refresh=true "
+            "sfimage=bell.slash.fill sfcolor=systemIndigo"
+        )
+    elif kind == "scheduled_active":
+        # In the scheduled quiet window — Bypass becomes meaningful
+        # ("I need to be reachable until this window ends"). Pause is
+        # redundant here (notifications are already suppressed), so we
+        # swap the two pause rows out for a single Bypass row.
+        print(
+            f"--  {_t('quiet.bypass')} | "
+            f"shell={_swiftbar_quote(str(bypass_script))} "
+            "terminal=false refresh=true "
+            "sfimage=bell.fill sfcolor=systemGreen"
+        )
+    else:
+        print(
+            f"--  {_t('quiet.pause_hour')} | "
+            f"shell={_swiftbar_quote(str(pause_script))} "
+            f"param1=1h "
+            "terminal=false refresh=true "
+            "sfimage=moon.fill sfcolor=systemIndigo"
+        )
+        print(
+            f"--  {_t('quiet.pause_tomorrow')} | "
+            f"shell={_swiftbar_quote(str(pause_script))} "
+            f"param1=tomorrow "
+            "terminal=false refresh=true "
+            "sfimage=moon.zzz.fill sfcolor=systemIndigo"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Tools → Keep awake block (spec 0003)                                         #
+# --------------------------------------------------------------------------- #
+
+
+def _print_keep_awake_block(bin_dir: Path, sessions: list[Session]) -> None:
+    """Tools → Keep awake: status line + mode selector."""
+    mode = keep_awake.current_mode()
+    working = sum(1 for s in sessions if s.hook_state == "working")
+
+    if mode == "off":
+        status = _t("keep_awake.status_off")
+    elif mode == "always":
+        status = _t("keep_awake.status_always")
+    elif working > 0:
+        status = _t("keep_awake.status_auto_holding", n=working)
+    else:
+        status = _t("keep_awake.status_auto_idle")
+
+    print(
+        f"--{_t('menu.keep_awake')} | "
+        "font=Menlo color=#888888 sfimage=cup.and.saucer.fill"
+    )
+    print(f"--  {status} | font=Menlo color=#888888")
+
+    set_script = bin_dir / "keep-awake-set.sh"
+    for value, key, icon in (
+        ("off",    "keep_awake.mode_off",    "moon.fill"),
+        ("auto",   "keep_awake.mode_auto",   "bolt.badge.automatic"),
+        ("always", "keep_awake.mode_always", "bolt.fill"),
+    ):
+        # SwiftBar's ``checked=true`` paints a leading checkmark, giving
+        # the user a glanceable confirmation of which mode is live
+        # without us having to roll bullets into the label string.
+        checked = "checked=true " if value == mode else ""
+        print(
+            f"--  {_t(key)} | "
+            f"shell={_swiftbar_quote(str(set_script))} "
+            f"param1={value} "
+            f"{checked}"
+            "terminal=false refresh=true "
+            f"sfimage={icon}"
         )

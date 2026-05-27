@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h}h {m}p",
 
   "dialog.delete.title": "Xóa phiên Claude Code này?",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nThanh bên VSCode sẽ tự động làm mới.",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nĐóng tab phiên trong IDE trước — nếu không, tiện ích sẽ tạo phiên mới khi bạn nhập tin nhắn tiếp theo.",
   "dialog.delete.label.transcript": "Bản ghi:",
   "dialog.delete.label.artifacts": "Kết quả công cụ:",
   "dialog.delete.confirm": "Xóa",
@@ -45,9 +45,34 @@
   "stats.tokens": "Token: {total} (prompt {prompt}, cache {cache_hit} %)",
   "stats.tokens_empty": "Token: chưa có dữ liệu",
   "stats.top_projects": "Dự án hàng đầu:",
+  "stats.models": "Mô hình:",
+  "stats.subagents": "Tác nhân con hôm nay: {n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 Tác nhân con ({n}/{total})",
+  "menu.subagents_header": "Tác nhân con ({n}/{total})",
   "menu.subagent_working": "đang chạy · {duration}",
-  "menu.subagent_done": "xong · {age} trước"
+  "menu.subagent_done": "xong · {age} trước",
+  "menu.subagent_age_ago": "{age} trước",
+  "menu.subagent_ran": "trong {duration}",
+
+  "menu.notifications": "Thông báo",
+  "quiet.status_off": "Giờ yên tĩnh: tắt",
+  "quiet.status_scheduled_active": "Giờ yên tĩnh: {start} — {end} (đang bật, còn {remaining})",
+  "quiet.status_scheduled_inactive": "Giờ yên tĩnh: {start} — {end} (tắt, còn {until_start} đến lúc bắt đầu)",
+  "quiet.status_paused": "Giờ yên tĩnh: tạm dừng thêm {remaining}",
+  "quiet.status_bypassed": "Giờ yên tĩnh: bỏ qua thêm {remaining}",
+  "quiet.pause_hour": "Tạm dừng 1 giờ",
+  "quiet.pause_tomorrow": "Tạm dừng đến sáng mai",
+  "quiet.resume": "Tiếp tục ngay",
+  "quiet.bypass": "Bỏ qua đến hết khung giờ",
+  "quiet.bypass_cancel": "Hủy bỏ qua",
+
+  "menu.keep_awake": "Giữ thức",
+  "keep_awake.status_off": "Giữ thức: tắt",
+  "keep_awake.status_auto_holding": "Giữ thức: tự động · đang giữ trong khi {n} đang chạy",
+  "keep_awake.status_auto_idle": "Giữ thức: tự động · chờ (không có phiên đang chạy)",
+  "keep_awake.status_always": "Giữ thức: luôn · giữ đến khi tắt",
+  "keep_awake.mode_off": "Tắt",
+  "keep_awake.mode_auto": "Tự động (giữ thức khi có phiên đang chạy)",
+  "keep_awake.mode_always": "Luôn (giữ thức đến khi tắt)"
 }

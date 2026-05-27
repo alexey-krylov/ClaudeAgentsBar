@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h}ч {m}м",
 
   "dialog.delete.title": "Удалить эту сессию Claude Code?",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nБоковая панель VSCode обновится автоматически.",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nСначала закрой вкладку сессии в IDE — иначе при следующем сообщении расширение создаст новую.",
   "dialog.delete.label.transcript": "Транскрипт:",
   "dialog.delete.label.artifacts": "Результаты инструментов:",
   "dialog.delete.confirm": "Удалить",
@@ -45,9 +45,34 @@
   "stats.tokens": "Токенов: {total} (промпт {prompt}, попаданий в кэш {cache_hit}%)",
   "stats.tokens_empty": "Токенов: данных пока нет",
   "stats.top_projects": "Самые активные проекты:",
+  "stats.models": "Модели:",
+  "stats.subagents": "Субагентов за сегодня: {n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 Субагенты ({n}/{total})",
+  "menu.subagents_header": "Субагенты ({n}/{total})",
   "menu.subagent_working": "работает · {duration}",
-  "menu.subagent_done": "готов · {age} назад"
+  "menu.subagent_done": "готов · {age} назад",
+  "menu.subagent_age_ago": "{age} назад",
+  "menu.subagent_ran": "за {duration}",
+
+  "menu.notifications": "Уведомления",
+  "quiet.status_off": "Тихий режим: выкл",
+  "quiet.status_scheduled_active": "Тихий режим: {start} — {end} (активен, осталось {remaining})",
+  "quiet.status_scheduled_inactive": "Тихий режим: {start} — {end} (выкл, до начала {until_start})",
+  "quiet.status_paused": "Тихий режим: приостановлен ещё на {remaining}",
+  "quiet.status_bypassed": "Тихий режим: обход активен ещё {remaining}",
+  "quiet.pause_hour": "Приостановить на 1 час",
+  "quiet.pause_tomorrow": "Приостановить до утра",
+  "quiet.resume": "Возобновить сейчас",
+  "quiet.bypass": "Обойти до конца окна",
+  "quiet.bypass_cancel": "Отменить обход",
+
+  "menu.keep_awake": "Не давать заснуть",
+  "keep_awake.status_off": "Не давать заснуть: выкл",
+  "keep_awake.status_auto_holding": "Не давать заснуть: авто · держит, пока работают {n}",
+  "keep_awake.status_auto_idle": "Не давать заснуть: авто · ожидает (нет активных сессий)",
+  "keep_awake.status_always": "Не давать заснуть: всегда · держит, пока не выключите",
+  "keep_awake.mode_off": "Выкл",
+  "keep_awake.mode_auto": "Авто (пока работают сессии)",
+  "keep_awake.mode_always": "Всегда (пока не выключите)"
 }

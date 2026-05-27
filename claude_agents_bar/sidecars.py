@@ -23,6 +23,7 @@ clicks sidecar that needs the same mutex; the thin CLI wrapper is in
 
 from __future__ import annotations
 
+import datetime as _dt
 import functools
 import json
 import os
@@ -55,6 +56,64 @@ from .core import (
 # --------------------------------------------------------------------------- #
 # Sidecar readers and parsers                                                  #
 # --------------------------------------------------------------------------- #
+
+
+def _read_iso_local(path: Path) -> _dt.datetime | None:
+    """Read a single naive ISO-8601 local timestamp from ``path``.
+
+    Returns ``None`` on missing / unreadable / unparseable / past
+    timestamp. Shared between :func:`read_quiet_until` and
+    :func:`read_quiet_bypass_until` — their sidecars have the same
+    on-disk shape, only the semantic meaning of "future timestamp"
+    differs (pause until then vs. bypass until then).
+    """
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    # Strip an accidental tzinfo so the comparison surface stays naive
+    # local — bash always writes wall-clock without offsets.
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+    if dt <= _dt.datetime.now():
+        return None
+    return dt
+
+
+def read_quiet_until() -> _dt.datetime | None:
+    """Return the ad-hoc pause deadline as a naive local ``datetime``,
+    or ``None``.
+
+    Reads :data:`core.QUIET_UNTIL_PATH` — one line of naive ISO-8601
+    local time written by ``bin/app/quiet-pause.sh``. Missing /
+    unparseable / past values read as ``None``; the menu treats that as
+    "not paused" and clears the sidecar on the next *Resume* click.
+
+    Returns a naive ``datetime`` (no tzinfo) deliberately: the bash
+    writer formats wall-clock local time, and the renderer compares
+    against ``datetime.datetime.now()`` which is also naive local. Same
+    convention as the rest of the codebase's time arithmetic.
+    """
+    return _read_iso_local(core.QUIET_UNTIL_PATH)
+
+
+def read_quiet_bypass_until() -> _dt.datetime | None:
+    """Return the quiet-hours bypass deadline as a naive local ``datetime``,
+    or ``None``.
+
+    Inverse semantics of :func:`read_quiet_until`: when this returns a
+    future timestamp, notifications fire even though the scheduled
+    quiet window is active. Written by ``bin/app/quiet-bypass.sh`` with
+    the end-of-current-window as deadline; auto-expires when the
+    window does.
+    """
+    return _read_iso_local(core.QUIET_BYPASS_UNTIL_PATH)
 
 
 def read_dismiss_ts() -> int:
@@ -163,7 +222,13 @@ def read_subagents_sidecar() -> dict[str, tuple[SubagentSnapshot, ...]]:
 
 
 def _parse_subagents_sidecar(raw: str) -> dict[str, tuple[SubagentSnapshot, ...]]:
-    """Decode the raw TSV text into ``{parent_sid: (snap, ...)}``. Pure helper."""
+    """Decode the raw TSV text into ``{parent_sid: (snap, ...)}``. Pure helper.
+
+    Accepts both the 6-column legacy schema and the 7-column schema with
+    ``first_event_ts``; absent column 7 is treated as ``None`` so the
+    renderer can skip the runtime suffix instead of emitting a wrong
+    value.
+    """
     groups: dict[str, list[SubagentSnapshot]] = {}
     for line in raw.splitlines():
         parts = line.split("\t")
@@ -181,6 +246,12 @@ def _parse_subagents_sidecar(raw: str) -> dict[str, tuple[SubagentSnapshot, ...]
             state_since = int(since_raw)
         except ValueError:
             continue
+        first_event_ts: int | None = None
+        if len(parts) >= 7:
+            try:
+                first_event_ts = int(parts[6])
+            except ValueError:
+                first_event_ts = None
         groups.setdefault(parent_sid, []).append(
             SubagentSnapshot(
                 parent_sid=parent_sid,
@@ -189,6 +260,7 @@ def _parse_subagents_sidecar(raw: str) -> dict[str, tuple[SubagentSnapshot, ...]
                 state=state,
                 state_since=state_since,
                 last_event_ts=ts,
+                first_event_ts=first_event_ts,
             )
         )
     return {
@@ -838,6 +910,69 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
             if summary:
                 last_summary = summary
     return last_summary
+
+
+def read_subagent_meta(meta_path: Path) -> dict | None:
+    """Return the parsed ``agent-<id>.meta.json`` for a subagent, or ``None``.
+
+    Claude Code writes a tiny sibling JSON next to every subagent
+    transcript carrying the ``Task`` tool's ``description`` (the short
+    human-readable summary the parent passed) and ``agentType``. Both
+    are pre-resolved by the runtime, so reading the meta file is much
+    cheaper than walking the subagent's JSONL for the first user
+    message. Fail-soft like every other reader in this module.
+    """
+    try:
+        raw = meta_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def count_tool_uses(jsonl_path: Path) -> int:
+    """Return the number of ``tool_use`` chunks across the whole transcript.
+
+    Subagent transcripts are small (typically a few KB — one Task does
+    one job and returns), so a full-file scan is cheap and gives us
+    correct totals rather than the tail-bound approximation
+    :func:`last_tool_use_summary` settles for. Used only for the
+    subagent rollup; the parent's render path stays tail-only.
+
+    Fails soft to ``0`` on missing / unreadable files so the menu still
+    renders something.
+    """
+    count = 0
+    try:
+        with jsonl_path.open("rb") as f:
+            for raw in f:
+                # Cheap pre-filter: skip the JSON parse entirely on lines
+                # that can't possibly carry a tool_use. The string match
+                # is a strict subset of valid tool_use lines, so any line
+                # missing it has zero of them.
+                if b'"type":"tool_use"' not in raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                message = event.get("message")
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content")
+                if not isinstance(content, list):
+                    continue
+                for chunk in content:
+                    if isinstance(chunk, dict) and chunk.get("type") == "tool_use":
+                        count += 1
+    except OSError:
+        return 0
+    return count
 
 
 def last_session_model(jsonl_path: Path) -> str | None:

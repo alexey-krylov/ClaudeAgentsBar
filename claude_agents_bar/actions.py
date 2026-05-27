@@ -81,6 +81,20 @@ def _collect_stats_today(now: int) -> dict:
       derived from them.
     * ``top_projects`` — list of ``(project_name, turn_count)`` tuples
       sorted descending, capped at three.
+    * ``model_counts`` — dict mapping the *full* model string
+      (``"claude-opus-4-7"``, ``"claude-haiku-4-5-20251001"``,
+      ``"openrouter/gpt-4"``…) to the number of today's sessions whose
+      most recent assistant event ran on that model. Sessions with no
+      parseable model in their tail (older JSONL, or a transcript that
+      only has the user's first prompt) don't contribute — same
+      fail-soft policy as everything else here.
+    * ``subagents`` — count of subagent runs whose JSONL was modified
+      on or after midnight, across every ``<session>/subagents/``
+      directory. One subagent JSONL = one ``Task`` invocation.
+    * ``subagent_model_counts`` — same shape as ``model_counts``, but
+      for subagents. Useful to see how the ``Task`` tool routes work
+      across model families (haiku for cheap lookups, opus for harder
+      reasoning, etc.).
 
     Failures stay local: an unreadable JSONL is skipped rather than
     aborting the aggregate. Matches the same fail-soft policy as the
@@ -93,6 +107,9 @@ def _collect_stats_today(now: int) -> dict:
     prompt_tokens = 0
     cache_read_tokens = 0
     per_project_turns: dict[str, int] = {}
+    model_counts: dict[str, int] = {}
+    subagents = 0
+    subagent_model_counts: dict[str, int] = {}
 
     if not core.PROJECTS_DIR.exists():
         return {
@@ -102,6 +119,9 @@ def _collect_stats_today(now: int) -> dict:
             "prompt_tokens": 0,
             "cache_read_tokens": 0,
             "top_projects": [],
+            "model_counts": model_counts,
+            "subagents": 0,
+            "subagent_model_counts": subagent_model_counts,
         }
 
     for project_dir in core.PROJECTS_DIR.iterdir():
@@ -151,12 +171,43 @@ def _collect_stats_today(now: int) -> dict:
                     total_tokens += inp + cache_creation + cache_read
                     prompt_tokens += inp
                     cache_read_tokens += cache_read
+                model_matches = core._MODEL_RE.findall(data)
+                if model_matches:
+                    model_id = model_matches[-1].decode("utf-8", errors="replace")
+                    model_counts[model_id] = model_counts.get(model_id, 0) + 1
             except OSError:
                 pass
             project_name = _project_name(_session_initial_cwd(jsonl), project_dir.name)
             per_project_turns[project_name] = (
                 per_project_turns.get(project_name, 0) + project_turn_count
             )
+
+        # Subagents — each ``Task`` invocation lands in a sibling
+        # ``<session-id>/subagents/agent-<id>.jsonl``. Counting JSONLs
+        # whose mtime crossed midnight gives one row per subagent run.
+        for sub_jsonl in project_dir.glob("*/subagents/agent-*.jsonl"):
+            try:
+                sub_mtime = int(sub_jsonl.stat().st_mtime)
+            except OSError:
+                continue
+            if sub_mtime < midnight:
+                continue
+            subagents += 1
+            try:
+                sub_size = sub_jsonl.stat().st_size
+                with sub_jsonl.open("rb") as f:
+                    f.seek(max(0, sub_size - JSONL_TAIL_BYTES))
+                    sub_data = f.read()
+                sub_model_matches = core._MODEL_RE.findall(sub_data)
+                if sub_model_matches:
+                    model_id = sub_model_matches[-1].decode(
+                        "utf-8", errors="replace",
+                    )
+                    subagent_model_counts[model_id] = (
+                        subagent_model_counts.get(model_id, 0) + 1
+                    )
+            except OSError:
+                pass
 
     top_projects = sorted(
         per_project_turns.items(), key=lambda kv: kv[1], reverse=True,
@@ -168,7 +219,29 @@ def _collect_stats_today(now: int) -> dict:
         "prompt_tokens": prompt_tokens,
         "cache_read_tokens": cache_read_tokens,
         "top_projects": top_projects,
+        "model_counts": model_counts,
+        "subagents": subagents,
+        "subagent_model_counts": subagent_model_counts,
     }
+
+
+#: Stable-ish ranking for Claude families in the Stats today dialog.
+#: Models within the same family share this rank, then break ties on
+#: the model id string so two opus releases stay adjacent and ordered.
+#: Non-Claude / unparseable strings sort after all Claude families.
+_MODEL_FAMILY_RANK: dict[str, int] = {
+    "claude-opus-": 0,
+    "claude-sonnet-": 1,
+    "claude-haiku-": 2,
+}
+
+
+def _model_sort_key(model_id: str) -> tuple[int, str]:
+    """Sort key for the Models block: family rank, then full model id."""
+    for prefix, rank in _MODEL_FAMILY_RANK.items():
+        if model_id.startswith(prefix):
+            return (rank, model_id)
+    return (len(_MODEL_FAMILY_RANK), model_id)
 
 
 def _session_initial_cwd(jsonl: Path) -> str:
@@ -212,6 +285,25 @@ def _format_stats_dialog(stats: dict) -> str:
         ))
     else:
         lines.append(_t("stats.tokens_empty"))
+    model_counts = stats.get("model_counts") or {}
+    if model_counts:
+        lines.append("")
+        lines.append(_t("stats.models"))
+        for model_id, count in sorted(
+            model_counts.items(), key=lambda kv: _model_sort_key(kv[0]),
+        ):
+            badge = core._model_badge(model_id, None)
+            lines.append(f"  {badge} {model_id}: {count}")
+    subagents = stats.get("subagents", 0)
+    if subagents:
+        lines.append("")
+        lines.append(_t("stats.subagents", n=subagents))
+        for model_id, count in sorted(
+            (stats.get("subagent_model_counts") or {}).items(),
+            key=lambda kv: _model_sort_key(kv[0]),
+        ):
+            badge = core._model_badge(model_id, None)
+            lines.append(f"  {badge} {model_id}: {count}")
     top = stats["top_projects"]
     if top:
         lines.append("")

@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h} 小时 {m} 分",
 
   "dialog.delete.title": "删除此 Claude Code 会话？",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nVSCode 侧栏会自动刷新。",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\n请先在 IDE 中关闭该会话的标签页 — 否则在已删除会话中输入会创建一个新会话。",
   "dialog.delete.label.transcript": "转录文件：",
   "dialog.delete.label.artifacts": "工具结果：",
   "dialog.delete.confirm": "删除",
@@ -45,9 +45,34 @@
   "stats.tokens": "Token：{total}（输入 {prompt}，缓存命中 {cache_hit}%）",
   "stats.tokens_empty": "Token：暂无数据",
   "stats.top_projects": "活跃项目：",
+  "stats.models": "模型：",
+  "stats.subagents": "今日子代理：{n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 子代理（{n}/{total}）",
+  "menu.subagents_header": "子代理（{n}/{total}）",
   "menu.subagent_working": "运行中 · {duration}",
-  "menu.subagent_done": "已完成 · {age} 前"
+  "menu.subagent_done": "已完成 · {age} 前",
+  "menu.subagent_age_ago": "{age} 前",
+  "menu.subagent_ran": "用时 {duration}",
+
+  "menu.notifications": "通知",
+  "quiet.status_off": "勿扰时段：关闭",
+  "quiet.status_scheduled_active": "勿扰时段：{start} — {end}（生效中，剩余 {remaining}）",
+  "quiet.status_scheduled_inactive": "勿扰时段：{start} — {end}（未生效，{until_start} 后开始）",
+  "quiet.status_paused": "勿扰时段：再暂停 {remaining}",
+  "quiet.status_bypassed": "勿扰时段：再忽略 {remaining}",
+  "quiet.pause_hour": "暂停 1 小时",
+  "quiet.pause_tomorrow": "暂停至明日清晨",
+  "quiet.resume": "立即恢复",
+  "quiet.bypass": "忽略至当前时段结束",
+  "quiet.bypass_cancel": "取消忽略",
+
+  "menu.keep_awake": "保持唤醒",
+  "keep_awake.status_off": "保持唤醒：关闭",
+  "keep_awake.status_auto_holding": "保持唤醒：自动 · 有 {n} 个会话运行中，正在保持",
+  "keep_awake.status_auto_idle": "保持唤醒：自动 · 空闲（无活动会话）",
+  "keep_awake.status_always": "保持唤醒：始终 · 保持至关闭",
+  "keep_awake.mode_off": "关闭",
+  "keep_awake.mode_auto": "自动（有会话运行时保持唤醒）",
+  "keep_awake.mode_always": "始终（保持唤醒直至关闭）"
 }

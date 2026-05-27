@@ -2,11 +2,12 @@
 #
 # ClaudeAgentsBar teardown — reverses what setup.sh did:
 #
-#   1. Remove the SwiftBar plugin symlink.
-#   2. Remove the Claude Code hook symlink.
-#   3. Strip our hook entries from ~/.claude/settings.json (with a
+#   1. Stop any caffeinate-i process we own (spec 0003).
+#   2. Remove the SwiftBar plugin symlink.
+#   3. Remove the Claude Code hook symlinks.
+#   4. Strip our hook entries from ~/.claude/settings.json (with a
 #      timestamped backup of the file taken first).
-#   4. Refresh SwiftBar so the menu-bar icon disappears immediately.
+#   5. Refresh SwiftBar so the menu-bar icon disappears immediately.
 #
 # We leave ~/.claude/agent-state.tsv (and its peers) behind on purpose —
 # you may want to inspect them; delete manually if not.
@@ -22,6 +23,7 @@ SWIFTBAR_PLUGINS_DIR="${SWIFTBAR_PLUGINS_DIR:-$(defaults read com.ameba.SwiftBar
 PLUGIN_DST="${SWIFTBAR_PLUGINS_DIR}/claude-agents.5s.py"
 HOOK_DST="${HOME}/.claude/hooks/agent-state.sh"
 NOTIFY_HOOK_DST="${HOME}/.claude/hooks/notify-stop.sh"
+NOTIFY_WAIT_HOOK_DST="${HOME}/.claude/hooks/notify-wait.sh"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
@@ -29,7 +31,19 @@ say()  { printf '  %s\n' "$*"; }
 step() { printf '\n→ %s\n' "$*"; }
 
 
-step "1. Remove plugin symlink"
+step "1. Stop any caffeinate we own"
+# spec 0003 — if keep_awake=auto/always is enabled, the plugin has a
+# detached caffeinate process holding awake. Kill it before we strip
+# the symlink, otherwise the menu's only off-switch goes away and the
+# user has to hunt the PID by hand.
+if [ -f "${REPO_DIR}/claude-agents.5s.py" ]; then
+    /usr/bin/python3 "${REPO_DIR}/claude-agents.5s.py" --keep-awake-shutdown \
+        2>/dev/null || true
+fi
+say "ok"
+
+
+step "2. Remove plugin symlink"
 if [ -L "$PLUGIN_DST" ]; then
     rm "$PLUGIN_DST" && say "removed $PLUGIN_DST"
 else
@@ -37,7 +51,7 @@ else
 fi
 
 
-step "2. Remove hook symlinks"
+step "3. Remove hook symlinks"
 if [ -L "$HOOK_DST" ]; then
     rm "$HOOK_DST" && say "removed $HOOK_DST"
 else
@@ -48,9 +62,14 @@ if [ -L "$NOTIFY_HOOK_DST" ]; then
 else
     say "not present: $NOTIFY_HOOK_DST"
 fi
+if [ -L "$NOTIFY_WAIT_HOOK_DST" ]; then
+    rm "$NOTIFY_WAIT_HOOK_DST" && say "removed $NOTIFY_WAIT_HOOK_DST"
+else
+    say "not present: $NOTIFY_WAIT_HOOK_DST"
+fi
 
 
-step "3. Strip our hook entries from settings.json"
+step "4. Strip our hook entries from settings.json"
 if [ -f "$SETTINGS" ]; then
     cp "$SETTINGS" "$SETTINGS_BACKUP"
     say "backup: $SETTINGS_BACKUP"
@@ -62,7 +81,7 @@ if [ -f "$SETTINGS" ]; then
         | .hooks |= with_entries(
             .value |= map(
                 .hooks |= map(
-                    select((.command // "") | test("agent-state\\.sh|notify-stop\\.sh") | not)
+                    select((.command // "") | test("agent-state\\.sh|notify-stop\\.sh|notify-wait\\.sh") | not)
                 )
             )
             | .value |= map(select((.hooks // []) | length > 0))
@@ -73,7 +92,7 @@ if [ -f "$SETTINGS" ]; then
 fi
 
 
-step "4. Refresh SwiftBar"
+step "5. Refresh SwiftBar"
 if pgrep -q SwiftBar; then
     open "swiftbar://refreshallplugins"
 fi
@@ -82,6 +101,11 @@ fi
 echo
 echo "Uninstalled. Leftover artefacts you may want to delete manually:"
 echo "  ~/.claude/agent-state.tsv"
+echo "  ~/.claude/agent-state.subagents.tsv"
 echo "  ~/.claude/agent-state.clicks"
 echo "  ~/.claude/agent-state.dismiss"
 echo "  ~/.claude/agent-state.forget"
+echo "  ~/.claude/agent-state.quiet-until"
+echo "  ~/.claude/agent-state.quiet-bypass-until"
+echo "  ~/.claude/agent-state.keep-awake.mode"
+echo "  ~/.claude/agent-state.caffeinate"

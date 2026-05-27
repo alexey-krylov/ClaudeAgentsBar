@@ -5,62 +5,166 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
-## 1.1.0 — Unreleased
+## 1.1.0 — 2026-05-27
 
-### Per-session model badge + submenu row
+### Custom audio + quiet hours + keep-awake
+
+Three notification-/lifecycle-level knobs land together, all
+opt-in-with-sensible-defaults and surfaced under a new *Tools →
+Notifications* + *Tools → Keep awake* block.
+
+**Custom audio (spec 0001).** Three new config knobs let you override
+the hardcoded `Hero.aiff` / `Funk.aiff` chimes and the system `say`
+voice:
+
+```jsonc
+{
+  "notify_sound_stop": "Hero",       // built-in name, abs/~ path, or null to suppress
+  "notify_sound_wait": "Funk",
+  "notify_voice": "Samantha"         // null = system default; "off" = skip say entirely
+}
+```
+
+A missing file or unknown bare name logs a warning to SwiftBar's log
+and falls back to no chime for that event — the notification is never
+taken down by a misconfigured value. The voice is shared between Stop
+and PermissionRequest; one voice with two phrase lists is enough
+variety in practice. See
+[docs/configuration.md § Custom audio](./docs/configuration.md#custom-audio).
+
+**Quiet hours (spec 0002).** A nightly silence window plus one-click
+*Pause for 1 hour* / *Pause until tomorrow morning* / *Resume now*
+actions in the Tools submenu. Two pieces of config:
+
+```jsonc
+{
+  "quiet_hours": "23:00-08:00",                 // 24h local; start>end wraps midnight
+  "quiet_hours_silences": ["sound", "voice", "banner"]
+}
+```
+
+The schedule covers the long tail (everyday overnights); the ad-hoc
+sidecar (`~/.claude/agent-state.quiet-until`) covers "pause now"
+clicks. Both gates feed into per-channel suppression — drop
+`"banner"` from `quiet_hours_silences` to keep visual notifications
+while muting audio overnight. The default ships opinionated
+(`"23:00-08:00"`) so fresh installs aren't loud at 02:00. See
+[docs/configuration.md § Quiet hours](./docs/configuration.md#quiet-hours).
+
+The inverse channel — *Bypass until window ends* / *Cancel bypass* —
+fires notifications even though the scheduled quiet window is active,
+for nights when you do want to be reachable for the rest of *this*
+window. Backed by a second sidecar
+(`~/.claude/agent-state.quiet-bypass-until`); the deadline is always
+pinned to the end of the current window so the bypass auto-expires
+when the window does. Pause wins over bypass when both are held
+(the user has more recently or more explicitly asked for quiet);
+the Tools status line surfaces whichever is active
+(`Quiet hours: bypassed for 3h 14m more`).
+
+**Keep awake (spec 0003).** The plugin can own one detached
+`caffeinate -i` and reconcile it every tick. Three modes selectable
+from *Tools → Keep awake*:
+
+| Mode | Behaviour |
+|---|---|
+| `off` *(default)* | Never inhibit sleep. |
+| `auto` | Inhibit while any session is in `working` state (the parent rollup from spec 0004 already folds live subagents in). Waiting on a permission prompt doesn't count — if the user is away there's nothing for the screen to be lit for. |
+| `always` | Inhibit until disabled. |
+
+PID lives at `~/.claude/agent-state.caffeinate`; the mode override
+lives at `~/.claude/agent-state.keep-awake.mode` (sidecar wins over
+the `keep_awake` config knob once written). PID reuse across reboots
+is defended with a `ps -p <pid> -o comm=` check before any signal is
+sent. `caffeinate -i` does *not* override clamshell sleep — closed
+lid + no external display still sleeps. See
+[docs/configuration.md § Keep awake](./docs/configuration.md#keep-awake).
+
+Hook plumbing: `hooks/notify-stop.sh` and `hooks/notify-wait.sh` now
+source a shared `hooks/_notify-common.sh` for the config readers,
+sound resolver, and quiet-hours gate — DRY across both hooks without
+the bug-divergence risk of doubled state-machine code. The hook
+scripts resolve their symlink chain to find the include, so
+`brew`-installed and clone-installed variants both Just Work.
+
+`bin/install/teardown.sh` now kills any caffeinate we own before
+stripping the symlinks; sidecars under `~/.claude/agent-state.*` are
+preserved per existing policy.
+
+### Per-session model row in the submenu
 
 The dropdown gains an axis that wasn't there before: which Claude
 model is running each session. Useful when several agents are live at
 once on the same project — title + branch don't disambiguate three
-Sonnet sessions and one Opus session, but a glyph next to the title
-does.
+Sonnet sessions and one Opus session, but a dedicated row in the
+submenu does.
 
-Each session row picks up an inline badge right of the title **only
-when its model differs from the user's default**:
+Each session's submenu picks up a new info row carrying the full
+model string (`claude-opus-4-7`), sitting between the branch line
+and the context-usage line — same `font=Menlo color=#999999` style
+as its neighbours, `cpu` SF Symbol. The row is shown whenever the
+JSONL has a parseable `"model":"..."` field. A new config key
+`model_badge` (default `true`) suppresses it in one go — escape
+hatch for users who want a quieter submenu.
 
-| Marker | Model family |
-|---|---|
-| ⓞ | `claude-opus-*` |
-| ⓢ | `claude-sonnet-*` |
-| ⓗ | `claude-haiku-*` |
-| ⓜ | anything else (OpenRouter, custom endpoint, …) or older JSONL with no parseable `model` field |
-
-Each session's submenu also picks up a new info row carrying the
-full model string (`claude-opus-4-7`), sitting between the branch
-line and the context-usage line — same `font=Menlo color=#999999`
-style as its neighbours, `cpu` SF Symbol. The row is shown whenever
-the JSONL has a parseable `"model":"..."` field, regardless of
-whether the row badge fires — the submenu always tells you which
-model is live.
-
-Data sources:
-
-* **Session model** — last `"model":"..."` match in the JSONL tail.
-  Re-uses the same shared 128 KB tail buffer that backs the existing
-  usage / tool_use / branch readers, so the cost is folded in.
-  Mixed-model sessions (user switched mid-stream via `/model`) take
-  the *latest* — the badge answers "what am I jumping into".
-* **Default model** — `model` from `~/.claude/settings.json`,
-  overlaid by `<cwd>/.claude/settings.local.json` when that file
-  exists and declares one. "Unset everywhere" → every row gets a
-  badge (safe degradation; the user is never surprised by an
-  *absent* badge).
-
-A new config key `model_badge` (default `true`) suppresses both the
-row badge and the submenu line in one go — escape hatch for users
-who find the universal-badge fallback noisy when they haven't set
-a default. No per-family knobs; the policy is just "≠ default".
+The session model is the last `"model":"..."` match in the JSONL
+tail. Re-uses the same shared 128 KB tail buffer that backs the
+existing usage / tool_use / branch readers, so the cost is folded
+in. Mixed-model sessions (user switched mid-stream via `/model`)
+take the *latest* — the row answers "what is live right now".
 
 Subagent rows in the submenu deliberately do **not** carry their
-own model badge. Subagents inherit the parent's model in current
-Claude Code releases; surfacing per-subagent badges would just be
+own model row. Subagents inherit the parent's model in current
+Claude Code releases; surfacing per-subagent rows would just be
 noise. If `Task` ever gains explicit per-subagent model selection,
-the row can grow a badge then.
+the row can grow one then.
 
-Twenty new tests across `TestModelBadge`, `TestDefaultModelFor`,
-and `TestLastSessionModel`; total is now 215. Spec lives in
-[`docs/specs/0004-subagent-grouping.md`](./docs/specs/0004-subagent-grouping.md)
-§ Model badge & submenu row.
+The spec originally proposed an inline `ⓞ`/`ⓢ`/`ⓗ`/`ⓜ` badge next
+to the title (yellow zone in Claude Code's own row UX). It's
+deferred — the submenu row covers the same intent without crowding
+the dropdown labels, and the family glyphs live on in the
+*Stats today* surface below.
+
+### Stats today: per-model and per-subagent breakdown
+
+The *Tools → Stats today* dialog grows two new blocks below the
+existing Sessions/Turns/Tokens header:
+
+* **Models** — every Claude model that ran today, with the number
+  of sessions on each (`ⓞ claude-opus-4-7: 5`, `ⓢ claude-sonnet-4-6:
+  2`, `ⓜ openrouter/...: 1`). Sorted family-first (Opus → Sonnet →
+  Haiku → others), then by model id for stable ordering across
+  releases.
+* **Subagents today** — count of `Task` invocations whose JSONL
+  was modified after local midnight, plus the same family
+  breakdown for the subagent runtimes. Useful to see how `Task`
+  routes across families (Haiku for cheap lookups, Opus for hard
+  reasoning).
+
+Both blocks are pure tail reads on the existing per-transcript
+JSONL walk, so they fold into the same single pass over
+`~/.claude/projects/*/*.jsonl` that already powers the sessions /
+turns / tokens aggregate.
+
+### Per-row "Mark as read" action
+
+🟢 FRESH session rows pick up a new submenu entry **Mark as read**
+(blue checkmark), sitting above *Forget*. Clicks promote the
+single session to 🔵 ACKNOWLEDGED without touching any of its
+peers — the row-scoped twin of *Tools → Acknowledge all*. Hidden
+on rows that aren't FRESH (a click would be a no-op).
+
+Backed by a new `bin/app/ack-session.sh` that records a click into
+`agent-state.clicks` under the same mutex `bin/app/open-session.sh`
+uses.
+
+### Tools → Suggest improvement…
+
+A new footer entry above *Configuration…* (lightbulb glyph) opens
+`https://github.com/alexey-krylov/ClaudeAgentsBar/issues/new` in
+the default browser — one click to file feedback without hunting
+the repo. Pure `href=` row, no shell wrapper. Localised label in
+all eight locales (`menu.suggest`).
 
 ### Subagent activity surface (`🤖×N` badge + submenu block)
 
@@ -126,8 +230,38 @@ registration in `~/.claude/settings.json`. `bin/install/setup.sh`'s
 existing purge-then-append merge handles the SubagentStop matcher
 identically to the others — no manual edits needed.
 
-Nineteen new tests across `TestAgentStateHookSubagentRouting`,
-`TestSubagentSidecar`, and `TestSubagentRollup`; total is now 195.
+Total test count across the 1.1.0 surface (subagents + model row +
+quiet hours + custom audio + keep-awake + stats today blocks): **269**,
+up from 49 in 1.0.
+
+### Subagent block polish
+
+Three rendering fixes for the subagent submenu block:
+
+* **Status colour is back on the main row.** The first attempt
+  put `sfimage=circle.fill sfcolor=systemYellow` / `systemGreen`
+  on the main row to put it in the same icon column as the model
+  / tool sub-rows. SwiftBar's `color=` (used for the row text)
+  silently overrides `sfcolor=` on the same line, so every
+  circle came out grey regardless of state. Reverted to inline
+  🟡 / 🟢 emoji on the main row — they carry their own colour
+  natively.
+* **Indent works again.** NSMenu strips leading whitespace from
+  rows that carry an `sfimage=`, so the NBSP indent on sub-rows
+  vanished after the sfimage attempt and the hierarchy
+  collapsed. Switching the model / tool sub-rows back to inline
+  glyphs (`▣` for the chip, `↳` for the tool arrow) lets the
+  NBSP indent survive. Hierarchy is now: header sfimage in the
+  icon column; main rows NBSP×4 + 🟡/🟢 emoji; sub-rows
+  NBSP×10 + `▣` / `↳`. The chip-shaped `▣` (U+25A3 WHITE SQUARE
+  CONTAINING BLACK SMALL SQUARE) stands in for the `sfimage=cpu`
+  the parent's model row uses — it's the inline counterpart of
+  the SF Symbol the parent renders.
+* **Tool-summary truncation** is head-clipped now
+  (`…/app/src/main/Foo.kt`) rather than tail-clipped — the
+  meaningful part of a long path or Bash command lives at the
+  end. New `_shorten_head` helper in `core.py`; the existing
+  `_shorten` (tail-clip) still drives titles.
 
 ## 1.0.0 — 2026-05-17
 
@@ -160,7 +294,7 @@ the waiting session. Two new config keys gate the behaviour:
 | Key | Default | Effect |
 |---|---|---|
 | `notify_on_wait` | `true` | Set to `false` to silence permission notifications without affecting completion notifications |
-| `notify_wait_phrases` | `["Need instructions", "Awaiting input", "Decision needed", "Your call"]` | Replace to customise the spoken/banner text |
+| `notify_wait_phrases` | `["Need instructions", "Awaiting input", "Decision needed", "I'm blocked"]` | Replace to customise the spoken/banner text |
 
 No `notify_threshold_sec` analogue — every approval prompt is
 deliberate and worth surfacing.

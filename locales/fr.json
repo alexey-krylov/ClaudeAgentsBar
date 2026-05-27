@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h}h {m}m",
 
   "dialog.delete.title": "Supprimer cette session Claude Code ?",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nLa barre latérale VSCode devrait s’actualiser automatiquement.",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nFerme d’abord l’onglet de la session dans ton IDE — sinon, l’extension créera une nouvelle session au prochain message.",
   "dialog.delete.label.transcript": "Transcription :",
   "dialog.delete.label.artifacts": "Résultats d’outils :",
   "dialog.delete.confirm": "Supprimer",
@@ -45,9 +45,34 @@
   "stats.tokens": "Jetons : {total} (prompt {prompt}, cache {cache_hit} %)",
   "stats.tokens_empty": "Jetons : pas encore de données",
   "stats.top_projects": "Projets principaux :",
+  "stats.models": "Modèles :",
+  "stats.subagents": "Sous-agents aujourd’hui : {n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 Sous-agents ({n}/{total})",
+  "menu.subagents_header": "Sous-agents ({n}/{total})",
   "menu.subagent_working": "en cours · {duration}",
-  "menu.subagent_done": "terminé · il y a {age}"
+  "menu.subagent_done": "terminé · il y a {age}",
+  "menu.subagent_age_ago": "il y a {age}",
+  "menu.subagent_ran": "en {duration}",
+
+  "menu.notifications": "Notifications",
+  "quiet.status_off": "Heures silencieuses : désactivées",
+  "quiet.status_scheduled_active": "Heures silencieuses : {start} — {end} (actives, {remaining} restant)",
+  "quiet.status_scheduled_inactive": "Heures silencieuses : {start} — {end} (désactivées, {until_start} avant le début)",
+  "quiet.status_paused": "Heures silencieuses : en pause pour encore {remaining}",
+  "quiet.status_bypassed": "Heures silencieuses : contournées pour encore {remaining}",
+  "quiet.pause_hour": "Mettre en pause 1 heure",
+  "quiet.pause_tomorrow": "Pause jusqu’à demain matin",
+  "quiet.resume": "Reprendre maintenant",
+  "quiet.bypass": "Contourner jusqu’à la fin de la fenêtre",
+  "quiet.bypass_cancel": "Annuler le contournement",
+
+  "menu.keep_awake": "Empêcher la veille",
+  "keep_awake.status_off": "Empêcher la veille : désactivé",
+  "keep_awake.status_auto_holding": "Empêcher la veille : auto · actif tant que {n} travaillent",
+  "keep_awake.status_auto_idle": "Empêcher la veille : auto · inactif (aucune session active)",
+  "keep_awake.status_always": "Empêcher la veille : toujours · actif jusqu’à désactivation",
+  "keep_awake.mode_off": "Désactivé",
+  "keep_awake.mode_auto": "Auto (rester éveillé tant que des sessions travaillent)",
+  "keep_awake.mode_always": "Toujours (rester éveillé jusqu’à désactivation)"
 }

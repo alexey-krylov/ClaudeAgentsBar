@@ -1,6 +1,6 @@
 # Spec 0004 — Subagent activity & model surface
 
-* Status: **Accepted** &nbsp;·&nbsp; spike completed 2026-05-26
+* Status: **Implemented in 1.1.0** &nbsp;·&nbsp; spike completed 2026-05-26
 * Date: 2026-05-26
 * Spike notes: see [§ Spike outcome](#spike-outcome) below.
 

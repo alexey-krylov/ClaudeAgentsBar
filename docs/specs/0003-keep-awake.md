@@ -1,6 +1,6 @@
 # Spec 0003 — Keep Awake
 
-* Status: Draft
+* Status: **Implemented in 1.1.0**
 * Date: 2026-05-26
 
 ## Why

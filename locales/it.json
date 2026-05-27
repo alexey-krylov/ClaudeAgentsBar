@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h}h {m}m",
 
   "dialog.delete.title": "Eliminare questa sessione Claude Code?",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nLa barra laterale di VSCode dovrebbe aggiornarsi automaticamente.",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nChiudi prima la scheda della sessione nel tuo IDE — altrimenti l’estensione ne creerà una nuova al prossimo messaggio.",
   "dialog.delete.label.transcript": "Trascrizione:",
   "dialog.delete.label.artifacts": "Risultati degli strumenti:",
   "dialog.delete.confirm": "Elimina",
@@ -45,9 +45,34 @@
   "stats.tokens": "Token: {total} (prompt {prompt}, cache {cache_hit} %)",
   "stats.tokens_empty": "Token: nessun dato ancora",
   "stats.top_projects": "Progetti principali:",
+  "stats.models": "Modelli:",
+  "stats.subagents": "Subagent oggi: {n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 Subagent ({n}/{total})",
+  "menu.subagents_header": "Subagent ({n}/{total})",
   "menu.subagent_working": "in corso · {duration}",
-  "menu.subagent_done": "completato · {age} fa"
+  "menu.subagent_done": "completato · {age} fa",
+  "menu.subagent_age_ago": "{age} fa",
+  "menu.subagent_ran": "in {duration}",
+
+  "menu.notifications": "Notifiche",
+  "quiet.status_off": "Ore silenziose: disattivate",
+  "quiet.status_scheduled_active": "Ore silenziose: {start} — {end} (attive, mancano {remaining})",
+  "quiet.status_scheduled_inactive": "Ore silenziose: {start} — {end} (disattivate, {until_start} all’inizio)",
+  "quiet.status_paused": "Ore silenziose: in pausa per altri {remaining}",
+  "quiet.status_bypassed": "Ore silenziose: ignorate per altri {remaining}",
+  "quiet.pause_hour": "Pausa per 1 ora",
+  "quiet.pause_tomorrow": "Pausa fino a domani mattina",
+  "quiet.resume": "Riprendi ora",
+  "quiet.bypass": "Ignora fino al termine della finestra",
+  "quiet.bypass_cancel": "Annulla bypass",
+
+  "menu.keep_awake": "Mantieni attivo",
+  "keep_awake.status_off": "Mantieni attivo: disattivato",
+  "keep_awake.status_auto_holding": "Mantieni attivo: auto · attivo mentre {n} lavorano",
+  "keep_awake.status_auto_idle": "Mantieni attivo: auto · inattivo (nessuna sessione attiva)",
+  "keep_awake.status_always": "Mantieni attivo: sempre · attivo fino a disattivazione",
+  "keep_awake.mode_off": "Disattivato",
+  "keep_awake.mode_auto": "Auto (mantieni attivo mentre le sessioni lavorano)",
+  "keep_awake.mode_always": "Sempre (mantieni attivo fino a disattivazione)"
 }

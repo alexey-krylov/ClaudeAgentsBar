@@ -29,7 +29,7 @@ import sys
 import time
 from dataclasses import replace
 
-from . import actions, core, doctor, render, sidecars
+from . import actions, core, doctor, keep_awake, render, sidecars
 
 # --- Re-exports from .core -------------------------------------------------- #
 from .core import (
@@ -41,8 +41,12 @@ from .core import (
     HOME,
     HookSnapshot,
     INTERACTIVE_ENTRYPOINTS,
+    KEEP_AWAKE_MODE_PATH,
+    KEEP_AWAKE_PID_PATH,
     PROJECTS_DIR,
     PLUGIN_DIR,
+    QUIET_BYPASS_UNTIL_PATH,
+    QUIET_UNTIL_PATH,
     RenderGroup,
     SIDECAR_PATH,
     STRINGS,
@@ -57,7 +61,10 @@ from .core import (
     _CLICKS_LOCK_DIR,
     _EDITOR_URL_SCHEME_ALLOWLIST,
     _FORGET_LOCK_DIR,
+    _KEEP_AWAKE_MODES,
     _LANG_CACHE,
+    _QUIET_HOURS_RE,
+    _QUIET_SILENCE_CHANNELS,
     _SIDECAR_LOCK_DIR,
     _classify,
     _clean_text,
@@ -68,13 +75,18 @@ from .core import (
     _humanize_age,
     _is_valid_session_id,
     _lang,
+    _next_occurrence,
     _normalize_lang,
+    _parse_quiet_window,
     _project_name,
+    _quiet_window_active,
     _resolve_lang,
     _shorten,
     _t,
     _t_for,
     _warn,
+    is_quiet_now,
+    quiet_status,
 )
 
 # --- Re-exports from .sidecars --------------------------------------------- #
@@ -97,6 +109,8 @@ from .sidecars import (
     read_clicks,
     read_dismiss_ts,
     read_forget,
+    read_quiet_bypass_until,
+    read_quiet_until,
     read_sidecar,
     read_transcript_meta,
 )
@@ -135,6 +149,7 @@ from .actions import (
     _format_stats_dialog,
     _format_token_count,
     _local_midnight_ts,
+    _model_sort_key,
     _print_shell_strings,
     _run_ack_fresh,
     _run_stats_today,
@@ -151,6 +166,8 @@ def main() -> int:
     * ``--print-strings`` emits localized shell variables for bin/*.sh.
     * ``--doctor`` runs the deeper health checks behind ``claude-agents-bar doctor``.
     * ``--stats-today`` shows today's activity summary in a modal dialog.
+    * ``--keep-awake <mode>`` sets the keep-awake mode (off/auto/always).
+    * ``--keep-awake-shutdown`` kills any caffeinate we own (used by teardown).
 
     Anything else is treated as a render.
     """
@@ -163,8 +180,31 @@ def main() -> int:
         return doctor._run_doctor()
     if len(sys.argv) > 1 and sys.argv[1] == "--stats-today":
         return actions._run_stats_today()
+    if len(sys.argv) > 1 and sys.argv[1] == "--keep-awake":
+        mode = sys.argv[2] if len(sys.argv) > 2 else ""
+        rc = keep_awake.write_mode(mode)
+        if rc == 0:
+            # Reconcile immediately so a click on *Off* tears down the
+            # running caffeinate without waiting for the next tick.
+            try:
+                keep_awake.reconcile(render.collect_sessions(int(time.time())))
+            except Exception as exc:
+                core._warn(f"keep_awake: post-set reconcile failed: {exc}")
+        return rc
+    if len(sys.argv) > 1 and sys.argv[1] == "--keep-awake-shutdown":
+        keep_awake.shutdown()
+        return 0
     try:
-        render.render(render.collect_sessions(int(time.time())))
+        sessions = render.collect_sessions(int(time.time()))
+        render.render(sessions)
+        # Keep-awake reconcile rides on the render tick — we already paid
+        # to enumerate sessions for the menu, and the decision logic only
+        # needs ``hook_state``. Wrapping in try/except so a reconcile bug
+        # never takes the menu down.
+        try:
+            keep_awake.reconcile(sessions)
+        except Exception as exc:
+            core._warn(f"keep_awake: reconcile failed: {exc}")
     except Exception as exc:
         # Catch-all so SwiftBar never sees a Python traceback in the menu.
         print("⚠️ | color=red")

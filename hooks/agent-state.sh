@@ -50,10 +50,15 @@
 #     <session_id> <state> <last_event_ts> <last_event_kind> <cwd> <state_since>
 #
 # Subagent TSV schema (new in v1.1):
-#     <parent_sid> <agent_id> <agent_type> <state> <state_since> <last_event_ts>
+#     <parent_sid> <agent_id> <agent_type> <state> <state_since> <last_event_ts> <first_event_ts>
 #
 # ``state_since`` is preserved across consecutive events of the same state
 # and bumped on a transition, identical semantics to the parent TSV.
+# ``first_event_ts`` is set once on the row's first sighting and never
+# touched again, so the plugin can render "ran Xs" for stopped subagents
+# (= last_event_ts - first_event_ts). Legacy 6-column rows lack this
+# field; the parser treats it as missing and the renderer omits the
+# duration suffix for those rows.
 
 set -u
 
@@ -156,14 +161,19 @@ if [ -n "${AGENT_ID:-}" ]; then
                 # Agent type is set on first sighting and pinned; never overwrite
                 # with an empty string (some events may omit it).
                 type_out = (atype != "") ? atype : (NF >= 3 ? $3 : "")
-                print sid, aid, type_out, new_state, since, ts
+                # ``first_event_ts`` (col 7) is set once on first sighting
+                # and pinned forever. Legacy 6-column rows backfill from
+                # state_since — best approximation we have post-hoc; new
+                # rows always carry it explicitly.
+                first_ts = (NF >= 7 && $7 ~ /^[0-9]+$/) ? $7 : (($5 ~ /^[0-9]+$/) ? $5 : ts)
+                print sid, aid, type_out, new_state, since, ts, first_ts
                 written = 1
             }
             next
         }
                            { print }
         END {
-            if (!written) print sid, aid, atype, new_state, ts, ts
+            if (!written) print sid, aid, atype, new_state, ts, ts, ts
         }
     ' "$SUBAGENT_STATE_FILE" > "$TMP" && mv "$TMP" "$SUBAGENT_STATE_FILE"
     exit 0

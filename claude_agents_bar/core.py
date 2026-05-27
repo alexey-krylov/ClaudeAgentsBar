@@ -14,6 +14,7 @@ file — see the package ``__init__`` for the public surface.
 
 from __future__ import annotations
 
+import datetime as _dt
 import enum
 import json
 import os
@@ -55,6 +56,37 @@ _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 #: re-surfaces, which is the intended escape hatch if the user wants the row
 #: back. Use the per-row *Delete session…* action for permanent removal.
 FORGET_PATH = HOME / ".claude" / "agent-state.forget"
+
+#: Ad-hoc quiet-hours pause sidecar maintained by ``bin/app/quiet-pause.sh``
+#: and ``bin/app/quiet-resume.sh``. Holds a single naive ISO-8601 local
+#: timestamp (``"2026-05-26T23:00:00"``); a value in the future means
+#: notifications are paused until then. Absence / past timestamp / corrupt
+#: byte all read as "not paused". See ``docs/specs/0002-quiet-hours.md``.
+QUIET_UNTIL_PATH = HOME / ".claude" / "agent-state.quiet-until"
+
+#: Ad-hoc quiet-hours *bypass* sidecar maintained by
+#: ``bin/app/quiet-bypass.sh`` and ``bin/app/quiet-bypass-cancel.sh``.
+#: Inverse of :data:`QUIET_UNTIL_PATH`: a value in the future means
+#: notifications fire *even during* the scheduled quiet window (the
+#: user wants to be reachable for the rest of the current window).
+#: Same naive ISO-8601 local format. Absence / past timestamp / corrupt
+#: byte all read as "not bypassed".
+QUIET_BYPASS_UNTIL_PATH = HOME / ".claude" / "agent-state.quiet-bypass-until"
+
+#: PID file for the detached ``caffeinate -i`` process the plugin owns
+#: when ``keep_awake`` is enabled. Holds a single decimal PID. Liveness is
+#: re-checked every tick via ``os.kill(pid, 0)`` plus a ``ps -p`` comm
+#: check so PID reuse can't trick us into signalling an unrelated process.
+#: See ``docs/specs/0003-keep-awake.md``.
+KEEP_AWAKE_PID_PATH = HOME / ".claude" / "agent-state.caffeinate"
+
+#: User-facing keep-awake mode override written by ``bin/app/keep-awake-set.sh``.
+#: Single line, one of ``off``/``auto``/``always``. Absence / unknown value
+#: falls back to :attr:`Config.keep_awake`, which is the config's source of
+#: truth for first launch — once the user clicks a mode in the menu the
+#: sidecar takes precedence over config so toggling doesn't require an
+#: edit.
+KEEP_AWAKE_MODE_PATH = HOME / ".claude" / "agent-state.keep-awake.mode"
 
 #: Mutex on :data:`FORGET_PATH`, shared between plugin (gc) and
 #: ``bin/app/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
@@ -158,6 +190,24 @@ _EDITOR_URL_SCHEME_ALLOWLIST = frozenset({
     "positron://",
 })
 
+
+#: Strict 24h ``HH:MM-HH:MM`` matcher for ``Config.quiet_hours``. Mirrors
+#: the same regex in ``hooks/_notify-common.sh`` — keep them in lockstep
+#: so the menu surface and the hook agree on what's quiet.
+_QUIET_HOURS_RE = re.compile(
+    r"^(2[0-3]|[01][0-9]):([0-5][0-9])-(2[0-3]|[01][0-9]):([0-5][0-9])$"
+)
+
+#: Allowed members of :attr:`Config.quiet_hours_silences`. Anything else is
+#: dropped at config-load time with a warning — the spec deliberately lists
+#: only these three channels so the menu / hook gating stays simple.
+_QUIET_SILENCE_CHANNELS = frozenset({"sound", "voice", "banner"})
+
+#: Allowed values for :attr:`Config.keep_awake` plus the sidecar at
+#: :data:`KEEP_AWAKE_MODE_PATH`. Any other value falls back to ``"off"``
+#: with a warning — keep_awake controls a process lifecycle, so we'd
+#: rather refuse than guess.
+_KEEP_AWAKE_MODES = frozenset({"off", "auto", "always"})
 
 #: States that ``hooks/agent-state.sh`` may write to the **parent** sidecar.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
@@ -309,6 +359,28 @@ class Config:
         from yellow to red once usage crosses 90 % so a glance tells
         you how close auto-compact is. Set to ``100`` to effectively
         disable the warning while keeping the submenu gauge.
+    ``quiet_hours``
+        ``"HH:MM-HH:MM"`` scheduled silence window (24h, local time)
+        or ``None`` to disable. ``start > end`` wraps midnight; ``start
+        == end`` is treated as "never quiet" (safer than always).
+        Hooks consult :attr:`quiet_hours_silences` to decide which
+        channels to suppress while quiet. The same value drives the
+        *Tools → Notifications* status line. See
+        ``docs/specs/0002-quiet-hours.md``.
+    ``quiet_hours_silences``
+        Channels suppressed while quiet: subset of ``("sound",
+        "voice", "banner")``. Default is the full tuple — quiet means
+        silent. Drop ``"banner"`` to keep visual notifications while
+        muting audio overnight, etc. Anything outside the allow-list
+        falls back to the default with a warning.
+    ``keep_awake``
+        First-launch default for the keep-awake reconcile loop:
+        ``"off"`` (default), ``"auto"`` (caffeinate while any session
+        is *working*), or ``"always"`` (caffeinate until disabled).
+        Once the user clicks a mode in the menu the sidecar at
+        :data:`KEEP_AWAKE_MODE_PATH` takes precedence over config —
+        the config knob is just the initial state, not the runtime
+        truth. See ``docs/specs/0003-keep-awake.md``.
     """
 
     window_sec: int = 3 * 3600
@@ -331,6 +403,15 @@ class Config:
     #: ``False`` to suppress the glyph and the row entirely. See
     #: ``docs/specs/0004-subagent-grouping.md`` § Model badge & submenu row.
     model_badge: bool = True
+    #: Quiet-hours window, ``"HH:MM-HH:MM"`` (24h local) or ``None``.
+    #: Default ``"23:00-08:00"`` — a hands-off night window so the menu
+    #: doesn't ding/speak/banner while the user is asleep. Set to
+    #: ``None`` (or override via ``config.json``) to disable.
+    quiet_hours: str | None = "23:00-08:00"
+    #: Channels suppressed during quiet hours. Default = all three.
+    quiet_hours_silences: tuple[str, ...] = ("sound", "voice", "banner")
+    #: First-launch keep-awake mode (sidecar overrides at runtime).
+    keep_awake: str = "off"
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -425,6 +506,60 @@ class Config:
             coerced["compact"] = data["compact"]
         if "model_badge" in data and isinstance(data["model_badge"], bool):
             coerced["model_badge"] = data["model_badge"]
+
+        # Nullable string with strict format — take() would either eat the
+        # explicit ``null`` (treating it as "fall back to default") or trip
+        # on ``str(None)``. Handle the three valid shapes by hand.
+        if "quiet_hours" in data:
+            raw_qh = data["quiet_hours"]
+            if raw_qh is None:
+                coerced["quiet_hours"] = None
+            elif isinstance(raw_qh, str) and _QUIET_HOURS_RE.match(raw_qh):
+                # start == end is treated as "never quiet" at the parse
+                # site below — we still accept the literal form here so a
+                # user can flip it on/off by edit without re-typing.
+                coerced["quiet_hours"] = raw_qh
+            else:
+                _warn(
+                    f"config: ignoring invalid quiet_hours={raw_qh!r} "
+                    f"(must be \"HH:MM-HH:MM\" 24h or null)"
+                )
+
+        if "quiet_hours_silences" in data:
+            raw_qs = data["quiet_hours_silences"]
+            if not isinstance(raw_qs, list):
+                _warn(
+                    f"config: ignoring invalid quiet_hours_silences={raw_qs!r} "
+                    f"(must be a list of strings)"
+                )
+            else:
+                kept: list[str] = []
+                seen: set[str] = set()
+                bad: list[object] = []
+                for v in raw_qs:
+                    if isinstance(v, str) and v in _QUIET_SILENCE_CHANNELS:
+                        if v not in seen:
+                            kept.append(v)
+                            seen.add(v)
+                    else:
+                        bad.append(v)
+                if bad:
+                    _warn(
+                        f"config: dropping unknown quiet_hours_silences "
+                        f"entries: {bad!r}; allowed: "
+                        f"{sorted(_QUIET_SILENCE_CHANNELS)}"
+                    )
+                coerced["quiet_hours_silences"] = tuple(kept)
+
+        if "keep_awake" in data:
+            raw_ka = data["keep_awake"]
+            if isinstance(raw_ka, str) and raw_ka in _KEEP_AWAKE_MODES:
+                coerced["keep_awake"] = raw_ka
+            else:
+                _warn(
+                    f"config: ignoring invalid keep_awake={raw_ka!r}; "
+                    f"allowed: {sorted(_KEEP_AWAKE_MODES)}"
+                )
 
         # Drop unknown keys silently — they're forward-compatibility hooks.
         valid_names = {f.name for f in fields(cls)}
@@ -665,6 +800,12 @@ class SubagentSnapshot:
 
     Subagents share the parent's ``session_id`` in Claude Code 2.1.x —
     confirmed by the spike — so rows are keyed on ``(parent_sid, agent_id)``.
+
+    ``first_event_ts`` is set once on the row's first hook write and
+    never advanced; ``last_event_ts - first_event_ts`` is therefore the
+    end-to-end runtime of a stopped subagent. ``None`` on legacy rows
+    written by the pre-7-column hook — the renderer skips the
+    ``ran Xs`` suffix in that case rather than emitting a wrong value.
     """
 
     parent_sid: str
@@ -673,6 +814,7 @@ class SubagentSnapshot:
     state: str
     state_since: int
     last_event_ts: int
+    first_event_ts: int | None = None
 
     @property
     def is_live(self) -> bool:
@@ -921,6 +1063,22 @@ def _shorten(text: str) -> str:
     return text[: CONFIG.title_max - 1].rstrip() + "…"
 
 
+def _shorten_head(text: str) -> str:
+    """Collapse whitespace and truncate from the *start* with a leading ellipsis.
+
+    Mirror of :func:`_shorten` but keeps the *tail*. Used for the subagent
+    tool-use summary in the submenu, where the meaningful part of a long
+    string is at the end — a filename in a deep path
+    (``/Users/me/Projects/.../app/src/main/Foo.kt`` → ``…/app/src/main/Foo.kt``)
+    or the last few args of a Bash command. Clipping the end on those values
+    would hide the actual subject.
+    """
+    text = " ".join(text.split())
+    if len(text) <= CONFIG.title_max:
+        return text
+    return "…" + text[-(CONFIG.title_max - 1):].lstrip()
+
+
 def _humanize_age(seconds: int, lang: str = "en") -> str:
     """Render a duration in seconds as a compact, human-friendly string.
 
@@ -1092,3 +1250,131 @@ def _project_name(cwd: str, fallback_dirname: str) -> str:
         return Path(cwd).name
     segments = fallback_dirname.rstrip("-").split("-")
     return segments[-1] if segments else fallback_dirname
+
+
+# --------------------------------------------------------------------------- #
+# Quiet hours (spec 0002)                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _parse_quiet_window(spec: str | None) -> tuple[_dt.time, _dt.time] | None:
+    """Parse ``"HH:MM-HH:MM"`` into ``(start, end)``, or ``None``.
+
+    ``start == end`` is treated as ``None`` ("never quiet") rather than
+    "always quiet" — the only legitimate way to land matching values is a
+    typo, so refusing to silence the user 24/7 is the safer call. The same
+    rule lives in ``hooks/_notify-common.sh``; keep them in lockstep.
+    """
+    if not spec:
+        return None
+    m = _QUIET_HOURS_RE.match(spec)
+    if not m:
+        return None
+    sh, sm, eh, em = (int(g) for g in m.groups())
+    start = _dt.time(sh, sm)
+    end = _dt.time(eh, em)
+    if start == end:
+        return None
+    return (start, end)
+
+
+def _quiet_window_active(now_t: _dt.time, start: _dt.time, end: _dt.time) -> bool:
+    """True iff ``now_t`` is inside ``[start, end)`` with midnight wrap.
+
+    Half-open interval matches the hook side — a window ending at 09:00
+    means 09:00 sharp is no longer quiet.
+    """
+    if start < end:
+        return start <= now_t < end
+    return now_t >= start or now_t < end
+
+
+def _next_occurrence(now_dt: _dt.datetime, target: _dt.time) -> _dt.datetime:
+    """Next wall-clock occurrence of ``target`` strictly after ``now_dt``."""
+    candidate = now_dt.replace(
+        hour=target.hour, minute=target.minute, second=0, microsecond=0,
+    )
+    if candidate <= now_dt:
+        return candidate + _dt.timedelta(days=1)
+    return candidate
+
+
+def quiet_status(
+    now_dt: _dt.datetime,
+    spec: str | None,
+    paused_until: _dt.datetime | None,
+    bypass_until: _dt.datetime | None = None,
+) -> dict:
+    """Render-ready summary of the quiet-hours state for the Tools submenu.
+
+    Returned dict always carries ``kind`` (one of ``"off"``,
+    ``"scheduled_inactive"``, ``"scheduled_active"``, ``"paused"``,
+    ``"paused_and_scheduled_active"``, ``"bypassed"``) and, depending on
+    the kind, some of: ``start`` / ``end`` formatted as ``"HH:MM"``,
+    ``scheduled_remaining`` / ``scheduled_until_start`` /
+    ``paused_remaining`` / ``bypass_remaining`` in seconds. Pure —
+    callers compose the user-facing string in the renderer so i18n
+    stays in one place.
+
+    Precedence when both pause and bypass are set: ``paused`` wins.
+    Pause is "do not bother me"; bypass is "do bother me even during
+    quiet". Holding both is a contradiction the user resolves by
+    cancelling whichever is wrong — the menu keeps showing both
+    *remaining* numbers in :attr:`bypass_remaining` /
+    :attr:`paused_remaining` regardless of which kind is active.
+    """
+    endpoints = _parse_quiet_window(spec)
+    sched_active = (
+        endpoints is not None and _quiet_window_active(now_dt.time(), *endpoints)
+    )
+    paused = paused_until is not None and paused_until > now_dt
+    bypassed = (
+        sched_active and bypass_until is not None and bypass_until > now_dt
+    )
+
+    info: dict = {}
+    if endpoints is not None:
+        start, end = endpoints
+        info["start"] = start.strftime("%H:%M")
+        info["end"] = end.strftime("%H:%M")
+        if sched_active:
+            next_end = _next_occurrence(now_dt, end)
+            info["scheduled_remaining"] = int(
+                (next_end - now_dt).total_seconds()
+            )
+        else:
+            next_start = _next_occurrence(now_dt, start)
+            info["scheduled_until_start"] = int(
+                (next_start - now_dt).total_seconds()
+            )
+    if paused:
+        info["paused_remaining"] = int((paused_until - now_dt).total_seconds())
+    if bypassed:
+        info["bypass_remaining"] = int((bypass_until - now_dt).total_seconds())
+
+    if paused and sched_active:
+        info["kind"] = "paused_and_scheduled_active"
+    elif paused:
+        info["kind"] = "paused"
+    elif bypassed:
+        info["kind"] = "bypassed"
+    elif sched_active:
+        info["kind"] = "scheduled_active"
+    elif endpoints is not None:
+        info["kind"] = "scheduled_inactive"
+    else:
+        info["kind"] = "off"
+    return info
+
+
+def is_quiet_now(
+    now_dt: _dt.datetime,
+    spec: str | None,
+    paused_until: _dt.datetime | None,
+    bypass_until: _dt.datetime | None = None,
+) -> bool:
+    """Quick predicate for hook-parity checks (tests, doctor)."""
+    status = quiet_status(now_dt, spec, paused_until, bypass_until)
+    return status["kind"] in (
+        "scheduled_active", "paused", "paused_and_scheduled_active",
+    )

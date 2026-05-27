@@ -48,7 +48,7 @@ eval "$(/usr/bin/python3 "$PLUGIN" --print-strings 2>/dev/null || true)"
 {transcript_label}
   {transcript_path}{artifacts_section}
 
-VSCode's sidebar should refresh automatically.}"
+Close this session's tab in your IDE first — typing into a deleted session creates a new one.}"
 : "${MSG_DIALOG_DELETE_LABEL_TRANSCRIPT:=Transcript:}"
 : "${MSG_DIALOG_DELETE_LABEL_ARTIFACTS:=Tool artifacts:}"
 : "${MSG_DIALOG_DELETE_CONFIRM:=Delete}"

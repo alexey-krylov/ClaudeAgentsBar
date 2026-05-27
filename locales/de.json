@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h}h {m}m",
 
   "dialog.delete.title": "Diese Claude-Code-Sitzung löschen?",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nDie VSCode-Seitenleiste sollte sich automatisch aktualisieren.",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nSchließe zuerst den Tab der Sitzung in deiner IDE — sonst legt die Erweiterung beim nächsten Tippen eine neue Sitzung an.",
   "dialog.delete.label.transcript": "Transkript:",
   "dialog.delete.label.artifacts": "Tool-Ergebnisse:",
   "dialog.delete.confirm": "Löschen",
@@ -45,9 +45,34 @@
   "stats.tokens": "Tokens: {total} (Prompt {prompt}, Cache-Treffer {cache_hit} %)",
   "stats.tokens_empty": "Tokens: noch keine Nutzungsdaten",
   "stats.top_projects": "Top-Projekte:",
+  "stats.models": "Modelle:",
+  "stats.subagents": "Subagents heute: {n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 Subagents ({n}/{total})",
+  "menu.subagents_header": "Subagents ({n}/{total})",
   "menu.subagent_working": "läuft · {duration}",
-  "menu.subagent_done": "fertig · vor {age}"
+  "menu.subagent_done": "fertig · vor {age}",
+  "menu.subagent_age_ago": "vor {age}",
+  "menu.subagent_ran": "in {duration}",
+
+  "menu.notifications": "Benachrichtigungen",
+  "quiet.status_off": "Stille Stunden: aus",
+  "quiet.status_scheduled_active": "Stille Stunden: {start} — {end} (aktiv, noch {remaining})",
+  "quiet.status_scheduled_inactive": "Stille Stunden: {start} — {end} (aus, {until_start} bis zum Start)",
+  "quiet.status_paused": "Stille Stunden: pausiert für weitere {remaining}",
+  "quiet.status_bypassed": "Stille Stunden: umgangen für weitere {remaining}",
+  "quiet.pause_hour": "Für 1 Stunde pausieren",
+  "quiet.pause_tomorrow": "Bis morgen früh pausieren",
+  "quiet.resume": "Jetzt fortsetzen",
+  "quiet.bypass": "Bis Fensterende umgehen",
+  "quiet.bypass_cancel": "Umgehung abbrechen",
+
+  "menu.keep_awake": "Wachhalten",
+  "keep_awake.status_off": "Wachhalten: aus",
+  "keep_awake.status_auto_holding": "Wachhalten: auto · hält, während {n} arbeiten",
+  "keep_awake.status_auto_idle": "Wachhalten: auto · inaktiv (keine arbeitenden Sitzungen)",
+  "keep_awake.status_always": "Wachhalten: immer · hält bis deaktiviert",
+  "keep_awake.mode_off": "Aus",
+  "keep_awake.mode_auto": "Auto (wachhalten, solange Sitzungen laufen)",
+  "keep_awake.mode_always": "Immer (wachhalten bis deaktiviert)"
 }

@@ -74,6 +74,10 @@ fi
 
 step "2. Make scripts executable"
 chmod +x "$PLUGIN_SRC" "$HOOK_SRC" "$NOTIFY_HOOK_SRC" "$NOTIFY_WAIT_HOOK_SRC"
+# Every menu-row click target lives under bin/app/ — chmod the whole
+# directory so a new script (e.g. quiet-pause.sh, keep-awake-set.sh) is
+# picked up without having to remember to extend the explicit list.
+chmod +x "$REPO_DIR"/bin/app/*.sh 2>/dev/null || true
 say "ok"
 
 
@@ -192,7 +196,7 @@ else
 fi
 
 
-step "7. Refresh SwiftBar"
+step "8. Refresh SwiftBar"
 if pgrep -q SwiftBar; then
     open "swiftbar://refreshallplugins"
     say "refresh signal sent"

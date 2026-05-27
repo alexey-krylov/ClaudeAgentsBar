@@ -28,7 +28,7 @@
   "age.hours_minutes": "{h}h {m}m",
 
   "dialog.delete.title": "Delete this Claude Code session?",
-  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nVSCode's sidebar should refresh automatically.",
+  "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nClose this session's tab in your IDE first — typing into a deleted session creates a new one.",
   "dialog.delete.label.transcript": "Transcript:",
   "dialog.delete.label.artifacts": "Tool artifacts:",
   "dialog.delete.confirm": "Delete",
@@ -45,9 +45,34 @@
   "stats.tokens": "Tokens: {total} (prompt {prompt}, cache-hit {cache_hit}%)",
   "stats.tokens_empty": "Tokens: no usage data yet",
   "stats.top_projects": "Top projects:",
+  "stats.models": "Models:",
+  "stats.subagents": "Subagents today: {n}",
 
   "row.subagent_badge": "🤖×{n}",
-  "menu.subagents_header": "🤖 Subagents ({n}/{total})",
+  "menu.subagents_header": "Subagents ({n}/{total})",
   "menu.subagent_working": "working · {duration}",
-  "menu.subagent_done": "done · {age} ago"
+  "menu.subagent_done": "done · {age} ago",
+  "menu.subagent_age_ago": "{age} ago",
+  "menu.subagent_ran": "ran {duration}",
+
+  "menu.notifications": "Notifications",
+  "quiet.status_off": "Quiet hours: off",
+  "quiet.status_scheduled_active": "Quiet hours: {start} — {end} (active, {remaining} left)",
+  "quiet.status_scheduled_inactive": "Quiet hours: {start} — {end} (off, {until_start} until start)",
+  "quiet.status_paused": "Quiet hours: paused for {remaining} more",
+  "quiet.status_bypassed": "Quiet hours: bypassed for {remaining} more",
+  "quiet.pause_hour": "Pause for 1 hour",
+  "quiet.pause_tomorrow": "Pause until tomorrow morning",
+  "quiet.resume": "Resume now",
+  "quiet.bypass": "Bypass until window ends",
+  "quiet.bypass_cancel": "Cancel bypass",
+
+  "menu.keep_awake": "Keep awake",
+  "keep_awake.status_off": "Keep awake: off",
+  "keep_awake.status_auto_holding": "Keep awake: auto · holding while {n} working",
+  "keep_awake.status_auto_idle": "Keep awake: auto · idle (no working sessions)",
+  "keep_awake.status_always": "Keep awake: always · holding until disabled",
+  "keep_awake.mode_off": "Off",
+  "keep_awake.mode_auto": "Auto (keep awake while sessions are running)",
+  "keep_awake.mode_always": "Always (keep awake until disabled)"
 }

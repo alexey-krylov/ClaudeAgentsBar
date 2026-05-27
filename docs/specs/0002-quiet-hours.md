@@ -1,6 +1,6 @@
 # Spec 0002 — Quiet hours
 
-* Status: Draft
+* Status: **Implemented in 1.1.0** &nbsp;·&nbsp; bypass channel added post-spec
 * Date: 2026-05-26
 
 ## Why
@@ -66,8 +66,9 @@ voice) drop `"banner"`.
 }
 ```
 
-Defaults: `quiet_hours: null`, full-silence list. Current behaviour
-preserved when the config is missing or unset.
+Defaults: `quiet_hours: "23:00-08:00"`, full-silence list — a
+hands-off night window so the menu doesn't ding/speak/banner while the
+user is asleep. Set to `null` to disable the schedule entirely.
 
 ## Menu actions
 
@@ -77,9 +78,47 @@ New entries under `bin/app/`:
   `agent-state.quiet-until = now + duration`. `duration` is
   `1h` / `tomorrow` / explicit ISO.
 - `quiet-resume.sh` — unlinks the sidecar.
+- `quiet-bypass.sh` — writes `agent-state.quiet-bypass-until = end
+  of the current scheduled window` (see *Bypass channel* below).
+- `quiet-bypass-cancel.sh` — unlinks the bypass sidecar.
 
 `Pause until tomorrow morning` resolves to the *end* of the
 configured `quiet_hours` window if defined, otherwise 09:00 local.
+
+## Bypass channel
+
+Inverse of *pause*: a temporary opt-in to fire notifications *during*
+the scheduled quiet window. Useful when the user is up late on
+deadline and wants the menu to behave normally for the rest of *this*
+night without permanently editing `quiet_hours`.
+
+Surface (added below the pause/resume entries):
+
+- `Bypass until window ends` — visible only while the schedule is
+  currently active and no bypass is held.
+- `Cancel bypass` — visible only while a bypass is held.
+
+Status line: `Quiet hours: bypassed for {duration} more`.
+
+Implementation mirrors the pause sidecar, with two differences:
+
+1. **Sidecar path**: `~/.claude/agent-state.quiet-bypass-until`
+   (separate file so pause and bypass are independent).
+2. **Deadline**: always pinned to the *end* of the current window
+   when written. Once the window closes the bypass auto-expires
+   (the sidecar timestamp is in the past, the reader treats it as
+   absent), so the user doesn't have to remember to cancel.
+
+**Precedence when both pause and bypass are held simultaneously:**
+pause wins. "Do not bother me" is treated as more recent or more
+explicit than "do bother me even during quiet"; the status line
+keeps showing both *remaining* numbers so the user can resolve the
+contradiction by cancelling whichever is wrong.
+
+Both hooks (`notify-stop.sh`, `notify-wait.sh`) consult the bypass
+sidecar through the shared `_compute_quiet_state` in
+`hooks/_notify-common.sh` and unset `QUIET_NOW` when bypass is in
+effect and no pause overrides it.
 
 ## Edge cases
 

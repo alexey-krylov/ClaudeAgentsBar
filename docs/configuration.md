@@ -40,7 +40,7 @@ restart needed.
 | `editor_url_scheme` | `"vscode://"` | URL scheme prefix used when opening a session on row click. Full URL: `<scheme>anthropic.claude-code/open?session=<uuid>`. Common values: `"vscode://"` (default, stock VSCode), `"vscodium://"` (VSCodium), `"cursor://"` (Cursor). Other Code-OSS forks may register their own scheme. Must include the trailing `://`. The editor must also have the `anthropic.claude-code` extension installed for the deeplink to land on a session. |
 | `language` | `"auto"` | UI language for menu labels, dialogs, and `X ago` strings. Supported: `en`, `ru`, `zh`, `zh-TW`, `fr`, `de`, `it`, `vi`. `"auto"` detects from macOS `AppleLocale`, falling back to `$LANG`. Region tag optional — `zh-TW` picks Taiwan locale; others fall back to the primary subtag (`zh`) then `en`. |
 | `compact` | `false` | When `true`, drops the icon and replaces `🟡🟢🔵` with ANSI-coloured `●` bullets (`●2 ●1 ●3`). Saves ~30 px — useful on notched MacBooks. See *Compact mode* below. |
-| `model_badge` | `true` | Toggle for the per-session model badge (`ⓞ`/`ⓢ`/`ⓗ`/`ⓜ` next to the title when the session's model differs from the user's default, read from `model` in `~/.claude/settings.json` and overlaid by `<cwd>/.claude/settings.local.json`) and the full model row in each session's submenu. Both surfaces share the toggle: set to `false` to hide the glyph and the row entirely. Default `true` — with no default model configured every row gets a family-based badge (safe degradation, so an absent badge never surprises). |
+| `model_badge` | `true` | Toggle for the full model row shown inside each session's submenu (the line with the `cpu` icon, e.g. `claude-opus-4-7`). Set to `false` to hide that row. The previous in-row badge (`ⓞ`/`ⓢ`/`ⓗ`/`ⓜ` next to the title) has been removed — the submenu line is the only model surface now. |
 | `context_window_tokens` | `1000000` | Total context-window size used to compute the per-session `{N}% — {used}k/{total}k` indicator. Matches Claude Opus 4.7 / 4.6 and Sonnet 4.6 (Anthropic's API default since 2026-04-23). Override to `200000` when running Haiku 4.5 or Sonnet 4.5. See [ADR-0011](./adr/0011-configurable-context-window.md) for the alternatives we considered. |
 | `context_warning_threshold` | `80` | Percent of context-window usage above which the main row gets an inline `⚠ {pct}%` marker between the title and the age label. Yellow up to 90 %, red beyond — same zones Claude Code's CLI uses. Set to `100` to suppress the inline marker while keeping the submenu gauge. Valid range `1..100`; out-of-range and non-numeric values fall back to `80`. |
 | `notify_on_stop` | `true` | Play a chime, speak a phrase, and show a macOS notification banner when a session finishes. Requires `terminal-notifier` (`brew install terminal-notifier`). Set to `false` to silence all completion notifications. |
@@ -48,6 +48,12 @@ restart needed.
 | `notify_phrases` | `["Check it", "Done", "Ready for review", "Your turn"]` | Phrases spoken aloud (via `say`) and shown in the notification banner. One is chosen at random on each `Stop`. Replace the list entirely to customise the voice lines. |
 | `notify_on_wait` | `true` | Play a chime, speak a phrase, and show a macOS notification banner when Claude is blocked on a tool-approval dialog (`PermissionRequest` event). Requires `terminal-notifier`. Set to `false` to silence permission-prompt notifications while keeping completion notifications. |
 | `notify_wait_phrases` | `["Need instructions", "Awaiting input", "Decision needed", "I'm blocked"]` | Phrases spoken aloud and shown in the notification banner when Claude needs permission. One is chosen at random on each `PermissionRequest`. |
+| `notify_sound_stop` | `"Hero"` | Chime played on `Stop`. Bare name (`"Hero"`, `"Glass"`, `"Funk"`, …) resolves under `/System/Library/Sounds/`. Absolute or `~`-paths are used as-is. `null` suppresses the chime — banner and voice still fire. Missing files log a warning to SwiftBar's log and fall back to no chime for that event. |
+| `notify_sound_wait` | `"Funk"` | Chime played on `PermissionRequest`. Same value shapes as `notify_sound_stop`. Default `"Funk"` is shorter and softer than `Hero` — *needs your attention* vs *task complete*. |
+| `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
+| `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
+| `quiet_hours_silences` | `["sound", "voice", "banner"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Drop `"banner"` to keep visual notifications while muting audio overnight. Unknown entries are dropped at load with a warning. |
+| `keep_awake` | `"off"` | First-launch keep-awake mode. `"off"` (default), `"auto"` (`caffeinate -i` while any session is *working*), `"always"` (until disabled). Once you click a mode in *Tools → Keep awake* the sidecar takes precedence — this knob is only consulted on a clean install. See *Keep awake* below for limits. |
 
 Fractional values are accepted where they make sense — e.g.
 `"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`
@@ -156,9 +162,136 @@ permanent off-switch:
 ```
 
 Underlying hooks: `hooks/notify-stop.sh` and `hooks/notify-wait.sh`.
-Both are plain Bash, read the same JSON config the plugin uses, and
-degrade silently when `terminal-notifier` / `jq` / the icon asset is
-missing.
+Both are plain Bash, source the shared `hooks/_notify-common.sh`, read
+the same JSON config the plugin uses, and degrade silently when
+`terminal-notifier` / `jq` / the icon asset is missing.
+
+## Custom audio
+
+Three knobs, each independent of `notify_on_*`:
+
+```json
+{
+  "notify_sound_stop": "Hero",
+  "notify_sound_wait": "Funk",
+  "notify_voice": "Samantha"
+}
+```
+
+`notify_sound_*` accepts a bare name (`"Hero"`, `"Glass"`, `"Funk"`,
+`"Submarine"`, …), an absolute path (`"/Users/me/Sounds/foo.aiff"`), or
+a `~`-path (`"~/Sounds/foo.aiff"`). Set to `null` to skip just the chime
+— banner and voice still fire. A missing file logs a warning to
+SwiftBar's log and falls back to no chime for that event; the
+notification is never taken down by a misconfigured value.
+
+`notify_voice` is the macOS `say` voice. `null` / absent uses the system
+default. Any installed voice (`"Samantha"`, `"Daniel"`, `"Yuri"`,
+`"Tessa"`, …) is passed straight to `say -v <name>`. The sentinel
+`"off"` skips the spoken phrase entirely. List installed voices with:
+
+```bash
+say -v '?'
+```
+
+The voice setting is shared between Stop and PermissionRequest — Apple
+voices don't ship per-event variants, and one voice with two phrase
+lists is enough variety in practice.
+
+## Quiet hours
+
+A nightly silence window plus a one-click "pause for an hour" / "pause
+until morning" pair lives under *Tools → Notifications*:
+
+```
+Tools
+  Notifications
+    Quiet hours: 23:00 — 08:00 (active, 6h 12m left)
+    Pause for 1 hour
+    Pause until tomorrow morning
+```
+
+Two pieces of config drive the scheduled window:
+
+```json
+{
+  "quiet_hours": "23:00-08:00",
+  "quiet_hours_silences": ["sound", "voice", "banner"]
+}
+```
+
+* `quiet_hours` is `"HH:MM-HH:MM"` in 24h local time. `start > end`
+  wraps midnight, so `"23:00-09:00"` covers a normal overnight. `null`
+  disables the schedule entirely. The default ships opinionated
+  (`"23:00-08:00"`) so a stock install isn't loud at 02:00.
+* `quiet_hours_silences` is the subset of `["sound", "voice", "banner"]`
+  that's suppressed while quiet. Drop `"banner"` to keep visual
+  notifications while muting audio — useful if you want to see *that*
+  Claude is asking, just not hear it.
+
+The Tools menu's *Pause for 1 hour* writes a sidecar timestamp at
+`~/.claude/agent-state.quiet-until`; *Pause until tomorrow morning*
+resolves to the next end of the configured window (or 09:00 local if no
+window is set). *Resume now* clears the sidecar. The ad-hoc pause is
+independent of the schedule — clearing it leaves any active scheduled
+window in effect.
+
+While the scheduled window is active, two extra entries appear:
+*Bypass until window ends* and *Cancel bypass*. The bypass writes
+`~/.claude/agent-state.quiet-bypass-until` pinned to the end of the
+current window — notifications then fire normally until the window
+closes, at which point the sidecar timestamp goes stale and the
+plugin treats the bypass as gone. Useful when you're up late on
+deadline and want the menu to behave normally for the rest of *this*
+night without editing `quiet_hours`. *Pause* always wins over
+*bypass* when both are held — "do not bother me" beats "do bother
+me even during quiet", and the status line surfaces both
+remaining durations so the contradiction is visible.
+
+DST: window endpoints are wall-clock local. On a spring-forward day the
+"missing" minute simply doesn't exist; the next minute is back inside
+the window and the hook silences notifications normally.
+
+## Keep awake
+
+A reconciled `caffeinate -i` lifecycle lives under *Tools → Keep awake*:
+
+```
+Tools
+  Keep awake: auto · holding while 2 working
+    ✔ Off
+       Auto (keep awake while sessions are running)
+       Always (keep awake until disabled)
+```
+
+Three modes:
+
+| Mode | Behaviour |
+|---|---|
+| `off` *(default)* | Never hold awake. |
+| `auto` | Hold awake while any session is in `working` state — including subagent rollups from `Task` spawns. Waiting on a permission prompt does *not* count: if the user is away there's nothing for the screen to be lit for. |
+| `always` | Hold awake until disabled. |
+
+The plugin owns one detached `caffeinate -i` process; its PID lives at
+`~/.claude/agent-state.caffeinate`. Each tick (~5 s) re-reads the mode
+sidecar at `~/.claude/agent-state.keep-awake.mode`, decides whether to
+hold, and spawns or kills as needed. PID reuse across reboots is
+defended against with a `ps -p <pid> -o comm=` check before any signal
+is sent.
+
+**Limits.** `caffeinate -i` inhibits idle and display sleep but does
+*not* override macOS's clamshell sleep policy — a closed lid with no
+external display still sleeps the Mac. On battery power the hold still
+applies (no separate AC/battery gate today).
+
+`Off` while a caffeinate is running tears it down immediately; the next
+render tick reflects the new state. `claude-agents-bar teardown` also
+kills any caffeinate we own before stripping the symlinks.
+
+The `keep_awake` config knob is only consulted on a clean install —
+once you click a mode in the menu, the sidecar wins. Editing config to
+flip the mode requires deleting the sidecar (`rm
+~/.claude/agent-state.keep-awake.mode`) so config can take over again.
 
 ## Changing the refresh rate
 
@@ -243,6 +376,10 @@ and its hook/action scripts:
 | `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
 | `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
 | `agent-state.forget` | `bin/forget-session.sh`, plugin (gc) | `{session_id: forget_ts}` — per-row cutoff. Scoped variant of `agent-state.dismiss`. |
+| `agent-state.quiet-until` | `bin/quiet-pause.sh`, `bin/quiet-resume.sh` | Single naive ISO-8601 local timestamp — ad-hoc quiet-hours pause deadline. Absent / past / unparseable = not paused. |
+| `agent-state.quiet-bypass-until` | `bin/quiet-bypass.sh`, `bin/quiet-bypass-cancel.sh` | Single naive ISO-8601 local timestamp — opt-in bypass of the scheduled quiet window. Auto-expires at the end of the current window. Pause wins when both are held. |
+| `agent-state.keep-awake.mode` | `bin/keep-awake-set.sh` (via plugin) | One line, `off` / `auto` / `always`. Takes precedence over the `keep_awake` config knob once written. |
+| `agent-state.caffeinate` | plugin reconcile loop | Single decimal PID of the detached `caffeinate -i` we hold. Cleared on stop / teardown. |
 
 `uninstall.sh` leaves these in place — delete them manually if you
 want a fully clean slate. The cache directory

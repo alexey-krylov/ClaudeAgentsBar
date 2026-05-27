@@ -61,14 +61,24 @@ row gets an inline `⚠ {pct}%` warning (red past 90 %), so a glance
 tells you which sessions are close to auto-compact.
 
 **Submenu per row** — *Mark as read*, *Forget*, *Delete…*, *Reveal
-in Finder*, plus git branch + context %. Hovering the context line
-shows the session's last `tool_use` as a tooltip (e.g. `Read: main.py`,
-`Bash: pytest …`) — quick answer to *what is this session doing?*
-without expanding anything.
+in Finder*, plus git branch, the model running the session
+(`claude-opus-4-7` / `claude-sonnet-4-6` / …) and context %.
+Hovering the context line shows the session's last `tool_use` as a
+tooltip (e.g. `Read: main.py`, `Bash: pytest …`) — quick answer to
+*what is this session doing?* without expanding anything.
+
+**Subagent rollup** — sessions that spawn `Task` subagents grow a
+`🤖×N` badge with the live count, and the submenu lists each
+subagent (description, model chip, current tool, runtime). The
+parent row stays 🟡 while any subagent is in flight, so a long
+`Task` doesn't drift the parent into a misleading 🟢.
 
 **Tools submenu** — bulk actions (acknowledge all / forget all),
-today's activity summary, a feedback link, and one-click jump to
-your `config.json`.
+today's activity summary (sessions, turns, tokens, breakdown by
+model and subagent), a *Notifications* block with one-click pause /
+resume / bypass for quiet hours, *Keep awake* (off / auto /
+always — wraps `caffeinate -i`), a feedback link, and one-click
+jump to your `config.json`.
 
 **Audible nudges** — when a session finishes (`Stop`) or stalls on a
 permission prompt (`PermissionRequest`), the plugin plays a short
@@ -143,7 +153,8 @@ The three fields you're most likely to touch:
 | `ack_minutes` | `60` | How long an acknowledged 🔵 session stays before fading to ⚪. |
 | `menubar_icon` | Claude.app glyph | Plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>`. |
 
-Full reference (all 12 fields, icon formats, compact mode for notched
+Full reference (~22 fields incl. notification chimes / voice /
+quiet hours / keep-awake, icon formats, compact mode for notched
 MacBooks, refresh cadence, sidecar files on disk):
 [docs/configuration.md](./docs/configuration.md).
 
