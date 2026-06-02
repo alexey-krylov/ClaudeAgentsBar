@@ -19,6 +19,13 @@
 #                                `null` means *suppress*).
 #   * `_resolve_sound`         — built-in name / abs path / ~-path /
 #                                empty → existing file path or empty.
+#   * `_editor_app_for_scheme` — editor_url_scheme → the `.app` that
+#                                registers it (empty for unknown schemes).
+#   * `_raise_open_cmd`        — build the terminal-notifier `-execute`
+#                                command that raises the window matching a
+#                                session's cwd, then opens its deeplink.
+#   * `_CAB_HOOK_DIR`          — real (symlink-resolved) hooks directory,
+#                                used to locate the sibling helper scripts.
 #   * `_compute_quiet_state`   — sets `QUIET_NOW` plus
 #                                `SUPPRESS_SOUND` / `SUPPRESS_VOICE` /
 #                                `SUPPRESS_BANNER` from the scheduled
@@ -27,6 +34,13 @@
 # Sourced via the symlink-following resolver at the top of each hook;
 # this file is never executed directly. Callers run with `set -u`, so
 # every global we touch is initialised before first read.
+
+# ── Hooks directory ──────────────────────────────────────────────────────────
+# This file is sourced through the already-symlink-resolved path the hook
+# computed (`${__HOOK_DIR}/_notify-common.sh`), so `BASH_SOURCE[0]` points
+# at the real file in the repo. Sibling helpers (raise-and-open.sh) live
+# next to it; resolve the directory once here.
+_CAB_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
 
 # ── Config path (mirrors XDG logic in claude_agents_bar/core.py) ─────────────
 if [ -n "${CLAUDE_AGENTS_BAR_CONFIG:-}" ]; then
@@ -129,6 +143,52 @@ _resolve_sound() {
             fi
             ;;
     esac
+}
+
+# ── Editor deeplink → multi-window banner action ─────────────────────────────
+# A banner click opens `<scheme>anthropic.claude-code/open?session=<id>`,
+# which the editor delivers to whichever window is *frontmost* — not the
+# one whose workspace matches the session. With several windows open that
+# resumes in the wrong one. The fix: before opening the deeplink, raise
+# the window holding the session's cwd. These helpers let the hooks wire
+# that up through terminal-notifier's `-execute`.
+
+# Map an editor_url_scheme to the `.app` that registers it. Mirrors
+# `_EDITOR_SCHEME_APP` in claude_agents_bar/doctor.py — keep the two in
+# lockstep. Unknown / custom schemes echo nothing, so the caller falls
+# back to a plain deeplink open (the pre-fix behaviour).
+_editor_app_for_scheme() {
+    case "$1" in
+        "vscode://")   echo "/Applications/Visual Studio Code.app" ;;
+        "vscodium://") echo "/Applications/VSCodium.app" ;;
+        "cursor://")   echo "/Applications/Cursor.app" ;;
+        "windsurf://") echo "/Applications/Windsurf.app" ;;
+        "positron://") echo "/Applications/Positron.app" ;;
+    esac
+}
+
+# Single-quote $1 for safe embedding in the `/bin/sh -c …` command line
+# terminal-notifier runs for `-execute`. Each embedded single quote
+# becomes the standard '\'' sequence.
+_shq() {
+    local out=$1
+    out=${out//\'/\'\\\'\'}
+    printf "'%s'" "$out"
+}
+
+# Echo the `-execute` command that raises the window matching <cwd> for
+# <app>, then opens <url>. <sid> lets the helper pick the session's last
+# touched file as the focus anchor. Invoked via `/bin/bash <helper>`
+# rather than the bare path so it doesn't depend on the helper's
+# executable bit surviving distribution (Homebrew bottle / zip). The
+# result is a single shell-ready string; callers pass it verbatim as one
+# `-execute` arg.
+_raise_open_cmd() {
+    local url="$1" cwd="$2" app="$3" sid="${4:-}"
+    local helper="${_CAB_HOOK_DIR}/raise-and-open.sh"
+    printf '/bin/bash %s %s %s %s %s' \
+        "$(_shq "$helper")" "$(_shq "$url")" "$(_shq "$cwd")" \
+        "$(_shq "$app")" "$(_shq "$sid")"
 }
 
 # ── Quiet hours (spec 0002) ──────────────────────────────────────────────────

@@ -5,6 +5,32 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Clicking a session now opens the matching window, not whatever's
+  frontmost.** With several editor windows open, both a menu-bar
+  dropdown row and a *Stop* / *awaiting input* notification banner used
+  to deliver the deeplink to the focused window — the wrong one —
+  because the `anthropic.claude-code` handler doesn't route by
+  workspace. Both paths now run a new shared `hooks/raise-and-open.sh`
+  on click (the dropdown via `open-session.sh`, the banner via
+  terminal-notifier `-execute`), which surfaces the window owning the
+  session's working directory and waits for it to come to front before
+  firing the deeplink. It surfaces the window by opening a *file* inside
+  the cwd (`open -a <editor> <file>` — an "open document" event the
+  editor routes to the owning window, **multi-root aware**), rather than
+  opening the folder, which would spawn a new window when the cwd is one
+  root of a multi-root workspace. Going through LaunchServices keeps it
+  near-instant (no editor-CLI startup), so the focus step always runs —
+  no window-count check needed. The file it opens is the last one Claude
+  touched in that session (newest tool-use `file_path` inside the cwd,
+  from the transcript), falling back to a stable project file (`README`,
+  …); costs one extra editor tab. Applies to the built-in schemes
+  (`vscode://`, `vscodium://`, `cursor://`, `windsurf://`, `positron://`);
+  otherwise it falls back to opening the deeplink directly.
+
 ## 1.1.0 — 2026-05-27
 
 ### Custom audio + quiet hours + keep-awake

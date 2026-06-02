@@ -39,14 +39,9 @@ _REQUIRED_HOOK_EVENTS = frozenset((
 
 #: Editor URL scheme → expected .app bundle. Used by the doctor to warn
 #: when the configured editor isn't actually installed (the top
-#: symptom from docs/troubleshooting.md).
-_EDITOR_SCHEME_APP = {
-    "vscode://": "/Applications/Visual Studio Code.app",
-    "vscodium://": "/Applications/VSCodium.app",
-    "cursor://": "/Applications/Cursor.app",
-    "windsurf://": "/Applications/Windsurf.app",
-    "positron://": "/Applications/Positron.app",
-}
+#: symptom from docs/troubleshooting.md). Aliases the canonical map in
+#: :mod:`core` so the doctor and the row-click focus logic can't drift.
+_EDITOR_SCHEME_APP = core.EDITOR_SCHEME_APP
 
 
 def _doctor_check_tsv_freshness(now: int) -> tuple[str, str]:

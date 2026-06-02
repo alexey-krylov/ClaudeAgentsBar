@@ -190,6 +190,23 @@ _EDITOR_URL_SCHEME_ALLOWLIST = frozenset({
     "positron://",
 })
 
+#: Editor URL scheme → the ``.app`` that registers it. Canonical home for
+#: this mapping; ``doctor`` aliases it (to warn when the editor isn't
+#: installed) and ``render`` uses it to tell ``open-session.sh`` which app
+#: to raise so a row-click deeplink lands in the window matching the
+#: session's ``cwd`` rather than whichever window is frontmost. The notify
+#: hooks keep a parallel copy in ``hooks/_notify-common.sh`` for the same
+#: fix on banner clicks (bash can't import this). Schemes outside this map
+#: (custom forks) skip the focus step and fire the deeplink as before.
+#: Keep the keys in lockstep with the allowlist above.
+EDITOR_SCHEME_APP = {
+    "vscode://": "/Applications/Visual Studio Code.app",
+    "vscodium://": "/Applications/VSCodium.app",
+    "cursor://": "/Applications/Cursor.app",
+    "windsurf://": "/Applications/Windsurf.app",
+    "positron://": "/Applications/Positron.app",
+}
+
 
 #: Strict 24h ``HH:MM-HH:MM`` matcher for ``Config.quiet_hours``. Mirrors
 #: the same regex in ``hooks/_notify-common.sh`` — keep them in lockstep

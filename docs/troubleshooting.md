@@ -165,6 +165,46 @@ with the extension store; VSCodium and Cursor users typically install
 it from a VSIX or open-vsx. See
 [configuration.md](./configuration.md#all-fields) for all schemes.
 
+## Clicking a session opens the wrong window (several windows open)
+
+The session deeplink carries only the session id; the editor's
+`anthropic.claude-code` handler delivers it to whichever window is
+**frontmost**, not the one whose workspace matches the session. With
+two or more windows open, both a menu-bar dropdown row and a *Stop* /
+*awaiting input* notification banner used to land the session in the
+wrong one (and the resume can silently miss, because the session must
+belong to the focused workspace).
+
+Both click paths work around this through the shared
+`hooks/raise-and-open.sh`: when the session's working directory and a
+known editor `.app` are available, the click first surfaces the window
+that owns that directory, waits for it to actually come to front, then
+fires the deeplink.
+
+It surfaces the window by opening a **file** inside the cwd
+(`open -a <editor> <file>`), **not** the folder. The distinction is the
+whole trick: opening a *folder* (`open -a <editor> <cwd>` / `code
+<cwd>`) is folder-identity based — if the cwd is one of the roots of an
+already-open **multi-root workspace**, it spawns a brand-new
+single-folder window instead of focusing the existing one
+([VS Code #215749](https://github.com/microsoft/vscode/issues/215749)).
+Opening a *file* sends an "open document" event that the editor routes
+to the window whose workspace already contains it, multi-root included —
+and via LaunchServices, so it skips the ~1 s editor-CLI startup and
+stays near-instant (no "is more than one window open?" check needed).
+
+The anchor file it opens is the **last file Claude touched in that
+session** (the newest tool-use `file_path` inside the cwd, read from the
+session transcript) — so the tab you land on is the one the work was
+about. It falls back to a stable project file (`README`, …) when the
+transcript has no usable path. The trade-off is one extra editor tab.
+
+This only kicks in for the built-in schemes (`vscode://`, `vscodium://`,
+`cursor://`, `windsurf://`, `positron://`) whose `.app` and CLI the
+plugin knows. If the editor CLI can't be resolved, the cwd has no
+anchorable file, or a custom `editor_url_scheme` is set, it falls back to
+opening the deeplink directly (which lands in the frontmost window).
+
 ## "Configuration…" opens TextEdit, not my editor
 
 `open -t` follows the system *Default text editor* binding. To change

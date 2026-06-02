@@ -76,6 +76,7 @@ _compute_quiet_state
 INPUT=$(cat)
 TRANSCRIPT=$(/usr/bin/jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null)
 SID=$(/usr/bin/jq -r '.session_id // empty'    <<<"$INPUT" 2>/dev/null)
+CWD=$(/usr/bin/jq -r '.cwd // empty'           <<<"$INPUT" 2>/dev/null)
 
 SESSION_URL=""
 [ -n "$SID" ] && SESSION_URL="${SCHEME}anthropic.claude-code/open?session=${SID}"
@@ -151,13 +152,25 @@ disown 2>/dev/null || true
 # ── Banner notification ───────────────────────────────────────────────────────
 # terminal-notifier blocks macOS impersonation of Apple-signed bundles and
 # ignores -appIcon on recent macOS versions. We use -contentImage for the
-# side icon. -open makes the banner clickable — clicking jumps to the
-# right session in the editor.
+# side icon. The banner is clickable — clicking jumps to the right session
+# in the editor.
+#
+# When we know the session's cwd and a window-raising .app for the
+# configured scheme, the click runs raise-and-open.sh (via -execute) so
+# it lands in the window matching the workspace rather than whatever is
+# frontmost. Otherwise we fall back to a plain -open of the deeplink.
 if [ "$SUPPRESS_BANNER" = "false" ]; then
     ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
     NOTIFIER_ARGS=(-title "$TITLE" -subtitle "Claude Code" -message "$PHRASE")
     [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
-    [ -n "$SESSION_URL" ]  && NOTIFIER_ARGS+=(-open "$SESSION_URL")
+    if [ -n "$SESSION_URL" ]; then
+        EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")
+        if [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
+            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID")")
+        else
+            NOTIFIER_ARGS+=(-open "$SESSION_URL")
+        fi
+    fi
 
     if command -v terminal-notifier >/dev/null 2>&1; then
         terminal-notifier "${NOTIFIER_ARGS[@]}" >/dev/null 2>&1 &

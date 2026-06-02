@@ -570,10 +570,18 @@ def _print_session_row(session: Session) -> None:
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
     open_script = bin_dir / "open-session.sh"
+    # The session deeplink lands in whichever editor window is frontmost —
+    # the extension doesn't route by workspace. Hand open-session.sh the
+    # session's cwd plus the .app that owns the scheme so it can raise the
+    # matching window first; empty app (unknown/custom scheme) skips that
+    # step and just fires the deeplink as before.
+    editor_app = core.EDITOR_SCHEME_APP.get(core.CONFIG.editor_url_scheme, "")
     main_params = [
         f"shell={_swiftbar_quote(str(open_script))}",
         f"param1={_swiftbar_quote(session.id)}",
         f"param2={_swiftbar_quote(href)}",
+        f"param3={_swiftbar_quote(session.cwd)}",
+        f"param4={_swiftbar_quote(editor_app)}",
         "terminal=false",
         "refresh=true",
         f"color={session.group.color}",

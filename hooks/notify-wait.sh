@@ -73,6 +73,7 @@ _compute_quiet_state
 # ── Parse hook payload ───────────────────────────────────────────────────────
 INPUT=$(cat)
 SID=$(/usr/bin/jq -r '.session_id // empty' <<<"$INPUT" 2>/dev/null)
+CWD=$(/usr/bin/jq -r '.cwd // empty'        <<<"$INPUT" 2>/dev/null)
 
 SESSION_URL=""
 [ -n "$SID" ] && SESSION_URL="${SCHEME}anthropic.claude-code/open?session=${SID}"
@@ -109,12 +110,22 @@ disown 2>/dev/null || true
 
 # ── Banner notification ──────────────────────────────────────────────────────
 # Click jumps straight to the session — the user almost always wants to act
-# on the prompt, not just acknowledge it.
+# on the prompt, not just acknowledge it. When the session's cwd and a
+# window-raising .app are known, the click runs raise-and-open.sh (via
+# -execute) so it lands in the window matching the workspace instead of
+# whatever is frontmost; otherwise it falls back to a plain -open.
 if [ "$SUPPRESS_BANNER" = "false" ]; then
     ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
     NOTIFIER_ARGS=(-title "Claude awaiting input" -subtitle "Claude Code" -message "$PHRASE")
     [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
-    [ -n "$SESSION_URL" ]  && NOTIFIER_ARGS+=(-open "$SESSION_URL")
+    if [ -n "$SESSION_URL" ]; then
+        EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")
+        if [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
+            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID")")
+        else
+            NOTIFIER_ARGS+=(-open "$SESSION_URL")
+        fi
+    fi
 
     if command -v terminal-notifier >/dev/null 2>&1; then
         terminal-notifier "${NOTIFIER_ARGS[@]}" >/dev/null 2>&1 &
