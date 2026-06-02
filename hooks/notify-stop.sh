@@ -26,8 +26,9 @@
 #   quiet_hours            string  null     — "HH:MM-HH:MM" window during
 #                                             which notifications are silenced
 #                                             per `quiet_hours_silences`
-#   quiet_hours_silences   array   all      — channels suppressed while quiet:
-#                                             subset of ["sound","voice","banner"]
+#   quiet_hours_silences   array   [snd,vc] — channels suppressed while quiet:
+#                                             subset of ["sound","voice","banner"];
+#                                             default mutes audio, keeps banner
 #   editor_url_scheme      string  "vscode://" — used to build the deeplink;
 #                                             mirrors the same key the plugin
 #                                             uses for row clicks
@@ -63,6 +64,8 @@ NOTIFY_ON=$(_cfg_bool  "notify_on_stop"        "true")
 
 THRESHOLD=$(_cfg_int   "notify_threshold_sec"  "30")
 SCHEME=$(_cfg_string   "editor_url_scheme"     "vscode://")
+MULTI_WS=$(_multi_workspace_enabled)
+SETTLE=$(_cfg_number   "editor_focus_settle_sec" "0.1")
 
 # Custom audio (spec 0001).
 SOUND_RAW=$(_cfg_string_or_null "notify_sound_stop" "Hero")
@@ -155,18 +158,20 @@ disown 2>/dev/null || true
 # side icon. The banner is clickable — clicking jumps to the right session
 # in the editor.
 #
-# When we know the session's cwd and a window-raising .app for the
-# configured scheme, the click runs raise-and-open.sh (via -execute) so
-# it lands in the window matching the workspace rather than whatever is
-# frontmost. Otherwise we fall back to a plain -open of the deeplink.
+# With multi_workspace_mode on and the session's cwd + a window-raising
+# .app known, the click runs raise-and-open.sh (via -execute) so it lands
+# in the window matching the workspace rather than whatever is frontmost.
+# Otherwise (focus off, or args missing) we fall back to a plain -open of
+# the deeplink.
 if [ "$SUPPRESS_BANNER" = "false" ]; then
     ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
     NOTIFIER_ARGS=(-title "$TITLE" -subtitle "Claude Code" -message "$PHRASE")
     [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
     if [ -n "$SESSION_URL" ]; then
         EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")
-        if [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
-            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID")")
+        if [ "$MULTI_WS" = "true" ] && [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] \
+                && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
+            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID" "$SETTLE")")
         else
             NOTIFIER_ARGS+=(-open "$SESSION_URL")
         fi

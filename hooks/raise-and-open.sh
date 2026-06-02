@@ -45,12 +45,13 @@
 # Standalone (no sourcing) because -execute spawns a bare shell, not a
 # child of the hook, and open-session.sh invokes it the same way.
 #
-#     raise-and-open.sh <session-url> [cwd] [editor-app] [session-id]
+#     raise-and-open.sh <session-url> [cwd] [editor-app] [session-id] [settle-sec]
 #
-# Best-effort throughout: a blank/unknown cwd or app, or a cwd with no
-# anchorable file — any of these just skips the focus step and opens the
-# deeplink directly (the pre-fix behaviour: it lands in the frontmost
-# window).
+# <settle-sec> is the post-raise pause before the deeplink (see below);
+# defaults to 0.1 when blank/invalid. Best-effort throughout: a
+# blank/unknown cwd or app, or a cwd with no anchorable file — any of
+# these just skips the focus step and opens the deeplink directly (the
+# pre-fix behaviour: it lands in the frontmost window).
 
 set -u
 
@@ -58,8 +59,16 @@ URL="${1:-}"
 CWD="${2:-}"
 APP="${3:-}"
 SID="${4:-}"
+SETTLE="${5:-}"
 
 [ -n "$URL" ] || exit 0
+
+# Sanitise the settle delay: a non-numeric value would make `sleep` error
+# out (skipping the pause and losing the race). The plugin already clamps
+# the config value to 0..5; this just guards a blank/garbage arg.
+case "$SETTLE" in
+    ''|*[!0-9.]*) SETTLE="0.1" ;;
+esac
 
 # The newest file Claude touched in this session that still lives inside
 # <cwd>. Reads the session transcript (~/.claude/projects/*/<sid>.jsonl),
@@ -142,9 +151,10 @@ if _raise_window; then
     # anchor tab. Without a beat here the deeplink fires first and the
     # anchor tab renders *on top of* the resumed session — you land on the
     # file, not the chat. This short settle lets the anchor tab land so the
-    # session ends up focused. 0.1s won the race reliably in testing on a
-    # warm editor; bump it if a cold/slow editor still lands on the file.
-    sleep 0.1
+    # session ends up focused. Duration comes from the editor_focus_settle_sec
+    # config knob (default 0.1); bump it if a cold/slow editor still lands
+    # on the file. Fall back to the default if the value is somehow bad.
+    sleep "$SETTLE" 2>/dev/null || sleep 0.1
 fi
 
 /usr/bin/open "$URL" >/dev/null 2>&1 || true

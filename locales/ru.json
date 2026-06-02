@@ -11,6 +11,7 @@
   "menu.forget_all": "Забыть все сессии",
   "menu.stats_today": "Статистика за сегодня…",
   "menu.suggest": "Предложить улучшение…",
+  "menu.multi_workspace": "Параллельные рабочие пространства",
   "menu.config": "Конфигурация…",
   "menu.forget_session": "Забыть",
   "menu.delete_session": "Удалить…",

@@ -5,7 +5,49 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
-## [Unreleased]
+## 1.1.1 — 2026-06-02
+
+### Added
+
+- **Multi-workspace mode** — clicking a session opens it in the editor
+  window that *owns* it, so it works smoothly when you keep several
+  editor windows (or a multi-root workspace) open at once. The session
+  deeplink on its own carries only the session id and the
+  `anthropic.claude-code` handler delivers it to the frontmost window, so
+  the plugin first surfaces the right window: on click, a shared
+  `hooks/raise-and-open.sh` (the dropdown via `open-session.sh`, the
+  banner via terminal-notifier `-execute`) brings the window owning the
+  session's working directory to front, then fires the deeplink. It
+  surfaces the window by opening a *file* inside the cwd
+  (`open -a <editor> <file>` — an "open document" event the editor routes
+  to the owning window, **multi-root aware**), so even a folder that's
+  one root of a multi-root workspace lands in the existing window instead
+  of a new one. Going through LaunchServices keeps it near-instant. The
+  file it opens is the last one Claude touched in that session (newest
+  tool-use `file_path` inside the cwd, from the transcript), so you land
+  where the work was, falling back to a stable project file (`README`, …);
+  it costs one extra editor tab. Works with the built-in schemes
+  (`vscode://`, `vscodium://`, `cursor://`, `windsurf://`, `positron://`).
+
+  Switchable: a `multi_workspace_mode` config knob (default `true`) and a
+  *Tools → Multi-workspace mode* checkbox turn it on/off live — off gives
+  the snappy single-window path (fire the deeplink directly, no extra
+  tab, lands in the frontmost window). The checkbox writes a sidecar
+  (`~/.claude/agent-state.multi-workspace.mode`) that wins over the config
+  knob, mirroring *Keep awake*. A second knob `editor_focus_settle_sec`
+  (default `0.1`, range `0..5`) tunes the pause that lets the anchor tab
+  render before the deeplink fires.
+
+### Changed
+
+- **Quiet hours no longer hides the banner by default.** The default
+  `quiet_hours_silences` is now `["sound", "voice"]` instead of all
+  three channels: during a quiet window the chime and `say` voice are
+  muted, but the clickable banner still appears so you never miss that
+  a session finished or is waiting. Add `"banner"` back to
+  `quiet_hours_silences` for full silence, or list only `"voice"` to
+  keep the chime. Existing configs that set the key explicitly are
+  unaffected.
 
 ### Fixed
 

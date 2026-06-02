@@ -27,8 +27,9 @@
 #   quiet_hours            string  null     — "HH:MM-HH:MM" window during
 #                                             which notifications are silenced
 #                                             per `quiet_hours_silences`
-#   quiet_hours_silences   array   all      — channels suppressed while quiet:
-#                                             subset of ["sound","voice","banner"]
+#   quiet_hours_silences   array   [snd,vc] — channels suppressed while quiet:
+#                                             subset of ["sound","voice","banner"];
+#                                             default mutes audio, keeps banner
 #   editor_url_scheme      string  "vscode://" — used to build the deeplink
 #                                             so the banner click jumps
 #                                             straight into the waiting
@@ -59,6 +60,8 @@ NOTIFY_ON=$(_cfg_bool  "notify_on_wait"        "true")
 [ "$NOTIFY_ON" = "false" ] && exit 0
 
 SCHEME=$(_cfg_string   "editor_url_scheme"     "vscode://")
+MULTI_WS=$(_multi_workspace_enabled)
+SETTLE=$(_cfg_number   "editor_focus_settle_sec" "0.1")
 
 # Custom audio (spec 0001). Default chime for permission prompts is Funk —
 # shorter and softer than Hero, matching the existing semantic distinction
@@ -110,18 +113,20 @@ disown 2>/dev/null || true
 
 # ── Banner notification ──────────────────────────────────────────────────────
 # Click jumps straight to the session — the user almost always wants to act
-# on the prompt, not just acknowledge it. When the session's cwd and a
-# window-raising .app are known, the click runs raise-and-open.sh (via
-# -execute) so it lands in the window matching the workspace instead of
-# whatever is frontmost; otherwise it falls back to a plain -open.
+# on the prompt, not just acknowledge it. With multi_workspace_mode on and
+# the session's cwd + a window-raising .app known, the click runs
+# raise-and-open.sh (via -execute) so it lands in the window matching the
+# workspace instead of whatever is frontmost; otherwise (focus off, or args
+# missing) it falls back to a plain -open.
 if [ "$SUPPRESS_BANNER" = "false" ]; then
     ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
     NOTIFIER_ARGS=(-title "Claude awaiting input" -subtitle "Claude Code" -message "$PHRASE")
     [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
     if [ -n "$SESSION_URL" ]; then
         EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")
-        if [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
-            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID")")
+        if [ "$MULTI_WS" = "true" ] && [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] \
+                && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
+            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID" "$SETTLE")")
         else
             NOTIFIER_ARGS+=(-open "$SESSION_URL")
         fi

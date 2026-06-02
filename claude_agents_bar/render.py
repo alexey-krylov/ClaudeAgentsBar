@@ -571,17 +571,25 @@ def _print_session_row(session: Session) -> None:
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
     open_script = bin_dir / "open-session.sh"
     # The session deeplink lands in whichever editor window is frontmost —
-    # the extension doesn't route by workspace. Hand open-session.sh the
-    # session's cwd plus the .app that owns the scheme so it can raise the
-    # matching window first; empty app (unknown/custom scheme) skips that
-    # step and just fires the deeplink as before.
-    editor_app = core.EDITOR_SCHEME_APP.get(core.CONFIG.editor_url_scheme, "")
+    # the extension doesn't route by workspace. When multi-workspace mode
+    # is on we hand open-session.sh the session's cwd, the .app that owns
+    # the scheme, and the settle delay so it can raise the matching window
+    # first; when off we pass only id + url, so open-session.sh falls back
+    # to firing the deeplink directly (the snappy single-window path). The
+    # live toggle (sidecar) wins over the config default.
     main_params = [
         f"shell={_swiftbar_quote(str(open_script))}",
         f"param1={_swiftbar_quote(session.id)}",
         f"param2={_swiftbar_quote(href)}",
-        f"param3={_swiftbar_quote(session.cwd)}",
-        f"param4={_swiftbar_quote(editor_app)}",
+    ]
+    if core.multi_workspace_enabled():
+        editor_app = core.EDITOR_SCHEME_APP.get(core.CONFIG.editor_url_scheme, "")
+        main_params += [
+            f"param3={_swiftbar_quote(session.cwd)}",
+            f"param4={_swiftbar_quote(editor_app)}",
+            f"param5={_swiftbar_quote(str(core.CONFIG.editor_focus_settle_sec))}",
+        ]
+    main_params += [
         "terminal=false",
         "refresh=true",
         f"color={session.group.color}",
@@ -920,11 +928,26 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
     _print_keep_awake_block(bin_dir, sessions or [])
 
     print("-----")
+    # Multi-workspace mode toggle — sits just above Configuration. A native
+    # SwiftBar checkmark reflects the live state; clicking flips it by
+    # writing the opposite value to the sidecar (so it doesn't rewrite the
+    # user's config.json). Effective state already folds sidecar over config.
+    mw_on = core.multi_workspace_enabled()
+    mw_set_script = bin_dir / "multi-workspace-set.sh"
+    # Invoke via `/bin/bash <script> <value>` rather than running the
+    # script directly, so it doesn't depend on the executable bit (same
+    # reason as raise-and-open.sh — survives distribution where the +x bit
+    # may be lost). param1 is the script, param2 the value to write.
     print(
-        f"--{_t('menu.suggest')} | "
-        "href=https://github.com/alexey-krylov/ClaudeAgentsBar/issues/new "
-        "sfimage=lightbulb.fill"
+        f"--{_t('menu.multi_workspace')} | "
+        "shell=/bin/bash "
+        f"param1={_swiftbar_quote(str(mw_set_script))} "
+        f"param2={'off' if mw_on else 'on'} "
+        f"checked={'true' if mw_on else 'false'} "
+        "terminal=false refresh=true "
+        "sfimage=macwindow.on.rectangle"
     )
+
     # Resolve the config path Python-side so the open-config.sh wrapper
     # stays a thin shell script and doesn't duplicate the env-var → XDG
     # → ~/.config lookup chain. The example path travels alongside so the
@@ -938,6 +961,13 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
             "terminal=false "
             "sfimage=gearshape.fill"
         )
+
+    # Suggest improvement sits at the very bottom of Tools.
+    print(
+        f"--{_t('menu.suggest')} | "
+        "href=https://github.com/alexey-krylov/ClaudeAgentsBar/issues/new "
+        "sfimage=lightbulb.fill"
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -52,8 +52,10 @@ restart needed.
 | `notify_sound_wait` | `"Funk"` | Chime played on `PermissionRequest`. Same value shapes as `notify_sound_stop`. Default `"Funk"` is shorter and softer than `Hero` — *needs your attention* vs *task complete*. |
 | `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
 | `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
-| `quiet_hours_silences` | `["sound", "voice", "banner"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Drop `"banner"` to keep visual notifications while muting audio overnight. Unknown entries are dropped at load with a warning. |
+| `quiet_hours_silences` | `["sound", "voice"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Default mutes audio (chime + voice) but the banner still appears so you don't miss the event. Add `"banner"` to go fully silent; list only `"voice"` to keep the chime. Unknown entries are dropped at load with a warning. |
 | `keep_awake` | `"off"` | First-launch keep-awake mode. `"off"` (default), `"auto"` (`caffeinate -i` while any session is *working*), `"always"` (until disabled). Once you click a mode in *Tools → Keep awake* the sidecar takes precedence — this knob is only consulted on a clean install. See *Keep awake* below for limits. |
+| `multi_workspace_mode` | `true` | Raise the editor window that owns a clicked session before firing the deeplink, so it lands in the right window even with several windows / a multi-root workspace open. Set to `false` for the snappy single-window path: clicks fire the deeplink directly (instant, no extra tab) but land in whatever window is frontmost. See *Multi-workspace focus* below. |
+| `editor_focus_settle_sec` | `0.1` | Only used when `multi_workspace_mode` is `true`. Seconds to wait after raising the window before firing the deeplink, so the anchor tab renders and the resumed chat lands on top of it. Lower trims latency but risks landing on the file under load; `0` skips the wait. Range `0..5`. |
 
 Fractional values are accepted where they make sense — e.g.
 `"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`
@@ -216,7 +218,7 @@ Two pieces of config drive the scheduled window:
 ```json
 {
   "quiet_hours": "23:00-08:00",
-  "quiet_hours_silences": ["sound", "voice", "banner"]
+  "quiet_hours_silences": ["sound", "voice"]
 }
 ```
 
@@ -225,9 +227,10 @@ Two pieces of config drive the scheduled window:
   disables the schedule entirely. The default ships opinionated
   (`"23:00-08:00"`) so a stock install isn't loud at 02:00.
 * `quiet_hours_silences` is the subset of `["sound", "voice", "banner"]`
-  that's suppressed while quiet. Drop `"banner"` to keep visual
-  notifications while muting audio — useful if you want to see *that*
-  Claude is asking, just not hear it.
+  that's suppressed while quiet. The default `["sound", "voice"]` mutes
+  audio but keeps the banner — you still *see* that Claude is asking,
+  you just don't hear it. Add `"banner"` to go fully silent, or list
+  only `"voice"` to keep the chime.
 
 The Tools menu's *Pause for 1 hour* writes a sidecar timestamp at
 `~/.claude/agent-state.quiet-until`; *Pause until tomorrow morning*
@@ -292,6 +295,41 @@ The `keep_awake` config knob is only consulted on a clean install —
 once you click a mode in the menu, the sidecar wins. Editing config to
 flip the mode requires deleting the sidecar (`rm
 ~/.claude/agent-state.keep-awake.mode`) so config can take over again.
+
+## Multi-workspace focus
+
+The session deeplink (`<scheme>anthropic.claude-code/open?session=<id>`)
+carries only the session id. The editor delivers it to whichever window
+is **frontmost** — it doesn't route by workspace. With several windows
+open that lands the session in the wrong one; in a multi-root workspace,
+naively opening the folder would even spawn a brand-new window
+([VS Code #215749](https://github.com/microsoft/vscode/issues/215749)).
+
+With **`multi_workspace_mode`** on (the default), a session click — from
+a dropdown row *or* a notification banner — first raises the window that
+owns the session's working directory, then fires the deeplink so it lands
+there. It raises the window by opening a *file* inside the cwd via
+`open -a <editor> <file>` (an "open document" event the editor routes to
+the owning window, multi-root included), using the session's **last
+touched file** as the anchor (so you land where the work was), falling
+back to a stable project file like `README`. That costs one extra editor
+tab; `editor_focus_settle_sec` is the brief pause that lets the tab
+render so the resumed chat ends up on top of it rather than under it.
+
+Turn `multi_workspace_mode` **off** if you only ever run one editor
+window and want the snappiest open: clicks then fire the deeplink
+directly — instant, no extra tab — but they land in whatever window is
+frontmost. This only ever engages for the built-in editor schemes
+(`vscode://`, `vscodium://`, `cursor://`, `windsurf://`, `positron://`);
+a custom `editor_url_scheme` always uses the direct path.
+
+You don't have to edit the file to flip it: **Tools → Multi-workspace
+mode** is a checkbox that toggles the same behaviour live (it writes a
+sidecar at `~/.claude/agent-state.multi-workspace.mode`, which takes
+precedence over the config knob — the knob is just the first-launch
+default, exactly like *Keep awake*). The checkmark reflects the current
+effective state, and the change applies to both dropdown rows and
+notification-banner clicks on the next tick.
 
 ## Changing the refresh rate
 

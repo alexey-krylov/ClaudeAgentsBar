@@ -32,6 +32,7 @@ SID="${1:-}"
 URL="${2:-}"
 CWD="${3:-}"
 APP="${4:-}"
+SETTLE="${5:-}"
 
 if [ -z "$SID" ] || [ -z "$URL" ]; then
     # Misuse — just exit silently. Showing an osascript dialog on every
@@ -82,15 +83,17 @@ TMP="${CLICKS_FILE}.$$"
 #
 # With a known cwd + editor .app, delegate to the shared focus helper so
 # the deeplink lands in the window matching the session rather than
-# whatever's frontmost. It's run detached (`&`) so the row click returns
-# immediately — the helper's up-to-2s wait for the window to surface must
-# not block SwiftBar. The helper lives in hooks/ (sibling of bin/app/ at
-# the repo root) and is invoked via `/bin/bash` so it doesn't depend on
-# an executable bit. Anything missing falls back to a direct open.
+# whatever's frontmost. The plugin only passes cwd/app/settle when
+# multi_workspace_mode is on; with it off (or args otherwise missing) we
+# fall straight through to a direct open — the snappy single-window path.
+# When delegating it's run detached (`&`) so the row click returns
+# immediately — the helper's window-settle wait must not block SwiftBar.
+# The helper lives in hooks/ (sibling of bin/app/ at the repo root) and is
+# invoked via `/bin/bash` so it doesn't depend on an executable bit.
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
 RAISE_HELPER="${SCRIPT_DIR}/../../hooks/raise-and-open.sh"
 if [ -n "$CWD" ] && [ -n "$APP" ] && [ -d "$CWD" ] && [ -d "$APP" ] && [ -f "$RAISE_HELPER" ]; then
-    /bin/bash "$RAISE_HELPER" "$URL" "$CWD" "$APP" "$SID" >/dev/null 2>&1 &
+    /bin/bash "$RAISE_HELPER" "$URL" "$CWD" "$APP" "$SID" "$SETTLE" >/dev/null 2>&1 &
     disown 2>/dev/null || true
 else
     /usr/bin/open "$URL" >/dev/null 2>&1 || true

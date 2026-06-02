@@ -93,9 +93,15 @@
   "// quiet_hours": "Scheduled silence window (24h local, 'HH:MM-HH:MM'). start>end wraps midnight. Default '23:00-08:00' — set to null to disable.",
   "quiet_hours": "23:00-08:00",
 
-  "// quiet_hours_silences": "Which channels are silenced while quiet hours are active. Subset of ['sound','voice','banner']. Default = all three — drop 'banner' to keep visual notifications while muting audio overnight.",
-  "quiet_hours_silences": ["sound", "voice", "banner"],
+  "// quiet_hours_silences": "Which channels are silenced while quiet hours are active. Subset of ['sound','voice','banner']. Default = ['sound','voice'] — audio is muted but the banner still appears. Add 'banner' to go fully silent.",
+  "quiet_hours_silences": ["sound", "voice"],
 
   "// keep_awake": "First-launch keep-awake mode. Once you click a mode in Tools → Keep awake, the sidecar takes precedence and this knob is only consulted on the next clean install. Values: 'off' (default), 'auto' (caffeinate while any session is working), 'always'. Limitations: closed lid + no external display still sleeps; this only inhibits idle/display sleep.",
-  "keep_awake": "off"
+  "keep_awake": "off",
+
+  "// multi_workspace_mode": "When true (default), clicking a session (dropdown row or notification banner) first raises the editor window that owns the session's working directory, then fires the deeplink — so it lands in the right window even with several windows / a multi-root workspace open. It does this by opening a file inside the cwd (the session's last touched file, else README) so the editor focuses the owning window, costing one extra tab. Set to false if you only ever run one editor window: clicks then fire the deeplink directly (instant, no extra tab, but they land in whatever window is frontmost).",
+  "multi_workspace_mode": true,
+
+  "// editor_focus_settle_sec": "Only used when multi_workspace_mode is true. Seconds to wait after raising the window before firing the deeplink, so the anchor tab finishes rendering and the resumed chat lands on top of it instead of under it. Default 0.1. Lower trims latency but risks landing on the file under load; 0 skips the wait. Range 0..5.",
+  "editor_focus_settle_sec": 0.1
 }

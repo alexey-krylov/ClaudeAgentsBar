@@ -168,6 +168,8 @@ def main() -> int:
     * ``--stats-today`` shows today's activity summary in a modal dialog.
     * ``--keep-awake <mode>`` sets the keep-awake mode (off/auto/always).
     * ``--keep-awake-shutdown`` kills any caffeinate we own (used by teardown).
+    * ``--multi-workspace <on|off>`` toggles the window-focus behaviour
+      (writes the :data:`core.MULTI_WORKSPACE_MODE_PATH` sidecar).
 
     Anything else is treated as a render.
     """
@@ -194,6 +196,12 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--keep-awake-shutdown":
         keep_awake.shutdown()
         return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "--multi-workspace":
+        arg = sys.argv[2] if len(sys.argv) > 2 else ""
+        if arg not in ("on", "off"):
+            core._warn(f"multi_workspace: refusing invalid value {arg!r}")
+            return 1
+        return core.write_multi_workspace_mode(arg == "on")
     try:
         sessions = render.collect_sessions(int(time.time()))
         render.render(sessions)

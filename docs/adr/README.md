@@ -28,6 +28,7 @@ prior one.
 | [0013](./0013-completion-notification-hook.md) | Completion-notification hook bundled in the repo | Accepted |
 | [0014](./0014-no-vscode-hidden-sessions-sync.md) | Don't sync with VSCode's hiddenSessionIds | Accepted |
 | [0015](./0015-python-as-plugin-language.md) | Python as the plugin language | Accepted |
+| [0016](./0016-multi-workspace-window-focus.md) | Multi-workspace window focus via open-document, not the deeplink alone | Accepted |
 
 ## Workflow
 

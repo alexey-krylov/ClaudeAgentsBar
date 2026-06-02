@@ -11,6 +11,7 @@
   "menu.forget_all": "Forget all sessions",
   "menu.stats_today": "Stats today…",
   "menu.suggest": "Suggest improvement…",
+  "menu.multi_workspace": "Multi-workspace mode",
   "menu.config": "Configuration…",
   "menu.forget_session": "Forget",
   "menu.delete_session": "Delete…",

@@ -21,6 +21,11 @@
 #                                empty → existing file path or empty.
 #   * `_editor_app_for_scheme` — editor_url_scheme → the `.app` that
 #                                registers it (empty for unknown schemes).
+#   * `_cfg_number`            — like _cfg_int but keeps fractions (for
+#                                editor_focus_settle_sec).
+#   * `_multi_workspace_enabled` — effective multi-workspace mode
+#                                ("true"/"false"); sidecar toggle wins
+#                                over the config knob.
 #   * `_raise_open_cmd`        — build the terminal-notifier `-execute`
 #                                command that raises the window matching a
 #                                session's cwd, then opens its deeplink.
@@ -71,6 +76,36 @@ _cfg_int() {
         'if .[$k] | type == "number" then (.[$k] | floor | tostring) else empty end' \
         "$_CAB_CONFIG" 2>/dev/null)
     echo "${val:-$default}"
+}
+
+# Like _cfg_int but keeps the fractional part — for sub-second knobs such
+# as editor_focus_settle_sec (e.g. 0.1). Falls back to default on missing
+# key / non-number / missing file.
+_cfg_number() {
+    local key="$1" default="$2"
+    [ -f "$_CAB_CONFIG" ] || { echo "$default"; return; }
+    local val
+    val=$(/usr/bin/jq -r \
+        --arg k "$key" \
+        'if .[$k] | type == "number" then (.[$k] | tostring) else empty end' \
+        "$_CAB_CONFIG" 2>/dev/null)
+    echo "${val:-$default}"
+}
+
+# Effective multi-workspace mode as "true"/"false". The runtime toggle
+# sidecar (~/.claude/agent-state.multi-workspace.mode, "on"/"off", written
+# by the Tools checkbox) wins over the multi_workspace_mode config knob —
+# mirrors core.multi_workspace_enabled() in Python; keep the two in step.
+_multi_workspace_enabled() {
+    local sidecar="${HOME}/.claude/agent-state.multi-workspace.mode" v
+    if [ -r "$sidecar" ]; then
+        v=$(/usr/bin/tr -d '[:space:]' < "$sidecar" 2>/dev/null)
+        case "$v" in
+            on)  echo "true";  return ;;
+            off) echo "false"; return ;;
+        esac
+    fi
+    _cfg_bool "multi_workspace_mode" "true"
 }
 
 _cfg_string() {
@@ -178,17 +213,17 @@ _shq() {
 
 # Echo the `-execute` command that raises the window matching <cwd> for
 # <app>, then opens <url>. <sid> lets the helper pick the session's last
-# touched file as the focus anchor. Invoked via `/bin/bash <helper>`
-# rather than the bare path so it doesn't depend on the helper's
-# executable bit surviving distribution (Homebrew bottle / zip). The
-# result is a single shell-ready string; callers pass it verbatim as one
-# `-execute` arg.
+# touched file as the focus anchor; <settle> is the post-raise pause
+# before the deeplink. Invoked via `/bin/bash <helper>` rather than the
+# bare path so it doesn't depend on the helper's executable bit surviving
+# distribution (Homebrew bottle / zip). The result is a single shell-ready
+# string; callers pass it verbatim as one `-execute` arg.
 _raise_open_cmd() {
-    local url="$1" cwd="$2" app="$3" sid="${4:-}"
+    local url="$1" cwd="$2" app="$3" sid="${4:-}" settle="${5:-}"
     local helper="${_CAB_HOOK_DIR}/raise-and-open.sh"
-    printf '/bin/bash %s %s %s %s %s' \
+    printf '/bin/bash %s %s %s %s %s %s' \
         "$(_shq "$helper")" "$(_shq "$url")" "$(_shq "$cwd")" \
-        "$(_shq "$app")" "$(_shq "$sid")"
+        "$(_shq "$app")" "$(_shq "$sid")" "$(_shq "$settle")"
 }
 
 # ── Quiet hours (spec 0002) ──────────────────────────────────────────────────
@@ -200,9 +235,10 @@ _raise_open_cmd() {
 #   SUPPRESS_VOICE  true iff QUIET_NOW and "voice"  is in quiet_hours_silences.
 #   SUPPRESS_BANNER true iff QUIET_NOW and "banner" is in quiet_hours_silences.
 #
-# Default silences = all three channels, so a quiet-hours window with no
-# explicit list silences everything. A user who wants the banner but not
-# the chime drops "banner" from the list. Times are compared as
+# Default silences = sound + voice, so a quiet-hours window with no
+# explicit list mutes audio but still shows the banner. A user who wants
+# full silence adds "banner"; one who wants the chime lists only "voice".
+# Times are compared as
 # minutes-of-day in local time; DST transitions just let one minute slip
 # through, which is fine — the next minute is back inside the window.
 _compute_quiet_state() {
@@ -214,7 +250,7 @@ _compute_quiet_state() {
     # Single jq pass — quiet_hours on line 1, the silences CSV on
     # line 2. Cuts the hook's jq invocations down by one; small per call
     # but it adds up over a day of notifications.
-    local qh="" silences="sound,voice,banner"
+    local qh="" silences="sound,voice"
     if [ -f "$_CAB_CONFIG" ]; then
         {
             IFS= read -r qh || true
@@ -223,9 +259,9 @@ _compute_quiet_state() {
             (.quiet_hours // "" | tostring),
             (if (.quiet_hours_silences // null) | type == "array"
              then [.quiet_hours_silences[] | strings] | join(",")
-             else "sound,voice,banner" end)
+             else "sound,voice" end)
         ' "$_CAB_CONFIG" 2>/dev/null)
-        silences="${silences:-sound,voice,banner}"
+        silences="${silences:-sound,voice}"
     fi
 
     # Scheduled window.

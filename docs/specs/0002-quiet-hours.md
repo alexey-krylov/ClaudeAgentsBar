@@ -53,22 +53,25 @@ When quiet:
 - `terminal-notifier` banner: suppressed if `"banner"` is in
   `quiet_hours_silences`.
 
-Default `quiet_hours_silences` is the full list — quiet means
-silent. Users who want to keep just the banner (no chime, no
-voice) drop `"banner"`.
+Default `quiet_hours_silences` is `["sound", "voice"]` — quiet mutes
+audio but the banner still appears, so a quiet window never makes the
+user miss an event outright. Add `"banner"` for full silence; list
+only `"voice"` to keep the chime.
 
 ## Config
 
 ```jsonc
 {
   "quiet_hours": "23:00-09:00",        // null disables scheduled
-  "quiet_hours_silences": ["banner", "sound", "voice"]
+  "quiet_hours_silences": ["sound", "voice"]
 }
 ```
 
-Defaults: `quiet_hours: "23:00-08:00"`, full-silence list — a
-hands-off night window so the menu doesn't ding/speak/banner while the
-user is asleep. Set to `null` to disable the schedule entirely.
+Defaults: `quiet_hours: "23:00-08:00"`, `quiet_hours_silences:
+["sound", "voice"]` — a hands-off night window so the menu doesn't
+ding/speak while the user is asleep, while the banner still appears so
+nothing is missed. Set `quiet_hours` to `null` to disable the schedule
+entirely.
 
 ## Menu actions
 

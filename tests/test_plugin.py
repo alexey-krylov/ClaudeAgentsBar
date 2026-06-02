@@ -1246,6 +1246,35 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"context_warning_threshold": "nope"})
         self.assertEqual(config.context_warning_threshold, 80)
 
+    def test_multi_workspace_mode_default(self):
+        self.assertIs(plugin.Config().multi_workspace_mode, True)
+
+    def test_multi_workspace_mode_accepts_bool(self):
+        config = plugin.Config._from_mapping({"multi_workspace_mode": False})
+        self.assertIs(config.multi_workspace_mode, False)
+
+    def test_multi_workspace_mode_rejects_non_bool(self):
+        # The string "false" is truthy — must not be coerced into flipping
+        # the flag. Non-bool values keep the default.
+        config = plugin.Config._from_mapping({"multi_workspace_mode": "false"})
+        self.assertIs(config.multi_workspace_mode, True)
+
+    def test_editor_focus_settle_default(self):
+        self.assertEqual(plugin.Config().editor_focus_settle_sec, 0.1)
+
+    def test_editor_focus_settle_override(self):
+        config = plugin.Config._from_mapping({"editor_focus_settle_sec": 0.2})
+        self.assertEqual(config.editor_focus_settle_sec, 0.2)
+
+    def test_editor_focus_settle_rejects_out_of_range(self):
+        for bad in (-0.1, 5.1, 100):
+            config = plugin.Config._from_mapping({"editor_focus_settle_sec": bad})
+            self.assertEqual(config.editor_focus_settle_sec, 0.1)
+
+    def test_editor_focus_settle_rejects_garbage(self):
+        config = plugin.Config._from_mapping({"editor_focus_settle_sec": "nope"})
+        self.assertEqual(config.editor_focus_settle_sec, 0.1)
+
     def test_editor_url_scheme_default(self):
         self.assertEqual(plugin.Config().editor_url_scheme, "vscode://")
 
@@ -2968,6 +2997,56 @@ class TestKeepAwakeCurrentMode(unittest.TestCase):
             plugin.core, "KEEP_AWAKE_MODE_PATH", self.sidecar,
         ), patch.object(plugin.core, "CONFIG", plugin.Config(keep_awake="auto")):
             self.assertEqual(self.keep_awake.current_mode(), "auto")
+
+
+class TestMultiWorkspaceEnabled(unittest.TestCase):
+    """Tools → Multi-workspace toggle: sidecar wins over the config knob."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.sidecar = Path(self.tmp.name) / "agent-state.multi-workspace.mode"
+
+    def _ctx(self, config_value):
+        return (
+            patch.object(plugin.core, "MULTI_WORKSPACE_MODE_PATH", self.sidecar),
+            patch.object(
+                plugin.core, "CONFIG",
+                plugin.Config(multi_workspace_mode=config_value),
+            ),
+        )
+
+    def test_falls_back_to_config_when_sidecar_absent(self):
+        p1, p2 = self._ctx(False)
+        with p1, p2:
+            self.assertFalse(plugin.core.multi_workspace_enabled())
+
+    def test_sidecar_off_wins_over_config_on(self):
+        self.sidecar.write_text("off\n", encoding="utf-8")
+        p1, p2 = self._ctx(True)
+        with p1, p2:
+            self.assertFalse(plugin.core.multi_workspace_enabled())
+
+    def test_sidecar_on_wins_over_config_off(self):
+        self.sidecar.write_text("on\n", encoding="utf-8")
+        p1, p2 = self._ctx(False)
+        with p1, p2:
+            self.assertTrue(plugin.core.multi_workspace_enabled())
+
+    def test_unknown_sidecar_falls_through_to_config(self):
+        self.sidecar.write_text("garbage\n", encoding="utf-8")
+        p1, p2 = self._ctx(True)
+        with p1, p2:
+            self.assertTrue(plugin.core.multi_workspace_enabled())
+
+    def test_write_round_trips(self):
+        with patch.object(
+            plugin.core, "MULTI_WORKSPACE_MODE_PATH", self.sidecar,
+        ):
+            self.assertEqual(plugin.core.write_multi_workspace_mode(False), 0)
+            self.assertEqual(self.sidecar.read_text().strip(), "off")
+            self.assertEqual(plugin.core.write_multi_workspace_mode(True), 0)
+            self.assertEqual(self.sidecar.read_text().strip(), "on")
 
 
 class TestKeepAwakeConfigLoad(unittest.TestCase):

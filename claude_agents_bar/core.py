@@ -88,6 +88,15 @@ KEEP_AWAKE_PID_PATH = HOME / ".claude" / "agent-state.caffeinate"
 #: edit.
 KEEP_AWAKE_MODE_PATH = HOME / ".claude" / "agent-state.keep-awake.mode"
 
+#: User-facing override for :attr:`Config.multi_workspace_mode`, written by
+#: ``bin/app/multi-workspace-set.sh`` (the *Tools → Multi-workspace mode*
+#: checkbox). Single line, ``on`` or ``off``. Absence / unknown value falls
+#: back to the config knob — the same first-launch-default-then-sidecar
+#: precedence as :data:`KEEP_AWAKE_MODE_PATH`, so toggling from the menu
+#: doesn't require rewriting (and reformatting) the user's ``config.json``.
+#: Read by both the plugin (dropdown) and the notify hooks (banners).
+MULTI_WORKSPACE_MODE_PATH = HOME / ".claude" / "agent-state.multi-workspace.mode"
+
 #: Mutex on :data:`FORGET_PATH`, shared between plugin (gc) and
 #: ``bin/app/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
 #: locks.
@@ -386,10 +395,11 @@ class Config:
         ``docs/specs/0002-quiet-hours.md``.
     ``quiet_hours_silences``
         Channels suppressed while quiet: subset of ``("sound",
-        "voice", "banner")``. Default is the full tuple — quiet means
-        silent. Drop ``"banner"`` to keep visual notifications while
-        muting audio overnight, etc. Anything outside the allow-list
-        falls back to the default with a warning.
+        "voice", "banner")``. Default ``("sound", "voice")`` — quiet
+        mutes audio (chime + ``say``) but the banner still appears so
+        you don't miss the event. Add ``"banner"`` to go fully silent,
+        or list only ``"voice"`` to keep the chime. Anything outside
+        the allow-list falls back to the default with a warning.
     ``keep_awake``
         First-launch default for the keep-awake reconcile loop:
         ``"off"`` (default), ``"auto"`` (caffeinate while any session
@@ -398,6 +408,25 @@ class Config:
         :data:`KEEP_AWAKE_MODE_PATH` takes precedence over config —
         the config knob is just the initial state, not the runtime
         truth. See ``docs/specs/0003-keep-awake.md``.
+    ``multi_workspace_mode``
+        Master switch for raising the editor window that owns a clicked
+        session before firing the deeplink. Default ``True`` so clicks
+        land in the right window even with several windows / a multi-root
+        workspace open. Set ``False`` to skip the window-raise (and the
+        anchor tab + settle it entails) and fire the deeplink directly —
+        instant, but it lands in whatever window is frontmost. Gates
+        :attr:`editor_focus_settle_sec`.
+    ``editor_focus_settle_sec``
+        Seconds the focus helper (``hooks/raise-and-open.sh``) waits
+        after raising the editor window before firing the session
+        deeplink. ``open -a <file>`` returns before the editor has
+        rendered the anchor tab; without this beat the deeplink fires
+        first and the anchor tab renders on top of the resumed chat, so
+        you land on the file instead of the session. Default ``0.1`` —
+        comfortably above the race threshold seen in testing (``0.05`` was
+        occasionally flaky under load).
+        Lower trims latency but risks landing on the file under load;
+        ``0`` skips the settle. Range ``0..5``.
     """
 
     window_sec: int = 3 * 3600
@@ -422,13 +451,35 @@ class Config:
     model_badge: bool = True
     #: Quiet-hours window, ``"HH:MM-HH:MM"`` (24h local) or ``None``.
     #: Default ``"23:00-08:00"`` — a hands-off night window so the menu
-    #: doesn't ding/speak/banner while the user is asleep. Set to
-    #: ``None`` (or override via ``config.json``) to disable.
+    #: doesn't ding/speak while the user is asleep (the banner still
+    #: appears; see :attr:`quiet_hours_silences`). Set to ``None`` (or
+    #: override via ``config.json``) to disable.
     quiet_hours: str | None = "23:00-08:00"
-    #: Channels suppressed during quiet hours. Default = all three.
-    quiet_hours_silences: tuple[str, ...] = ("sound", "voice", "banner")
+    #: Channels suppressed during quiet hours. Default mutes audio only
+    #: (chime + voice); the banner still appears so the event isn't
+    #: missed. Add "banner" to go fully silent.
+    quiet_hours_silences: tuple[str, ...] = ("sound", "voice")
     #: First-launch keep-awake mode (sidecar overrides at runtime).
     keep_awake: str = "off"
+    #: Master switch for the multi-workspace window-focus behaviour.
+    #: ``True`` (default): a session click (dropdown row or notification
+    #: banner) first raises the editor window that owns the session's cwd,
+    #: then fires the deeplink — so it lands in the right window even with
+    #: several windows / a multi-root workspace open. ``False``: skip all
+    #: of that and just fire the deeplink (the pre-fix behaviour — instant,
+    #: opens no anchor tab, but lands in whatever window is frontmost).
+    #: Turn off if you only ever run one editor window and want the
+    #: snappiest open. Gates :attr:`editor_focus_settle_sec`.
+    multi_workspace_mode: bool = True
+    #: Seconds the focus helper waits after raising the editor window
+    #: before firing the session deeplink, so the anchor tab finishes
+    #: rendering and the resumed chat lands on top of it instead of under
+    #: it. See ``hooks/raise-and-open.sh``. Default ``0.1`` — comfortably
+    #: above the render-race threshold seen in testing (``0.05`` was
+    #: occasionally flaky under load); lower risks landing on the anchor
+    #: file, higher just adds latency. ``0`` disables the settle entirely.
+    #: Range ``0..5``.
+    editor_focus_settle_sec: float = 0.1
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -503,6 +554,21 @@ class Config:
         take("language", "language", str)
         take("context_window_tokens", "context_window_tokens", int, _require_positive)
 
+        # Settle delay in seconds — keep it sane. Negative is meaningless and
+        # an over-large value would freeze the row click for seconds; cap at
+        # 5s. 0 is allowed (skip the settle, at the user's own risk).
+        def _require_settle(x: float) -> float:
+            if not (0 <= x <= 5):
+                raise ValueError("must be in 0..5 seconds")
+            return x
+
+        take(
+            "editor_focus_settle_sec",
+            "editor_focus_settle_sec",
+            float,
+            _require_settle,
+        )
+
         # Percent — keep in (0, 100]. Values outside that range are useless
         # (≤0 fires the warning unconditionally, >100 is unreachable) so we
         # drop them rather than silently clamping.
@@ -523,6 +589,10 @@ class Config:
             coerced["compact"] = data["compact"]
         if "model_badge" in data and isinstance(data["model_badge"], bool):
             coerced["model_badge"] = data["model_badge"]
+        if "multi_workspace_mode" in data and isinstance(
+            data["multi_workspace_mode"], bool
+        ):
+            coerced["multi_workspace_mode"] = data["multi_workspace_mode"]
 
         # Nullable string with strict format — take() would either eat the
         # explicit ``null`` (treating it as "fall back to default") or trip
@@ -601,6 +671,45 @@ def _warn(message: str) -> None:
 
 #: Singleton — read once at import time. Cheap (a few hundred bytes of JSON).
 CONFIG = Config.load()
+
+
+def multi_workspace_enabled() -> bool:
+    """Whether the window-raising focus behaviour is currently on.
+
+    Sidecar (:data:`MULTI_WORKSPACE_MODE_PATH`, ``on``/``off``) takes
+    precedence over :attr:`Config.multi_workspace_mode` — once the user
+    flips the *Tools → Multi-workspace mode* checkbox, that's the runtime
+    truth; the config knob is only the first-launch default. Any
+    absence / unreadable / unrecognised sidecar value falls back to
+    config. Mirrors the bash reader in ``hooks/_notify-common.sh`` — keep
+    the two in lockstep.
+    """
+    try:
+        raw = MULTI_WORKSPACE_MODE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        raw = ""
+    if raw == "on":
+        return True
+    if raw == "off":
+        return False
+    return CONFIG.multi_workspace_mode
+
+
+def write_multi_workspace_mode(on: bool) -> int:
+    """Persist the multi-workspace toggle to the sidecar; 0 on success.
+
+    Written by the *Tools → Multi-workspace mode* checkbox via
+    ``bin/app/multi-workspace-set.sh`` → ``--multi-workspace on|off``.
+    """
+    try:
+        MULTI_WORKSPACE_MODE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        MULTI_WORKSPACE_MODE_PATH.write_text(
+            ("on" if on else "off") + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        _warn(f"multi_workspace: write failed: {exc}")
+        return 1
+    return 0
 
 
 # --------------------------------------------------------------------------- #
