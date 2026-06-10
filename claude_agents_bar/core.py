@@ -97,6 +97,17 @@ KEEP_AWAKE_MODE_PATH = HOME / ".claude" / "agent-state.keep-awake.mode"
 #: Read by both the plugin (dropdown) and the notify hooks (banners).
 MULTI_WORKSPACE_MODE_PATH = HOME / ".claude" / "agent-state.multi-workspace.mode"
 
+#: User-facing override for :attr:`Config.notify_audio`, written by
+#: ``bin/app/notify-audio-set.sh`` (the *Tools → Notifications →
+#: Banner + voice / Banner only* radio pair). Single line, ``on`` or
+#: ``off``. Absence / unknown value falls back to the config knob — the
+#: same first-launch-default-then-sidecar precedence as
+#: :data:`MULTI_WORKSPACE_MODE_PATH`, so switching the notification mode
+#: from the menu doesn't require rewriting the user's ``config.json``.
+#: Read by both the plugin (menu checkmarks) and the notify hooks (which
+#: mute the chime + ``say`` when off).
+NOTIFY_AUDIO_MODE_PATH = HOME / ".claude" / "agent-state.notify-audio.mode"
+
 #: Mutex on :data:`FORGET_PATH`, shared between plugin (gc) and
 #: ``bin/app/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
 #: locks.
@@ -400,6 +411,16 @@ class Config:
         you don't miss the event. Add ``"banner"`` to go fully silent,
         or list only ``"voice"`` to keep the chime. Anything outside
         the allow-list falls back to the default with a warning.
+    ``notify_audio``
+        Master switch for notification audio (the chime *and* the spoken
+        ``say`` summary), independent of quiet hours. ``True`` (default):
+        notifications play sound per :attr:`notify_sound_stop` /
+        ``notify_voice``. ``False``: banner only — no chime, no speech.
+        Surfaced as the *Tools → Notifications → Banner + voice / Banner
+        only* radio pair; once the user picks one the sidecar at
+        :data:`NOTIFY_AUDIO_MODE_PATH` takes precedence, so the config
+        knob is just the first-launch default. Does not touch the banner —
+        that's always shown (quiet hours aside).
     ``keep_awake``
         First-launch default for the keep-awake reconcile loop:
         ``"off"`` (default), ``"auto"`` (caffeinate while any session
@@ -459,6 +480,13 @@ class Config:
     #: (chime + voice); the banner still appears so the event isn't
     #: missed. Add "banner" to go fully silent.
     quiet_hours_silences: tuple[str, ...] = ("sound", "voice")
+    #: Master switch for notification audio (chime + ``say``). ``True``
+    #: (default): notifications sound off per ``notify_sound_*`` /
+    #: ``notify_voice``. ``False``: banner only — no chime, no speech.
+    #: First-launch default only; the sidecar at
+    #: :data:`NOTIFY_AUDIO_MODE_PATH` (set from the menu) overrides at
+    #: runtime. Mirrored by the bash reader in ``hooks/_notify-common.sh``.
+    notify_audio: bool = True
     #: First-launch keep-awake mode (sidecar overrides at runtime).
     keep_awake: str = "off"
     #: Master switch for the multi-workspace window-focus behaviour.
@@ -593,6 +621,8 @@ class Config:
             data["multi_workspace_mode"], bool
         ):
             coerced["multi_workspace_mode"] = data["multi_workspace_mode"]
+        if "notify_audio" in data and isinstance(data["notify_audio"], bool):
+            coerced["notify_audio"] = data["notify_audio"]
 
         # Nullable string with strict format — take() would either eat the
         # explicit ``null`` (treating it as "fall back to default") or trip
@@ -708,6 +738,46 @@ def write_multi_workspace_mode(on: bool) -> int:
         )
     except OSError as exc:
         _warn(f"multi_workspace: write failed: {exc}")
+        return 1
+    return 0
+
+
+def notify_audio_enabled() -> bool:
+    """Whether notification audio (chime + ``say``) is currently on.
+
+    Sidecar (:data:`NOTIFY_AUDIO_MODE_PATH`, ``on``/``off``) takes
+    precedence over :attr:`Config.notify_audio` — once the user picks
+    *Banner + voice* or *Banner only* in the menu, that's the runtime
+    truth; the config knob is only the first-launch default. Any
+    absence / unreadable / unrecognised sidecar value falls back to
+    config. Mirrors ``_notify_audio_enabled`` in
+    ``hooks/_notify-common.sh`` — keep the two in lockstep.
+    """
+    try:
+        raw = NOTIFY_AUDIO_MODE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        raw = ""
+    if raw == "on":
+        return True
+    if raw == "off":
+        return False
+    return CONFIG.notify_audio
+
+
+def write_notify_audio_mode(on: bool) -> int:
+    """Persist the notification-audio toggle to the sidecar; 0 on success.
+
+    Written by the *Tools → Notifications → Banner + voice / Banner only*
+    radio pair via ``bin/app/notify-audio-set.sh`` → ``--notify-audio
+    on|off``.
+    """
+    try:
+        NOTIFY_AUDIO_MODE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        NOTIFY_AUDIO_MODE_PATH.write_text(
+            ("on" if on else "off") + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        _warn(f"notify_audio: write failed: {exc}")
         return 1
     return 0
 

@@ -67,6 +67,8 @@
   "quiet.resume": "立即繼續",
   "quiet.bypass": "略過直到本時段結束",
   "quiet.bypass_cancel": "取消略過",
+  "notify.mode_voice": "橫幅與語音",
+  "notify.mode_banner": "僅橫幅",
 
   "menu.keep_awake": "保持喚醒",
   "keep_awake.status_off": "保持喚醒：關閉",

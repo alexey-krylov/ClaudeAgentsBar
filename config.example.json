@@ -103,6 +103,9 @@
   "// quiet_hours_silences": "Which channels are silenced while quiet hours are active. Subset of ['sound','voice','banner']. Default = ['sound','voice'] — audio is muted but the banner still appears. Add 'banner' to go fully silent.",
   "quiet_hours_silences": ["sound", "voice"],
 
+  "// notify_audio": "Master switch for notification audio (chime + spoken 'say'), independent of quiet hours. true (default): notifications play sound per notify_sound_* / notify_voice. false: banner only — no chime, no speech (the banner still appears). Toggled live from Tools → Notifications (Banner + voice / Banner only); once you pick one in the menu, that sidecar choice overrides this knob.",
+  "notify_audio": true,
+
   "// keep_awake": "First-launch keep-awake mode. Once you click a mode in Tools → Keep awake, the sidecar takes precedence and this knob is only consulted on the next clean install. Values: 'off' (default), 'auto' (caffeinate while any session is working), 'always'. Limitations: closed lid + no external display still sleeps; this only inhibits idle/display sleep.",
   "keep_awake": "off",
 

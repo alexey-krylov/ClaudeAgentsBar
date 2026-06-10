@@ -108,6 +108,23 @@ _multi_workspace_enabled() {
     _cfg_bool "multi_workspace_mode" "true"
 }
 
+# Effective notification-audio mode as "true"/"false". The runtime toggle
+# sidecar (~/.claude/agent-state.notify-audio.mode, "on"/"off", written by
+# the Tools → Notifications radio pair) wins over the notify_audio config
+# knob — mirrors core.notify_audio_enabled() in Python; keep the two in
+# step. "false" means banner only: the caller mutes chime + say.
+_notify_audio_enabled() {
+    local sidecar="${HOME}/.claude/agent-state.notify-audio.mode" v
+    if [ -r "$sidecar" ]; then
+        v=$(/usr/bin/tr -d '[:space:]' < "$sidecar" 2>/dev/null)
+        case "$v" in
+            on)  echo "true";  return ;;
+            off) echo "false"; return ;;
+        esac
+    fi
+    _cfg_bool "notify_audio" "true"
+}
+
 _cfg_string() {
     local key="$1" default="$2"
     [ -f "$_CAB_CONFIG" ] || { echo "$default"; return; }

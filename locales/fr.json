@@ -66,6 +66,8 @@
   "quiet.resume": "Reprendre maintenant",
   "quiet.bypass": "Contourner jusqu’à la fin de la fenêtre",
   "quiet.bypass_cancel": "Annuler le contournement",
+  "notify.mode_voice": "Bannière et voix",
+  "notify.mode_banner": "Bannière seule",
 
   "menu.keep_awake": "Empêcher la veille",
   "keep_awake.status_off": "Empêcher la veille : désactivé",

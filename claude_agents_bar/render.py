@@ -1085,6 +1085,33 @@ def _print_notifications_block(bin_dir: Path) -> None:
             "sfimage=moon.zzz.fill sfcolor=systemIndigo"
         )
 
+    # Notification mode selector — banner+audio vs banner-only. A radio
+    # pair (like keep-awake) rather than a checkbox so both choices read
+    # explicitly; ``checked=true`` marks the live one. Each row passes its
+    # absolute on/off value, so a click is idempotent.
+    #
+    # Invoked as ``/bin/bash <script> <value>`` rather than ``shell=<script>``
+    # so it doesn't depend on the action script's executable bit surviving
+    # distribution (Homebrew bottle / zip) — the same robustness the hook
+    # helper buys via ``_raise_open_cmd``. (bin/app/multi-workspace-set.sh
+    # shipped 0644 in 1.1.1 and its checkbox went dead; this sidesteps that.)
+    audio_on = core.notify_audio_enabled()
+    audio_set_script = bin_dir / "notify-audio-set.sh"
+    for value, key, icon in (
+        ("on",  "notify.mode_voice",  "speaker.wave.2.fill"),
+        ("off", "notify.mode_banner", "speaker.slash.fill"),
+    ):
+        checked = "checked=true " if (value == "on") == audio_on else ""
+        print(
+            f"--  {_t(key)} | "
+            "shell=/bin/bash "
+            f"param1={_swiftbar_quote(str(audio_set_script))} "
+            f"param2={value} "
+            f"{checked}"
+            "terminal=false refresh=true "
+            f"sfimage={icon}"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Tools → Keep awake block (spec 0003)                                         #

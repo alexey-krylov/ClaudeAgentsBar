@@ -67,6 +67,8 @@
   "quiet.resume": "Возобновить сейчас",
   "quiet.bypass": "Обойти до конца окна",
   "quiet.bypass_cancel": "Отменить обход",
+  "notify.mode_voice": "Баннер и озвучивание",
+  "notify.mode_banner": "Только баннер",
 
   "menu.keep_awake": "Не давать заснуть",
   "keep_awake.status_off": "Не давать заснуть: выкл",

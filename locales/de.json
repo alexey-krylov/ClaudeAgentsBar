@@ -66,6 +66,8 @@
   "quiet.resume": "Jetzt fortsetzen",
   "quiet.bypass": "Bis Fensterende umgehen",
   "quiet.bypass_cancel": "Umgehung abbrechen",
+  "notify.mode_voice": "Banner und Sprache",
+  "notify.mode_banner": "Nur Banner",
 
   "menu.keep_awake": "Wachhalten",
   "keep_awake.status_off": "Wachhalten: aus",

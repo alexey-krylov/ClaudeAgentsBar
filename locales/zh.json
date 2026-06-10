@@ -66,6 +66,8 @@
   "quiet.resume": "立即恢复",
   "quiet.bypass": "忽略至当前时段结束",
   "quiet.bypass_cancel": "取消忽略",
+  "notify.mode_voice": "横幅和语音",
+  "notify.mode_banner": "仅横幅",
 
   "menu.keep_awake": "保持唤醒",
   "keep_awake.status_off": "保持唤醒：关闭",

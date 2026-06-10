@@ -66,6 +66,8 @@
   "quiet.resume": "Tiếp tục ngay",
   "quiet.bypass": "Bỏ qua đến hết khung giờ",
   "quiet.bypass_cancel": "Hủy bỏ qua",
+  "notify.mode_voice": "Biểu ngữ và giọng nói",
+  "notify.mode_banner": "Chỉ biểu ngữ",
 
   "menu.keep_awake": "Giữ thức",
   "keep_awake.status_off": "Giữ thức: tắt",

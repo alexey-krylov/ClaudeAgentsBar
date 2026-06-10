@@ -5,6 +5,20 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.1.3 — Unreleased
+
+### Added
+
+- **Notification mode in the menu** — *Tools → Notifications* now has a
+  *Banner and voice* / *Banner only* radio pair. *Banner only* mutes the
+  chime **and** the spoken `say` for every notification while keeping the
+  banner; *Banner and voice* restores them. The choice is a standing
+  preference (not time-bound like quiet hours), stored in a sidecar at
+  `~/.claude/agent-state.notify-audio.mode` that overrides the new
+  `notify_audio` config knob (default `true`) — the same
+  first-launch-default-then-sidecar precedence as *Multi-workspace mode*.
+  Localised across all shipped locales.
+
 ## 1.1.2 — 2026-06-10
 
 ### Added

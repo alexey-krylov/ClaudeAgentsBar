@@ -202,6 +202,12 @@ def main() -> int:
             core._warn(f"multi_workspace: refusing invalid value {arg!r}")
             return 1
         return core.write_multi_workspace_mode(arg == "on")
+    if len(sys.argv) > 1 and sys.argv[1] == "--notify-audio":
+        arg = sys.argv[2] if len(sys.argv) > 2 else ""
+        if arg not in ("on", "off"):
+            core._warn(f"notify_audio: refusing invalid value {arg!r}")
+            return 1
+        return core.write_notify_audio_mode(arg == "on")
     try:
         sessions = render.collect_sessions(int(time.time()))
         render.render(sessions)

@@ -54,6 +54,7 @@ restart needed.
 | `notify_summary_marker` | `"-- "` | On `Stop`, if the **last line** of the assistant's reply starts with this prefix (after stripping markdown italic/bold wrappers), the text after it is the summary: `say` reads the random phrase **then** the summary ("Done. …"), while the banner shows the **summary alone**. Last line isn't a marker line — or `null` / `""` — both fall back to just a random phrase. Matched literally (no regex). You tell your Claude to end replies with an italic `*-- …*` line; see *Spoken summary* below. |
 | `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
 | `quiet_hours_silences` | `["sound", "voice"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Default mutes audio (chime + voice) but the banner still appears so you don't miss the event. Add `"banner"` to go fully silent; list only `"voice"` to keep the chime. Unknown entries are dropped at load with a warning. |
+| `notify_audio` | `true` | Master switch for notification audio (chime **and** spoken `say`), independent of quiet hours. `true` (default): notifications sound off per `notify_sound_*` / `notify_voice`. `false`: banner only — no chime, no speech (the banner still appears). Toggled live from *Tools → Notifications* (*Banner and voice* / *Banner only*); once you pick one there, that sidecar choice overrides this knob, so it's only the first-launch default. |
 | `keep_awake` | `"off"` | First-launch keep-awake mode. `"off"` (default), `"auto"` (`caffeinate -i` while any session is *working*), `"always"` (until disabled). Once you click a mode in *Tools → Keep awake* the sidecar takes precedence — this knob is only consulted on a clean install. See *Keep awake* below for limits. |
 | `multi_workspace_mode` | `true` | Raise the editor window that owns a clicked session before firing the deeplink, so it lands in the right window even with several windows / a multi-root workspace open. Set to `false` for the snappy single-window path: clicks fire the deeplink directly (instant, no extra tab) but land in whatever window is frontmost. See *Multi-workspace focus* below. |
 | `editor_focus_settle_sec` | `0.1` | Only used when `multi_workspace_mode` is `true`. Seconds to wait after raising the window before firing the deeplink, so the anchor tab renders and the resumed chat lands on top of it. Lower trims latency but risks landing on the file under load; `0` skips the wait. Range `0..5`. |
@@ -269,7 +270,17 @@ Tools
     Quiet hours: 23:00 — 08:00 (active, 6h 12m left)
     Pause for 1 hour
     Pause until tomorrow morning
+  ✓ Banner and voice
+    Banner only
 ```
+
+The *Banner and voice* / *Banner only* radio pair is the menu twin of the
+[`notify_audio`](#configuration) knob: *Banner only* mutes the chime and
+the spoken `say` for every notification (the banner still appears),
+*Banner and voice* restores them. Your pick writes a sidecar at
+`~/.claude/agent-state.notify-audio.mode` (`on`/`off`) that overrides the
+config knob — unlike quiet hours it isn't time-bound, it's a standing
+preference.
 
 Two pieces of config drive the scheduled window:
 

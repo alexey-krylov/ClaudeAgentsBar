@@ -1259,6 +1259,19 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"multi_workspace_mode": "false"})
         self.assertIs(config.multi_workspace_mode, True)
 
+    def test_notify_audio_default(self):
+        self.assertIs(plugin.Config().notify_audio, True)
+
+    def test_notify_audio_accepts_bool(self):
+        config = plugin.Config._from_mapping({"notify_audio": False})
+        self.assertIs(config.notify_audio, False)
+
+    def test_notify_audio_rejects_non_bool(self):
+        # The string "false" is truthy — must not be coerced into flipping
+        # the flag. Non-bool values keep the default.
+        config = plugin.Config._from_mapping({"notify_audio": "false"})
+        self.assertIs(config.notify_audio, True)
+
     def test_editor_focus_settle_default(self):
         self.assertEqual(plugin.Config().editor_focus_settle_sec, 0.1)
 

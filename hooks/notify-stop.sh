@@ -92,6 +92,13 @@ MARKER=$(_cfg_string_or_null    "notify_summary_marker" "-- ")
 # Quiet-hours gate (spec 0002). Sets QUIET_NOW + SUPPRESS_SOUND/VOICE/BANNER.
 _compute_quiet_state
 
+# Notification-audio master switch (Tools → Notifications). "Banner only"
+# mutes both audio channels regardless of quiet hours; the banner still fires.
+if [ "$(_notify_audio_enabled)" = "false" ]; then
+    SUPPRESS_SOUND=true
+    SUPPRESS_VOICE=true
+fi
+
 # ── Parse hook payload ───────────────────────────────────────────────────────
 INPUT=$(cat)
 TRANSCRIPT=$(/usr/bin/jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null)

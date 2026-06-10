@@ -67,6 +67,8 @@
   "quiet.resume": "Resume now",
   "quiet.bypass": "Bypass until window ends",
   "quiet.bypass_cancel": "Cancel bypass",
+  "notify.mode_voice": "Banner and voice",
+  "notify.mode_banner": "Banner only",
 
   "menu.keep_awake": "Keep awake",
   "keep_awake.status_off": "Keep awake: off",
