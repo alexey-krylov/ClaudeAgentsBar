@@ -185,6 +185,34 @@ Peer-to-peer technical register. No marketing copy, no overselling,
 no "✨ powerful ✨" adjectives. If you find yourself writing "seamlessly"
 or "delightful experience", back up.
 
+## Before publishing a version
+
+**Always ask the user to manually check every new user-facing change
+before you cut a release.** A release is the version bump → tag → GitHub
+release → Homebrew formula chain; once any of it is pushed, undoing it is
+painful (see below).
+
+Automated checks (`py_compile`, `unittest`, grepping the rendered menu
+output) do **not** exercise the SwiftBar side: whether a menu action
+actually fires on click, whether a `checked=`/`sfimage=` row looks right,
+whether a new `bin/app/*.sh` is executable enough for SwiftBar to run it,
+whether a notification banner click lands where it should. The agent
+can't see the GUI. So before publishing:
+
+1. List exactly what's new and user-visible (new menu items, toggles,
+   row/banner click behaviour, icons, audio).
+2. Ask the user to click through each one in the real menu bar and
+   confirm it behaves, **then** proceed with the version bump and
+   release. Don't infer "it works" from tests alone.
+
+This is not optional politeness — shipping 1.1.1 with a dead
+*Multi-workspace mode* checkbox (the action script lost its executable
+bit, so SwiftBar silently couldn't run it) is exactly the failure this
+gate prevents. Re-releasing the *same* version number to fix it means
+moving a published tag, recomputing the Homebrew `sha256`, and forcing a
+`brew reinstall` (a plain `brew upgrade` won't re-fetch when the version
+is unchanged) — all avoidable by one round of manual verification first.
+
 ## Things not to do
 
 - **Don't roll your own merge into `~/.claude/settings.json`.**
