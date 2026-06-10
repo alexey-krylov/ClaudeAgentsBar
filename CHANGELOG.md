@@ -5,6 +5,27 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.1.2 — 2026-06-10
+
+### Added
+
+- **Spoken summary** — on `Stop`, `say` can read a one-line summary of
+  what the session did instead of a random phrase. A new
+  `notify_summary_marker` config knob (default `"-- "`) sets a line
+  prefix: when the **last line** of the assistant's reply starts with it
+  (after stripping markdown italic/bold wrappers), that text becomes the
+  summary: `say` reads the random phrase **then** the summary ("Done.
+  …"), while the notification banner shows the **summary alone**.
+  Otherwise — or when the marker is `null` / `""` — both fall back to
+  just a random `notify_phrases` entry. The match is literal and
+  considers the closing line only. The feature is on by
+  default but inert until your Claude is told to end replies with an
+  italic `*-- …*` line — see
+  [docs/configuration.md § Spoken summary](./docs/configuration.md) for
+  the one-line `CLAUDE.md` instruction and
+  [spec 0005](./docs/specs/0005-voice-summary.md). Hook-only change: no
+  plugin, menu, or sidecar.
+
 ## 1.1.1 — 2026-06-02
 
 ### Added

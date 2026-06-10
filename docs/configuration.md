@@ -51,6 +51,7 @@ restart needed.
 | `notify_sound_stop` | `"Hero"` | Chime played on `Stop`. Bare name (`"Hero"`, `"Glass"`, `"Funk"`, …) resolves under `/System/Library/Sounds/`. Absolute or `~`-paths are used as-is. `null` suppresses the chime — banner and voice still fire. Missing files log a warning to SwiftBar's log and fall back to no chime for that event. |
 | `notify_sound_wait` | `"Funk"` | Chime played on `PermissionRequest`. Same value shapes as `notify_sound_stop`. Default `"Funk"` is shorter and softer than `Hero` — *needs your attention* vs *task complete*. |
 | `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
+| `notify_summary_marker` | `"-- "` | On `Stop`, if the **last line** of the assistant's reply starts with this prefix (after stripping markdown italic/bold wrappers), the text after it is the summary: `say` reads the random phrase **then** the summary ("Done. …"), while the banner shows the **summary alone**. Last line isn't a marker line — or `null` / `""` — both fall back to just a random phrase. Matched literally (no regex). You tell your Claude to end replies with an italic `*-- …*` line; see *Spoken summary* below. |
 | `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
 | `quiet_hours_silences` | `["sound", "voice"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Default mutes audio (chime + voice) but the banner still appears so you don't miss the event. Add `"banner"` to go fully silent; list only `"voice"` to keep the chime. Unknown entries are dropped at load with a warning. |
 | `keep_awake` | `"off"` | First-launch keep-awake mode. `"off"` (default), `"auto"` (`caffeinate -i` while any session is *working*), `"always"` (until disabled). Once you click a mode in *Tools → Keep awake* the sidecar takes precedence — this knob is only consulted on a clean install. See *Keep awake* below for limits. |
@@ -199,6 +200,63 @@ say -v '?'
 The voice setting is shared between Stop and PermissionRequest — Apple
 voices don't ship per-event variants, and one voice with two phrase
 lists is enough variety in practice.
+
+## Spoken summary
+
+By default `say` reads a random `notify_phrases` line ("Done", "Your
+turn", …) when a session finishes. It can instead read a one-line
+summary of what the session just did — pulled straight from the **last
+line** of the assistant's reply.
+
+This is controlled by a single knob, `notify_summary_marker` (default
+`"-- "`). On `Stop` the hook takes the last non-blank line of the
+assistant's last message, strips any surrounding markdown emphasis
+(`*…*`, `_…_`, `**…**`, `***…***`), and:
+
+- If what remains **starts with** the marker, the text after it is the
+  summary. `say` reads the random phrase **then** the summary (so it
+  sounds like a sentence — "Done. Migrated the auth module"), while the
+  notification banner shows the **summary alone**.
+- If the last line isn't a marker line — or you set the marker to
+  `null` / `""` — both fall back to just a random phrase.
+
+So the feature is on out of the box but **inert** until your assistant
+actually ends replies with a marker line (see below). `notify_voice:
+"off"` and quiet hours still suppress speech entirely — the marker
+changes *what* is spoken/shown, never *whether*.
+
+The match is literal (no regex). Only the **last** line is considered, so
+a `--` that appears mid-reply is ignored — the marker has to be the
+closing line.
+
+### Setting up Claude to produce the summary line
+
+The summary only works if your assistant ends its replies with the
+marker line. Claude won't do that on its own — you ask it to, once, in an
+instruction it reads every session. Two equivalent places:
+
+- **Global** — `~/.claude/CLAUDE.md` (applies to every project), or
+- **Per-project** — a `CLAUDE.md` checked into the repo root.
+
+Add a rule like this:
+
+```markdown
+## Spoken summary
+
+End every reply with a final line in italics that starts with `--`
+followed by a capitalised one-sentence, plain-language summary of what
+you did or what I should do next, e.g.:
+
+    *-- Migrated the auth module, tests are green*
+
+Keep it to 10 words max — it gets read aloud and shown in a banner.
+```
+
+The italics are what keeps the line unobtrusive on screen while the hook
+still reads it aloud — the emphasis markers are stripped before the
+marker is matched. If you change `notify_summary_marker` (e.g. to a
+different prefix or language), change the marker in your CLAUDE.md
+instruction to match — the prefix is compared byte for byte.
 
 ## Quiet hours
 

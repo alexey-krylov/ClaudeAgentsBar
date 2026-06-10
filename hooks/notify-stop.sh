@@ -23,6 +23,16 @@
 #   notify_voice           string  null     — say(1) voice name; null/absent
 #                                             uses the system default; "off"
 #                                             skips speech entirely
+#   notify_summary_marker  string  "-- "    — when the LAST line of the
+#                                             assistant's reply starts with
+#                                             this prefix (markdown italic/bold
+#                                             wrappers stripped first), say(1)
+#                                             speaks the random phrase followed
+#                                             by that text ("Done. <summary>"),
+#                                             and the banner shows the text
+#                                             alone. No such line, or null/""
+#                                             marker, falls back to just the
+#                                             phrase in both.
 #   quiet_hours            string  null     — "HH:MM-HH:MM" window during
 #                                             which notifications are silenced
 #                                             per `quiet_hours_silences`
@@ -71,6 +81,13 @@ SETTLE=$(_cfg_number   "editor_focus_settle_sec" "0.1")
 SOUND_RAW=$(_cfg_string_or_null "notify_sound_stop" "Hero")
 SOUND_PATH=$(_resolve_sound "$SOUND_RAW")
 VOICE=$(_cfg_string             "notify_voice"      "")
+
+# Spoken summary (spec 0005). Prefix of the LAST line of the assistant's
+# reply that say(1) reads aloud (the text after it). Default "-- " — the
+# feature is on out of the box, but inert until the assistant actually ends
+# a reply with such a line. _cfg_string_or_null lets an explicit null / ""
+# disable it (→ phrase), while an absent key keeps the default.
+MARKER=$(_cfg_string_or_null    "notify_summary_marker" "-- ")
 
 # Quiet-hours gate (spec 0002). Sets QUIET_NOW + SUPPRESS_SOUND/VOICE/BANNER.
 _compute_quiet_state
@@ -139,15 +156,46 @@ fi
 
 PHRASE="${PHRASES[$RANDOM % ${#PHRASES[@]}]}"
 
+# ── Extract the spoken summary (spec 0005) ───────────────────────────────────
+# When a marker is configured, look at the LAST non-blank line of the
+# assistant's reply: if (after stripping any markdown italic/bold wrappers) it
+# starts with the marker, SUMMARY is the text after it. The assistant is
+# expected to emit that line in italics (`*-- did the thing*`), so we peel
+# leading/trailing `*`/`_` before the literal prefix test (`index==1`, no
+# regex, Unicode-safe). Any miss (marker off, no transcript, no jq, last line
+# isn't a marker line) leaves SUMMARY empty — a silent, non-fatal fallback.
+SUMMARY=""
+if [ -n "$MARKER" ] && [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; then
+    SUMMARY=$(/usr/bin/jq -r 'select(.type=="assistant")
+                              | .message.content[]?
+                              | select(.type=="text") | .text' "$TRANSCRIPT" 2>/dev/null \
+        | /usr/bin/awk -v m="$MARKER" \
+            'NF { last = $0 }
+             END {
+                 sub(/^[*_]+/, "", last)        # strip leading markdown italic/bold (*, _, **, ***)
+                 sub(/[*_]+$/, "", last)        # strip trailing markers
+                 if (index(last, m) == 1) print substr(last, length(m) + 1)
+             }' \
+        | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+fi
+
+# Speech keeps the random phrase and appends the summary when present, so it
+# reads as a natural sentence ("Done. Migrated the auth module"). The banner
+# shows just the summary when present, else the phrase.
+SAY_TEXT="$PHRASE"
+[ -n "$SUMMARY" ] && SAY_TEXT="$PHRASE. $SUMMARY"
+BANNER_MSG="$PHRASE"
+[ -n "$SUMMARY" ] && BANNER_MSG="$SUMMARY"
+
 # ── Sound + speech (fire-and-forget, never block the hook) ───────────────────
 if [ "$SUPPRESS_SOUND" = "false" ] && [ -n "$SOUND_PATH" ]; then
     afplay "$SOUND_PATH" >/dev/null 2>&1 &
 fi
 if [ "$SUPPRESS_VOICE" = "false" ] && [ "$VOICE" != "off" ]; then
     if [ -n "$VOICE" ]; then
-        (sleep 1 && say -v "$VOICE" "$PHRASE") >/dev/null 2>&1 &
+        (sleep 1 && say -v "$VOICE" "$SAY_TEXT") >/dev/null 2>&1 &
     else
-        (sleep 1 && say "$PHRASE") >/dev/null 2>&1 &
+        (sleep 1 && say "$SAY_TEXT") >/dev/null 2>&1 &
     fi
 fi
 disown 2>/dev/null || true
@@ -165,7 +213,8 @@ disown 2>/dev/null || true
 # the deeplink.
 if [ "$SUPPRESS_BANNER" = "false" ]; then
     ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
-    NOTIFIER_ARGS=(-title "$TITLE" -subtitle "Claude Code" -message "$PHRASE")
+    # $BANNER_MSG is the extracted summary when present, else the random phrase.
+    NOTIFIER_ARGS=(-title "$TITLE" -subtitle "Claude Code" -message "$BANNER_MSG")
     [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
     if [ -n "$SESSION_URL" ]; then
         EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")
