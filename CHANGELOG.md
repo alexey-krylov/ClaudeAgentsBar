@@ -18,6 +18,29 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   `notify_audio` config knob (default `true`) — the same
   first-launch-default-then-sidecar precedence as *Multi-workspace mode*.
   Localised across all shipped locales.
+- **Three new row indicators.** A waiting row's right-hand label now reads
+  *waiting {duration}* (e.g. *ждёт 6m*) instead of a bare red duration, so a
+  blocked session names its state. A **cwd collision** — two or more active
+  sessions sharing the same `cwd` — is flagged two ways: a red `⑂` fork glyph
+  on the main row between the title and the duration, and the submenu branch
+  name turned red with an "another session is working in this folder" tooltip.
+  A session whose checkout is a git **worktree** gets its submenu branch name
+  turned green with a "changes isolated under worktree" tooltip. (Colour rides
+  on the branch *text* — SF Symbols in a submenu render monochrome, so the
+  icon can't carry it.) Branch-line priority is collision > worktree > plain.
+  All three are localised across every shipped locale.
+
+### Fixed
+
+- **Session title no longer flickers mid-turn** — in sessions whose first
+  message carried large pasted attachments (images → big base64), the
+  AI-generated title sat past the 256 KB head-scan window, so the row fell
+  back to the latest user prompt. Under heavy tool output that prompt slid
+  out of the 128 KB tail window and the title briefly jumped to the
+  original first message, then snapped back when the turn ended. The reader
+  now recovers the title from the tail (Claude Code re-emits `ai-title`
+  every turn, so a fresh one is almost always there), keeping the row
+  stable.
 
 ## 1.1.2 — 2026-06-10
 

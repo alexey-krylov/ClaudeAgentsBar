@@ -28,6 +28,10 @@
   "age.hours": "{n}ч",
   "age.hours_minutes": "{h}ч {m}м",
 
+  "label.blocked": "ждёт {duration}",
+  "tooltip.cwd_collision": "Другая сессия работает в этой же папке",
+  "tooltip.worktree": "Изменения агента изолированы в worktree",
+
   "dialog.delete.title": "Удалить эту сессию Claude Code?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nСначала закрой вкладку сессии в IDE — иначе при следующем сообщении расширение создаст новую.",
   "dialog.delete.label.transcript": "Транскрипт:",

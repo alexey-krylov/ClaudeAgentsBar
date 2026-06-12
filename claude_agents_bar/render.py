@@ -38,6 +38,7 @@ from .core import (
     _ANSI_ACTIVE_BAR,
     _ANSI_FRESH_BAR,
     _ANSI_RESET,
+    _ANSI_WAITING,
     _classify,
     _format_context_left,
     _format_context_warning,
@@ -193,6 +194,7 @@ def build_session(
             meta = replace(meta, last_user_message=last_user)
     cwd = sidecar_cwd or meta.cwd
     branch = sidecars.current_git_branch(cwd) or sidecars.fallback_git_branch_from_jsonl(jsonl)
+    is_worktree = sidecars.is_worktree_checkout(cwd)
     context_used = sidecars.last_usage_tokens(jsonl)
     tool_summary = sidecars.last_tool_use_summary(jsonl)
     session_model = sidecars.last_session_model(jsonl)
@@ -217,6 +219,7 @@ def build_session(
         last_tool_use=tool_summary,
         model=session_model,
         subagents=subagents,
+        is_worktree=is_worktree,
     )
 
 
@@ -297,8 +300,28 @@ def collect_sessions(now: int) -> list[Session]:
             s for s in sessions
             if s.id not in forget or s.last_event_ts > forget[s.id]
         ]
+    _mark_cwd_collisions(sessions)
     sessions.sort(key=lambda s: (s.group.order, -s.last_event_ts))
     return sessions
+
+
+def _mark_cwd_collisions(sessions: list[Session]) -> None:
+    """Flag every *active* session that shares a folder with another.
+
+    Two or more sessions in ``working`` / ``waiting`` with the same
+    normalized non-empty ``cwd`` are stepping on each other — set
+    ``cwd_collision`` on all of them so the branch line can warn. Idle
+    sessions and empty ``cwd`` are ignored. Mutates ``sessions`` in place.
+    """
+    by_cwd: dict[str, list[Session]] = {}
+    for s in sessions:
+        if s.hook_state not in ACTIVE_HOOK_STATES or not s.cwd:
+            continue
+        by_cwd.setdefault(os.path.normpath(s.cwd), []).append(s)
+    for group in by_cwd.values():
+        if len(group) > 1:
+            for s in group:
+                s.cwd_collision = True
 
 
 def _is_interactive(session: Session) -> bool:
@@ -530,6 +553,25 @@ def _menubar_icon_pieces() -> tuple[str, str]:
     return "", icon
 
 
+def _branch_decoration(session: Session) -> tuple[str, str, str]:
+    """Pick the branch line's text colour, text and status tooltip.
+
+    Status is carried by the *text* colour: SF Symbols in an NSMenu submenu
+    render monochrome (``sfcolor`` is ignored — they inherit the menu's
+    label colour), so the icon can't carry it. A cwd collision (two active
+    sessions in the same folder) wins and paints the branch name red;
+    otherwise a worktree checkout paints it green to signal the agent's
+    changes are isolated; otherwise the usual dim grey. Returns
+    ``(color, text, tooltip)`` — an empty tooltip means "no status note,
+    let the caller fall back to the plain cwd".
+    """
+    if session.cwd_collision:
+        return ("#cc0000", session.git_branch, _t("tooltip.cwd_collision"))
+    if session.is_worktree:
+        return ("#1f7a1f", session.git_branch, _t("tooltip.worktree"))
+    return ("#999999", session.git_branch, "")
+
+
 def _print_session_row(session: Session) -> None:
     """Emit one main row plus the submenu for one session.
 
@@ -559,13 +601,21 @@ def _print_session_row(session: Session) -> None:
         )
     warning_segment = f"{warning} · " if warning else ""
     waiting_segment = "❓ · " if session.hook_state == "waiting" else ""
+    # Two active sessions sharing a folder: a red fork glyph (U+2442, the
+    # closest unicode match to the submenu's branch SF Symbol) between the
+    # title and the duration. ``⚠`` is already taken by the context-usage
+    # warning, so this fork is the collision marker and echoes the red
+    # branch name in the submenu.
+    collision_segment = (
+        f"{_ANSI_WAITING}⑂{_ANSI_RESET} · " if session.cwd_collision else ""
+    )
     live_count = session.live_subagent_count
     subagent_segment = (
         f"{_t('row.subagent_badge', n=live_count)} · " if live_count else ""
     )
     label = (
         f"{session.group.icon} {session.title} · "
-        f"{subagent_segment}{waiting_segment}{warning_segment}{session.right_label_ansi}"
+        f"{collision_segment}{subagent_segment}{waiting_segment}{warning_segment}{session.right_label_ansi}"
     )
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
@@ -639,25 +689,33 @@ def _print_session_row(session: Session) -> None:
         # natural carrier for the full path; the branch line stays
         # minimal. When the project name is missing we collapse back to
         # a single branch line so the cwd tooltip still surfaces.
+        branch_color, branch_text, branch_tooltip = _branch_decoration(session)
         if session.project:
             project_line = (
                 f"--{session.project} | "
                 "font=Menlo color=#999999 sfimage=folder"
             )
-            if session.cwd:
+            # The cwd tooltip rides on the project line by default, but a
+            # collision / worktree status tooltip takes precedence and lives
+            # on the branch line — so only attach the plain cwd here when the
+            # branch line isn't already carrying a status tooltip.
+            if session.cwd and not branch_tooltip:
                 project_line += f" tooltip={_swiftbar_quote(session.cwd)}"
             print(project_line)
             branch_line = (
-                f"--{session.git_branch} | "
-                "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
+                f"--{branch_text} | "
+                f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
             )
+            if branch_tooltip:
+                branch_line += f" tooltip={_swiftbar_quote(branch_tooltip)}"
         else:
             branch_line = (
-                f"--{session.git_branch} | "
-                "font=Menlo color=#999999 sfimage=arrow.triangle.branch"
+                f"--{branch_text} | "
+                f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
             )
-            if session.cwd:
-                branch_line += f" tooltip={_swiftbar_quote(session.cwd)}"
+            tooltip = branch_tooltip or session.cwd
+            if tooltip:
+                branch_line += f" tooltip={_swiftbar_quote(tooltip)}"
         print(branch_line)
     elif session.cwd:
         # No git branch (cwd isn't a repo, or .git was removed) — surface

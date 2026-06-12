@@ -12,6 +12,7 @@
   "menu.forget_all": "忘記所有工作階段",
   "menu.stats_today": "今日統計…",
   "menu.suggest": "建議改善…",
+  "menu.multi_workspace": "多工作區模式",
   "menu.config": "設定…",
   "menu.forget_session": "忽略",
   "menu.delete_session": "刪除…",
@@ -27,6 +28,10 @@
   "age.minutes": "{n} 分",
   "age.hours": "{n} 小時",
   "age.hours_minutes": "{h} 小時 {m} 分",
+
+  "label.blocked": "等待 {duration}",
+  "tooltip.cwd_collision": "另一個工作階段正在此資料夾中工作",
+  "tooltip.worktree": "代理變更已隔離在 worktree 中",
 
   "dialog.delete.title": "刪除此 Claude Code 工作階段？",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\n請先在 IDE 中關閉該工作階段的分頁 — 否則在已刪除的工作階段中輸入會建立新的工作階段。",

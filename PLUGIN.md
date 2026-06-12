@@ -254,6 +254,23 @@ buckets.
 
 Sorting and section separators derive directly from the enum order.
 
+### Row indicators (orthogonal to the group)
+
+A few signals ride on top of the bucket colour:
+
+* **Waiting marker.** `Session.right_label` wraps a `waiting` row's
+  duration in the localised `label.blocked` template (`waiting {duration}`),
+  so a blocked session names its state rather than showing a bare red
+  number. `working` and idle rows keep the plain duration.
+* **Branch line colour.** `_branch_decoration(session)` picks the submenu
+  branch line's colour, text and status tooltip with a fixed priority:
+  `cwd_collision` (red `#cc0000`, `⚠`, `tooltip.cwd_collision`) >
+  `is_worktree` (green `#1f7a1f`, `tooltip.worktree`) > plain grey.
+  `cwd_collision` is set in `collect_sessions` via `_mark_cwd_collisions`
+  (two or more active sessions sharing a normalised non-empty `cwd`);
+  `is_worktree` is computed once in `build_session` from
+  `sidecars.is_worktree_checkout`.
+
 ## Touching the hook
 
 `hooks/agent-state.sh` runs on every Claude Code event. It's a Bash

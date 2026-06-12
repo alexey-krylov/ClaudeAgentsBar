@@ -11,6 +11,7 @@
   "menu.forget_all": "Oublier toutes les sessions",
   "menu.stats_today": "Statistiques du jour…",
   "menu.suggest": "Suggérer une amélioration…",
+  "menu.multi_workspace": "Mode multi-espace de travail",
   "menu.config": "Configuration…",
   "menu.forget_session": "Oublier",
   "menu.delete_session": "Supprimer…",
@@ -26,6 +27,10 @@
   "age.minutes": "{n}m",
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
+
+  "label.blocked": "en attente {duration}",
+  "tooltip.cwd_collision": "Une autre session travaille dans ce dossier",
+  "tooltip.worktree": "Modifications de l'agent isolées dans un worktree",
 
   "dialog.delete.title": "Supprimer cette session Claude Code ?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nFerme d’abord l’onglet de la session dans ton IDE — sinon, l’extension créera une nouvelle session au prochain message.",

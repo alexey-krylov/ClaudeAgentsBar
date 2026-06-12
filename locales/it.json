@@ -11,6 +11,7 @@
   "menu.forget_all": "Dimentica tutte le sessioni",
   "menu.stats_today": "Statistiche di oggi…",
   "menu.suggest": "Suggerisci miglioramento…",
+  "menu.multi_workspace": "Modalità multi-workspace",
   "menu.config": "Configurazione…",
   "menu.forget_session": "Dimentica",
   "menu.delete_session": "Elimina…",
@@ -26,6 +27,10 @@
   "age.minutes": "{n}m",
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
+
+  "label.blocked": "in attesa {duration}",
+  "tooltip.cwd_collision": "Un'altra sessione sta lavorando in questa cartella",
+  "tooltip.worktree": "Modifiche dell'agente isolate nel worktree",
 
   "dialog.delete.title": "Eliminare questa sessione Claude Code?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nChiudi prima la scheda della sessione nel tuo IDE — altrimenti l’estensione ne creerà una nuova al prossimo messaggio.",

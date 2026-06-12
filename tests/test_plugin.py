@@ -314,6 +314,64 @@ class TestLastUserMessagePreview(unittest.TestCase):
         )
 
 
+class TestReadTranscriptMetaTailFallback(unittest.TestCase):
+    """Recover ``ai-title`` from the tail when bloated early events push the
+    first one past the head-scan window.
+
+    Regression: a first message with pasted images (huge base64) drove the
+    first ``ai-title`` past :data:`JSONL_TITLE_SCAN_BYTES`, so the head scan
+    returned an empty ``ai_title`` and the row title flapped between the
+    sliding ``last_user_message`` tail and ``raw_title`` as tool output
+    pushed the latest prompt out of the tail window.
+    """
+
+    def _write(self, body: str) -> Path:
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return path
+
+    def test_ai_title_recovered_from_tail_when_past_head_window(self):
+        from claude_agents_bar import core as core_mod
+        # A small first user event (sets cwd/raw_title/entrypoint), then one
+        # filler line big enough to drive ``consumed`` past the head window
+        # so the scan breaks before reaching the ai-title — which then sits
+        # at the very end, inside the tail buffer.
+        filler = "x" * (core_mod.JSONL_TITLE_SCAN_BYTES + 4096)
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"assistant","message":{"content":"' + filler + '"}}\n'
+            '{"type":"ai-title","aiTitle":"Recovered Topic"}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.ai_title, "Recovered Topic")
+        self.assertEqual(meta.display_title, "Recovered Topic")
+
+    def test_head_ai_title_still_preferred_when_in_window(self):
+        # Normal case stays untouched: the head scan finds the first
+        # ai-title and the tail is never consulted for it.
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"ai-title","aiTitle":"Head Topic"}\n'
+            '{"type":"ai-title","aiTitle":"Later Topic"}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.ai_title, "Head Topic")
+
+    def test_no_ai_title_anywhere_leaves_empty(self):
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.ai_title, "")
+
+
 class TestSummariseToolUse(unittest.TestCase):
     """Format one ``tool_use`` chunk for the hover tooltip."""
 
@@ -712,11 +770,16 @@ class TestRightLabel(unittest.TestCase):
         )
         self.assertEqual(s.right_label, "3m")
 
-    def test_waiting_shows_state_duration(self):
+    def test_waiting_wraps_duration_with_marker(self):
+        # Waiting rows carry a localized "waiting {duration}" marker word so
+        # the blocked state reads explicitly — not just the bare red duration.
         s = _make_session(
             hook_state="waiting", age_sec=10, state_duration_sec=45
         )
-        self.assertEqual(s.right_label, "45s")
+        self.assertEqual(s.right_label, "waiting 45s")
+        # The marker must be more than the plain duration the working row uses.
+        self.assertIn("45s", s.right_label)
+        self.assertNotEqual(s.right_label, "45s")
 
     def test_idle_keeps_age(self):
         s = _make_session(
@@ -3121,6 +3184,103 @@ class TestReadQuietUntil(unittest.TestCase):
         )
         got = self._read()
         self.assertEqual(got, future)
+
+
+# --------------------------------------------------------------------------- #
+# Row indicators: worktree, cwd collision, locale completeness                  #
+# --------------------------------------------------------------------------- #
+
+
+class TestIsWorktreeCheckout(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+
+    def test_plain_repo_dot_git_dir_is_not_worktree(self):
+        # A normal checkout stores ``.git`` as a directory.
+        os.mkdir(os.path.join(self.tmp, ".git"))
+        self.assertFalse(plugin.sidecars.is_worktree_checkout(self.tmp))
+
+    def test_worktree_dot_git_file_is_worktree(self):
+        # A linked worktree stores ``.git`` as a file pointing at the gitdir.
+        with open(os.path.join(self.tmp, ".git"), "w", encoding="utf-8") as fh:
+            fh.write("gitdir: /some/repo/.git/worktrees/wt1\n")
+        self.assertTrue(plugin.sidecars.is_worktree_checkout(self.tmp))
+
+    def test_non_repo_is_not_worktree(self):
+        self.assertFalse(plugin.sidecars.is_worktree_checkout(self.tmp))
+
+    def test_empty_cwd_is_not_worktree(self):
+        self.assertFalse(plugin.sidecars.is_worktree_checkout(""))
+
+    def test_dot_git_file_without_gitdir_marker_is_not_worktree(self):
+        with open(os.path.join(self.tmp, ".git"), "w", encoding="utf-8") as fh:
+            fh.write("garbage\n")
+        self.assertFalse(plugin.sidecars.is_worktree_checkout(self.tmp))
+
+
+class TestCwdCollision(unittest.TestCase):
+    def test_two_active_sessions_same_cwd_collide(self):
+        from claude_agents_bar import render
+        a = _make_session(id="a", hook_state="working", cwd="/work/proj")
+        b = _make_session(id="b", hook_state="waiting", cwd="/work/proj")
+        c = _make_session(id="c", hook_state="working", cwd="/work/other")
+        render._mark_cwd_collisions([a, b, c])
+        self.assertTrue(a.cwd_collision)
+        self.assertTrue(b.cwd_collision)
+        self.assertFalse(c.cwd_collision)
+
+    def test_path_normalization_groups_equivalent_cwds(self):
+        from claude_agents_bar import render
+        a = _make_session(id="a", hook_state="working", cwd="/work/proj")
+        b = _make_session(id="b", hook_state="working", cwd="/work/proj/")
+        render._mark_cwd_collisions([a, b])
+        self.assertTrue(a.cwd_collision)
+        self.assertTrue(b.cwd_collision)
+
+    def test_idle_sessions_do_not_collide(self):
+        from claude_agents_bar import render
+        a = _make_session(id="a", hook_state="idle", cwd="/work/proj")
+        b = _make_session(id="b", hook_state="idle", cwd="/work/proj")
+        render._mark_cwd_collisions([a, b])
+        self.assertFalse(a.cwd_collision)
+        self.assertFalse(b.cwd_collision)
+
+    def test_empty_cwd_never_collides(self):
+        from claude_agents_bar import render
+        a = _make_session(id="a", hook_state="working", cwd="")
+        b = _make_session(id="b", hook_state="working", cwd="")
+        render._mark_cwd_collisions([a, b])
+        self.assertFalse(a.cwd_collision)
+        self.assertFalse(b.cwd_collision)
+
+    def test_single_active_session_does_not_collide(self):
+        from claude_agents_bar import render
+        a = _make_session(id="a", hook_state="working", cwd="/work/proj")
+        render._mark_cwd_collisions([a])
+        self.assertFalse(a.cwd_collision)
+
+
+class TestLocaleCompleteness(unittest.TestCase):
+    """Every non-English locale must define the same key set as en.json.
+
+    Guards against shipping a half-translated locale — a missing key would
+    silently fall back to English in the UI, which is exactly the runglish
+    we don't want.
+    """
+
+    def test_all_locales_have_same_keys_as_english(self):
+        en = set(k for k in plugin.core.STRINGS["en"] if k != "_meta")
+        for code, strings in plugin.core.STRINGS.items():
+            keys = set(k for k in strings if k != "_meta")
+            self.assertEqual(
+                keys, en, msg=f"locale {code!r} key set differs from en"
+            )
+
+    def test_new_indicator_keys_present_everywhere(self):
+        for key in ("label.blocked", "tooltip.cwd_collision", "tooltip.worktree"):
+            for code, strings in plugin.core.STRINGS.items():
+                self.assertIn(key, strings, msg=f"{key!r} missing from {code!r}")
 
 
 if __name__ == "__main__":

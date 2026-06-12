@@ -1100,6 +1100,18 @@ class Session:
     #: recently, or stopped long ago but inside the per-row fresh window.
     #: ``render.build_session`` filters / promotes these before render.
     subagents: tuple[SubagentSnapshot, ...] = ()
+    #: ``True`` when the session's ``cwd`` is a git *worktree* checkout
+    #: (``.git`` is a file of the form ``gitdir: …`` rather than a
+    #: directory). Surfaced as a green branch line in the submenu to signal
+    #: that the agent's changes are isolated from the main checkout.
+    #: Computed once in :func:`render.build_session`.
+    is_worktree: bool = False
+    #: ``True`` when two or more *active* sessions share the same non-empty
+    #: ``cwd`` — i.e. they're stepping on each other in the same folder.
+    #: Set by :func:`render.collect_sessions` after the full list is built,
+    #: so it can't be derived from a single session in isolation. Surfaced
+    #: as a red ``⚠`` branch line in the submenu.
+    cwd_collision: bool = False
 
     @property
     def live_subagent_count(self) -> int:
@@ -1122,9 +1134,13 @@ class Session:
         been working for 3 minutes". Idle rows keep their "time since last
         interaction" reading.
         """
+        lang = _lang()
+        if self.hook_state == "waiting":
+            duration = _humanize_age(self.state_duration_sec, lang)
+            return _t_for("label.blocked", lang, duration=duration)
         if self.hook_state in ACTIVE_HOOK_STATES:
-            return _humanize_age(self.state_duration_sec, _lang())
-        return _humanize_age(self.age_sec, _lang())
+            return _humanize_age(self.state_duration_sec, lang)
+        return _humanize_age(self.age_sec, lang)
 
     @property
     def right_label_ansi(self) -> str:

@@ -28,6 +28,10 @@
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
 
+  "label.blocked": "waiting {duration}",
+  "tooltip.cwd_collision": "Another session is working in this folder",
+  "tooltip.worktree": "Agent changes isolated under worktree",
+
   "dialog.delete.title": "Delete this Claude Code session?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nClose this session's tab in your IDE first — typing into a deleted session creates a new one.",
   "dialog.delete.label.transcript": "Transcript:",

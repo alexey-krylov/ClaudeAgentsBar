@@ -11,6 +11,7 @@
   "menu.forget_all": "Alle Sitzungen vergessen",
   "menu.stats_today": "Heutige Statistik…",
   "menu.suggest": "Verbesserung vorschlagen…",
+  "menu.multi_workspace": "Multi-Workspace-Modus",
   "menu.config": "Konfiguration…",
   "menu.forget_session": "Vergessen",
   "menu.delete_session": "Löschen…",
@@ -26,6 +27,10 @@
   "age.minutes": "{n}m",
   "age.hours": "{n}h",
   "age.hours_minutes": "{h}h {m}m",
+
+  "label.blocked": "wartet {duration}",
+  "tooltip.cwd_collision": "Eine andere Sitzung arbeitet in diesem Ordner",
+  "tooltip.worktree": "Agent-Änderungen im Worktree isoliert",
 
   "dialog.delete.title": "Diese Claude-Code-Sitzung löschen?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nSchließe zuerst den Tab der Sitzung in deiner IDE — sonst legt die Erweiterung beim nächsten Tippen eine neue Sitzung an.",

@@ -642,6 +642,10 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     the scan at :data:`core.JSONL_TITLE_SCAN_BYTES` finds it in essentially
     all real-world transcripts while keeping the per-tick cost bounded
     regardless of how much base64 attachment data later events drag in.
+    When a bloated first turn (e.g. pasted images) does push that first
+    event past the window, we recover the title from the tail instead of
+    falling through to the volatile user-prompt sources — see
+    :func:`_latest_tail_ai_title`.
 
     The ``cwd`` returned here is the session's *initial* cwd; callers should
     prefer :attr:`HookSnapshot.cwd` when available, since sessions can change
@@ -677,6 +681,14 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
                     raw_title = _content_to_title(content)
     except OSError:
         pass
+    if not ai_title:
+        # The first ``ai-title`` sat past the head-scan window (bloated
+        # early events). Claude Code re-emits it every turn, so the tail
+        # almost always still carries a fresh one — far steadier than
+        # letting the row fall through to the sliding user-prompt sources,
+        # which visibly flap as tool output pushes the latest prompt out of
+        # the tail window.
+        ai_title = _latest_tail_ai_title(jsonl_path)
     return TranscriptMeta(
         ai_title=ai_title.strip(),
         raw_title=raw_title,
@@ -693,6 +705,30 @@ def _parse_ai_title(raw: bytes) -> str | None:
         return None
     ai_title = event.get("aiTitle")
     return ai_title if isinstance(ai_title, str) else None
+
+
+def _latest_tail_ai_title(jsonl_path: Path) -> str:
+    """Return the freshest ``ai-title`` in the JSONL tail, or ``""``.
+
+    Backs the fallback in :func:`read_transcript_meta` for sessions whose
+    first ``ai-title`` was pushed past :data:`core.JSONL_TITLE_SCAN_BYTES`
+    by bloated early events (most commonly a first message with pasted
+    images). Claude Code re-emits ``ai-title`` on essentially every turn,
+    so the already-cached tail buffer (see :func:`_read_jsonl_tail`)
+    practically always carries a recent one. Reads the *last* match — the
+    current topic, matching what the VSCode sidebar shows.
+    """
+    data = _read_jsonl_tail(jsonl_path)
+    if not data:
+        return ""
+    last = ""
+    for raw in data.splitlines():
+        if b'"type":"ai-title"' not in raw:
+            continue
+        title = _parse_ai_title(raw)
+        if title is not None and title.strip():
+            last = title
+    return last
 
 
 def current_git_branch(cwd: str) -> str:
@@ -722,6 +758,28 @@ def current_git_branch(cwd: str) -> str:
     if head.startswith(ref_prefix):
         return head[len(ref_prefix):]
     return head[:7]  # detached HEAD → short SHA
+
+
+def is_worktree_checkout(cwd: str) -> bool:
+    """Return ``True`` when ``cwd`` is a git *worktree* checkout.
+
+    A linked worktree stores ``.git`` as a *file* whose content begins with
+    ``gitdir: <path-to-real-gitdir>`` rather than as the usual ``.git``
+    directory. We only test that marker shape — the actual gitdir target
+    isn't followed here (callers that need the branch use
+    :func:`current_git_branch`). Fail-soft: empty ``cwd`` or any ``OSError``
+    yields ``False``.
+    """
+    if not cwd:
+        return False
+    try:
+        marker = Path(cwd) / ".git"
+        if not marker.is_file():
+            return False
+        head = marker.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return head.lstrip().startswith("gitdir:")
 
 
 def fallback_git_branch_from_jsonl(jsonl_path: Path) -> str:
