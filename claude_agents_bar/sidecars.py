@@ -973,25 +973,28 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
 def last_assistant_summary(jsonl_path: Path, marker: str) -> str:
     """Return the last spoken-summary line of the assistant's reply, or ``""``.
 
-    Mirrors the awk extraction in ``hooks/notify-stop.sh``: walk the shared
-    tail buffer, gather the ``text`` chunks of every ``"type":"assistant"``
-    event, and take the LAST non-blank line across them all (the latest reply
-    is always at the tail). After peeling leading/trailing markdown italic/bold
-    wrappers (``*``/``_``), if that line starts with ``marker`` the summary is
-    the text after it; otherwise ``""``.
+    Mirrors the awk extraction in ``hooks/notify-stop.sh``: take the LAST
+    non-blank line of the assistant's latest reply. After peeling
+    leading/trailing markdown italic/bold wrappers (``*``/``_``), if that line
+    starts with ``marker`` the summary is the text after it; otherwise ``""``.
 
     Drives the per-row *Remind* submenu item: a non-empty result means there's
     something to re-speak (item enabled), empty means nothing to say (item
     rendered disabled). An empty ``marker`` means the feature is off — return
     ``""`` without touching disk. Fail-soft: any read/parse error → ``""``.
+
+    Scans the tail buffer *back to front* and stops at the first assistant
+    event that carries non-blank text — that's the latest reply. Only those
+    trailing event(s) get ``json.loads``'d, not every assistant turn in the
+    128 KB window (replies are large, so a full forward parse is the costliest
+    tail signal we run per tick).
     """
     if not marker:
         return ""
     data = _read_jsonl_tail(jsonl_path)
     if not data:
         return ""
-    last_line = ""
-    for raw in data.splitlines():
+    for raw in reversed(data.splitlines()):
         if b'"type":"assistant"' not in raw:
             continue
         try:
@@ -1006,6 +1009,7 @@ def last_assistant_summary(jsonl_path: Path, marker: str) -> str:
         content = message.get("content")
         if not isinstance(content, list):
             continue
+        last_line = ""
         for chunk in content:
             if not isinstance(chunk, dict) or chunk.get("type") != "text":
                 continue
@@ -1015,11 +1019,14 @@ def last_assistant_summary(jsonl_path: Path, marker: str) -> str:
             for line in text.splitlines():
                 if line.strip():
                     last_line = line
-    if not last_line:
+        if not last_line:
+            # Assistant turn with no text (e.g. tool_use only) — keep walking
+            # back to the previous reply that actually said something.
+            continue
+        stripped = last_line.strip().strip("*_")
+        if stripped.startswith(marker):
+            return stripped[len(marker):].strip()
         return ""
-    stripped = last_line.strip().strip("*_")
-    if stripped.startswith(marker):
-        return stripped[len(marker):].strip()
     return ""
 
 
