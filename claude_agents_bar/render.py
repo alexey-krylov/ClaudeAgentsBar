@@ -197,6 +197,7 @@ def build_session(
     is_worktree = sidecars.is_worktree_checkout(cwd)
     context_used = sidecars.last_usage_tokens(jsonl)
     tool_summary = sidecars.last_tool_use_summary(jsonl)
+    remind_summary = sidecars.last_assistant_summary(jsonl, core.CONFIG.notify_summary_marker)
     session_model = sidecars.last_session_model(jsonl)
 
     state_duration_sec = (
@@ -217,6 +218,7 @@ def build_session(
         context_used=context_used,
         state_duration_sec=state_duration_sec,
         last_tool_use=tool_summary,
+        remind_summary=remind_summary,
         model=session_model,
         subagents=subagents,
         is_worktree=is_worktree,
@@ -647,6 +649,25 @@ def _print_session_row(session: Session) -> None:
         "ansi=true",
     ]
     print(f"{label} | {' '.join(main_params)}")
+
+    # "Remind" — re-speak this session's last spoken summary via say(1).
+    # First item in every row's submenu. Enabled only when there's something
+    # to say (the marker is on and the last reply ended with a summary line);
+    # otherwise rendered greyed-out and inert so the slot stays predictable.
+    if session.remind_summary:
+        remind_script = bin_dir / "remind-session.sh"
+        print(
+            f"--{_t('menu.remind_session')} | "
+            f"shell={_swiftbar_quote(str(remind_script))} "
+            f"param1={_swiftbar_quote(session.remind_summary[:240])} "
+            "terminal=false refresh=false "
+            "sfimage=speaker.wave.2.fill sfcolor=systemBlue"
+        )
+    else:
+        print(
+            f"--{_t('menu.remind_session')} | "
+            "color=#999999 sfimage=speaker.wave.2.fill"
+        )
 
     if session.group is RenderGroup.FRESH:
         ack_session_script = bin_dir / "ack-session.sh"

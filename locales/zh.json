@@ -13,6 +13,7 @@
   "menu.suggest": "建议改进…",
   "menu.multi_workspace": "多工作区模式",
   "menu.config": "配置…",
+  "menu.remind_session": "提醒",
   "menu.forget_session": "忽略",
   "menu.delete_session": "删除…",
   "menu.mark_read": "标记为已读",

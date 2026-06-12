@@ -13,6 +13,7 @@
   "menu.suggest": "Предложить улучшение…",
   "menu.multi_workspace": "Параллельные рабочие пространства",
   "menu.config": "Конфигурация…",
+  "menu.remind_session": "Напомнить",
   "menu.forget_session": "Забыть",
   "menu.delete_session": "Удалить…",
   "menu.mark_read": "Отметить прочитанным",

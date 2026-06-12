@@ -9,6 +9,17 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ### Added
 
+- **Remind (re-speak the last summary).** Every session row's submenu now
+  leads with a *Remind* item (speaker icon) that speaks aloud, via `say`,
+  that session's last spoken-summary line — the text after
+  `notify_summary_marker` (default `"-- "`) on the assistant's final reply,
+  the same line the Stop notification reads. It reuses the notification
+  voice (`notify_voice`), so a reminder sounds identical to the original.
+  The item is enabled only when there's something to say; when the marker is
+  off or the last reply didn't end with a summary line it renders greyed-out
+  and inert. Being an explicit click, it speaks even under *Banner only* mode
+  or `notify_voice: "off"` (which only mute the *automatic* speech). Localised
+  across all shipped locales.
 - **Notification mode in the menu** — *Tools → Notifications* now has a
   *Banner and voice* / *Banner only* radio pair. *Banner only* mutes the
   chime **and** the spoken `say` for every notification while keeping the

@@ -13,6 +13,7 @@
   "menu.suggest": "Verbesserung vorschlagen…",
   "menu.multi_workspace": "Multi-Workspace-Modus",
   "menu.config": "Konfiguration…",
+  "menu.remind_session": "Erinnern",
   "menu.forget_session": "Vergessen",
   "menu.delete_session": "Löschen…",
   "menu.mark_read": "Als gelesen markieren",

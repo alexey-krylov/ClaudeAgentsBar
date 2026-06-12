@@ -477,6 +477,89 @@ class TestLastToolUseSummary(unittest.TestCase):
         )
 
 
+class TestLastAssistantSummary(unittest.TestCase):
+    """Extract the assistant's spoken-summary line (drives the Remind item)."""
+
+    def _write(self, body: str) -> Path:
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return path
+
+    def test_returns_text_after_marker(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"Some prose.\\n-- Did the thing"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_assistant_summary(self._write(body), "-- "),
+            "Did the thing",
+        )
+
+    def test_strips_markdown_italic_wrapper(self):
+        # The assistant emits the summary in italics: *-- text*
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"intro\\n*-- Migrated auth*"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_assistant_summary(self._write(body), "-- "),
+            "Migrated auth",
+        )
+
+    def test_uses_last_assistant_reply(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"*-- first*"}]}}\n'
+            '{"type":"user","message":{"content":[{"type":"text","text":"more"}]}}\n'
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"*-- second*"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_assistant_summary(self._write(body), "-- "),
+            "second",
+        )
+
+    def test_returns_empty_when_last_line_not_marker(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"just a normal reply"}]}}\n'
+        )
+        self.assertEqual(plugin.last_assistant_summary(self._write(body), "-- "), "")
+
+    def test_empty_marker_disables_without_reading(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"*-- summary*"}]}}\n'
+        )
+        self.assertEqual(plugin.last_assistant_summary(self._write(body), ""), "")
+
+    def test_custom_marker(self):
+        body = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":">> ready"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_assistant_summary(self._write(body), ">> "),
+            "ready",
+        )
+
+    def test_returns_empty_for_empty_file(self):
+        self.assertEqual(plugin.last_assistant_summary(self._write(""), "-- "), "")
+
+    def test_returns_empty_for_missing_file(self):
+        self.assertEqual(
+            plugin.last_assistant_summary(Path("/nonexistent/path.jsonl"), "-- "),
+            "",
+        )
+
+    def test_malformed_lines_dont_crash(self):
+        body = (
+            'not-json{\n'
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"*-- survived*"}]}}\n'
+        )
+        self.assertEqual(
+            plugin.last_assistant_summary(self._write(body), "-- "),
+            "survived",
+        )
+
+
 class TestDisplayTitleFallback(unittest.TestCase):
     """``TranscriptMeta.display_title`` picks the right source by priority."""
 
@@ -1334,6 +1417,23 @@ class TestConfigLoad(unittest.TestCase):
         # the flag. Non-bool values keep the default.
         config = plugin.Config._from_mapping({"notify_audio": "false"})
         self.assertIs(config.notify_audio, True)
+
+    def test_notify_summary_marker_default(self):
+        self.assertEqual(plugin.Config().notify_summary_marker, "-- ")
+
+    def test_notify_summary_marker_override(self):
+        config = plugin.Config._from_mapping({"notify_summary_marker": ">> "})
+        self.assertEqual(config.notify_summary_marker, ">> ")
+
+    def test_notify_summary_marker_null_disables(self):
+        # An explicit JSON null means "feature off" — mirrors the bash
+        # _cfg_string_or_null reader. Empty string, not the default.
+        config = plugin.Config._from_mapping({"notify_summary_marker": None})
+        self.assertEqual(config.notify_summary_marker, "")
+
+    def test_notify_summary_marker_rejects_non_string(self):
+        config = plugin.Config._from_mapping({"notify_summary_marker": 42})
+        self.assertEqual(config.notify_summary_marker, "-- ")
 
     def test_editor_focus_settle_default(self):
         self.assertEqual(plugin.Config().editor_focus_settle_sec, 0.1)

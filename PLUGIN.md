@@ -71,6 +71,7 @@ ClaudeAgentsBar/
 │   │   └── teardown.sh      ← reverse setup
 │   └── app/
 │       ├── open-session.sh  ← row click: records click + opens in editor
+│       ├── remind-session.sh ← submenu: re-speak the session's last summary
 │       ├── ack-session.sh   ← submenu: mark one session as read
 │       ├── ack-fresh.sh     ← Tools: acknowledge all fresh sessions
 │       ├── forget-session.sh ← submenu: hide one session

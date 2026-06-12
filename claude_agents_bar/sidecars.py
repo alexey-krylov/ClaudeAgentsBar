@@ -970,6 +970,59 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
     return last_summary
 
 
+def last_assistant_summary(jsonl_path: Path, marker: str) -> str:
+    """Return the last spoken-summary line of the assistant's reply, or ``""``.
+
+    Mirrors the awk extraction in ``hooks/notify-stop.sh``: walk the shared
+    tail buffer, gather the ``text`` chunks of every ``"type":"assistant"``
+    event, and take the LAST non-blank line across them all (the latest reply
+    is always at the tail). After peeling leading/trailing markdown italic/bold
+    wrappers (``*``/``_``), if that line starts with ``marker`` the summary is
+    the text after it; otherwise ``""``.
+
+    Drives the per-row *Remind* submenu item: a non-empty result means there's
+    something to re-speak (item enabled), empty means nothing to say (item
+    rendered disabled). An empty ``marker`` means the feature is off — return
+    ``""`` without touching disk. Fail-soft: any read/parse error → ``""``.
+    """
+    if not marker:
+        return ""
+    data = _read_jsonl_tail(jsonl_path)
+    if not data:
+        return ""
+    last_line = ""
+    for raw in data.splitlines():
+        if b'"type":"assistant"' not in raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if event.get("type") != "assistant":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for chunk in content:
+            if not isinstance(chunk, dict) or chunk.get("type") != "text":
+                continue
+            text = chunk.get("text")
+            if not isinstance(text, str):
+                continue
+            for line in text.splitlines():
+                if line.strip():
+                    last_line = line
+    if not last_line:
+        return ""
+    stripped = last_line.strip().strip("*_")
+    if stripped.startswith(marker):
+        return stripped[len(marker):].strip()
+    return ""
+
+
 def read_subagent_meta(meta_path: Path) -> dict | None:
     """Return the parsed ``agent-<id>.meta.json`` for a subagent, or ``None``.
 

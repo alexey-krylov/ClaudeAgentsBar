@@ -487,6 +487,13 @@ class Config:
     #: :data:`NOTIFY_AUDIO_MODE_PATH` (set from the menu) overrides at
     #: runtime. Mirrored by the bash reader in ``hooks/_notify-common.sh``.
     notify_audio: bool = True
+    #: Prefix that marks the assistant's spoken-summary line — the last line
+    #: of a reply (markdown ``*``/``_`` wrappers stripped) starting with this
+    #: is read aloud by the Stop hook and re-spoken by the per-row *Remind*
+    #: submenu item. Default ``"-- "``; an explicit ``null``/``""`` disables
+    #: the feature (the *Remind* item then renders permanently disabled).
+    #: Mirrors ``notify_summary_marker`` read by ``hooks/notify-stop.sh``.
+    notify_summary_marker: str = "-- "
     #: First-launch keep-awake mode (sidecar overrides at runtime).
     keep_awake: str = "off"
     #: Master switch for the multi-workspace window-focus behaviour.
@@ -667,6 +674,21 @@ class Config:
                         f"{sorted(_QUIET_SILENCE_CHANNELS)}"
                     )
                 coerced["quiet_hours_silences"] = tuple(kept)
+
+        # Nullable string: an explicit ``null``/``""`` disables the spoken
+        # summary (and the Remind item); absence keeps the default. Mirrors
+        # ``_cfg_string_or_null`` in ``hooks/_notify-common.sh``.
+        if "notify_summary_marker" in data:
+            raw_marker = data["notify_summary_marker"]
+            if raw_marker is None:
+                coerced["notify_summary_marker"] = ""
+            elif isinstance(raw_marker, str):
+                coerced["notify_summary_marker"] = raw_marker
+            else:
+                _warn(
+                    f"config: ignoring invalid notify_summary_marker="
+                    f"{raw_marker!r} (must be a string or null)"
+                )
 
         if "keep_awake" in data:
             raw_ka = data["keep_awake"]
@@ -1086,6 +1108,12 @@ class Session:
     #: hover tooltip on the main row so a quick glance answers
     #: "what is Claude doing right now?".
     last_tool_use: str = ""
+    #: Spoken-summary line of the latest assistant reply — the text after
+    #: ``notify_summary_marker`` on the reply's last line (see
+    #: :func:`sidecars.last_assistant_summary`). Empty when the marker is
+    #: disabled or the reply didn't end with one; drives whether the per-row
+    #: *Remind* submenu item is enabled (re-speaks this) or disabled.
+    remind_summary: str = ""
     #: Model string from the latest assistant event in the transcript
     #: (e.g. ``claude-opus-4-7``). ``None`` for older transcripts whose
     #: tail has no parseable ``"model":"..."`` match — :func:`_model_badge`
