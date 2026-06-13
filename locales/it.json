@@ -14,6 +14,7 @@
   "menu.multi_workspace": "Modalità multi-workspace",
   "menu.config": "Configurazione…",
   "menu.remind_session": "Ricorda",
+  "remind.no_marker": "Nessun riepilogo nell'ultima risposta. Configura Claude affinché concluda le risposte con una riga di riepilogo.",
   "menu.forget_session": "Dimentica",
   "menu.delete_session": "Elimina…",
   "menu.mark_read": "Segna come letto",

@@ -14,6 +14,7 @@
   "menu.multi_workspace": "Multi-workspace mode",
   "menu.config": "Configuration…",
   "menu.remind_session": "Remind",
+  "remind.no_marker": "No summary in the last reply. Configure Claude to end its replies with a summary line.",
   "menu.forget_session": "Forget",
   "menu.delete_session": "Delete…",
   "menu.mark_read": "Mark as read",

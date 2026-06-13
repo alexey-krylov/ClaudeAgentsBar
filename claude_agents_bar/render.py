@@ -197,7 +197,6 @@ def build_session(
     is_worktree = sidecars.is_worktree_checkout(cwd)
     context_used = sidecars.last_usage_tokens(jsonl)
     tool_summary = sidecars.last_tool_use_summary(jsonl)
-    remind_summary = sidecars.last_assistant_summary(jsonl, core.CONFIG.notify_summary_marker)
     session_model = sidecars.last_session_model(jsonl)
 
     state_duration_sec = (
@@ -218,7 +217,6 @@ def build_session(
         context_used=context_used,
         state_duration_sec=state_duration_sec,
         last_tool_use=tool_summary,
-        remind_summary=remind_summary,
         model=session_model,
         subagents=subagents,
         is_worktree=is_worktree,
@@ -651,15 +649,19 @@ def _print_session_row(session: Session) -> None:
     print(f"{label} | {' '.join(main_params)}")
 
     # "Remind" — re-speak this session's last spoken summary via say(1).
-    # First item in every row's submenu. Enabled only when there's something
-    # to say (the marker is on and the last reply ended with a summary line);
-    # otherwise rendered greyed-out and inert so the slot stays predictable.
-    if session.remind_summary:
+    # First item in every row's submenu. The transcript is parsed only on
+    # click (in remind-session.sh), never per tick — here we just gate on
+    # whether the feature is configured at all: enabled when a
+    # notify_summary_marker is set, greyed-out when it's been disabled
+    # (null/""). Enabled but the latest reply had no summary line → the click
+    # speaks the localised "configure Claude" hint we hand it as param2.
+    if core.CONFIG.notify_summary_marker:
         remind_script = bin_dir / "remind-session.sh"
         print(
             f"--{_t('menu.remind_session')} | "
             f"shell={_swiftbar_quote(str(remind_script))} "
-            f"param1={_swiftbar_quote(session.remind_summary[:240])} "
+            f"param1={_swiftbar_quote(session.id)} "
+            f"param2={_swiftbar_quote(_t('remind.no_marker'))} "
             "terminal=false refresh=false "
             "sfimage=speaker.wave.2.fill sfcolor=systemBlue"
         )

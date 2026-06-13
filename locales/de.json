@@ -14,6 +14,7 @@
   "menu.multi_workspace": "Multi-Workspace-Modus",
   "menu.config": "Konfiguration…",
   "menu.remind_session": "Erinnern",
+  "remind.no_marker": "Keine Zusammenfassung in der letzten Antwort. Richte Claude so ein, dass es Antworten mit einer Zusammenfassungszeile beendet.",
   "menu.forget_session": "Vergessen",
   "menu.delete_session": "Löschen…",
   "menu.mark_read": "Als gelesen markieren",

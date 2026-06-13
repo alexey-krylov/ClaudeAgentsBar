@@ -153,6 +153,32 @@ _cfg_string_or_null() {
         "$_CAB_CONFIG" 2>/dev/null
 }
 
+# ── Spoken-summary extraction (spec 0005) ────────────────────────────────────
+# Echo the summary text from a transcript given a marker, or "" (nothing).
+# Looks at the LAST non-blank line of the assistant's reply: after stripping
+# any markdown italic/bold wrappers (`*`/`_`), if it starts with the marker,
+# the summary is the text after it. The assistant emits that line in italics
+# (`*-- did the thing*`), so we peel leading/trailing `*`/`_` before the
+# literal prefix test (`index==1`, no regex, Unicode-safe). Empty marker,
+# missing transcript, missing jq, or a last line that isn't a marker line all
+# yield "" — a silent, non-fatal fallback. Shared by notify-stop.sh (speaks it
+# on Stop) and bin/app/remind-session.sh (re-speaks it on a Remind click).
+_extract_summary() {
+    local transcript="$1" marker="$2"
+    [ -n "$marker" ] && [ -n "$transcript" ] && [ -f "$transcript" ] || return
+    /usr/bin/jq -r 'select(.type=="assistant")
+                    | .message.content[]?
+                    | select(.type=="text") | .text' "$transcript" 2>/dev/null \
+        | /usr/bin/awk -v m="$marker" \
+            'NF { last = $0 }
+             END {
+                 sub(/^[*_]+/, "", last)        # strip leading markdown italic/bold (*, _, **, ***)
+                 sub(/[*_]+$/, "", last)        # strip trailing markers
+                 if (index(last, m) == 1) print substr(last, length(m) + 1)
+             }' \
+        | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
 # ── Sound resolver ───────────────────────────────────────────────────────────
 # Resolve a `notify_sound_*` value to an absolute, existing file path.
 # Echoes the resolved path on stdout or the empty string when the chime

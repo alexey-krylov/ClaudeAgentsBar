@@ -15,10 +15,13 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   `notify_summary_marker` (default `"-- "`) on the assistant's final reply,
   the same line the Stop notification reads. It reuses the notification
   voice (`notify_voice`), so a reminder sounds identical to the original.
-  The item is enabled only when there's something to say; when the marker is
-  off or the last reply didn't end with a summary line it renders greyed-out
-  and inert. Being an explicit click, it speaks even under *Banner only* mode
-  or `notify_voice: "off"` (which only mute the *automatic* speech). Localised
+  The transcript is parsed **on click**, never on the render tick — the menu
+  only checks whether a marker is configured: the item is enabled when one is
+  set, greyed-out when it's been disabled (`null`/`""`). If the marker is on
+  but the latest reply carried no summary line, the click speaks a localised
+  "configure Claude to end replies with a summary line" hint instead of going
+  silent. Being an explicit click, it speaks even under *Banner only* mode or
+  `notify_voice: "off"` (which only mute the *automatic* speech). Localised
   across all shipped locales.
 - **Notification mode in the menu** — *Tools → Notifications* now has a
   *Banner and voice* / *Banner only* radio pair. *Banner only* mutes the

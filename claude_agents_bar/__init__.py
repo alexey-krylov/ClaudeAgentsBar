@@ -103,7 +103,6 @@ from .sidecars import (
     gc_clicks,
     gc_forget,
     gc_sidecar,
-    last_assistant_summary,
     last_tool_use_summary,
     last_usage_tokens,
     last_user_message_preview,

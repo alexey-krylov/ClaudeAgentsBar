@@ -1108,12 +1108,6 @@ class Session:
     #: hover tooltip on the main row so a quick glance answers
     #: "what is Claude doing right now?".
     last_tool_use: str = ""
-    #: Spoken-summary line of the latest assistant reply — the text after
-    #: ``notify_summary_marker`` on the reply's last line (see
-    #: :func:`sidecars.last_assistant_summary`). Empty when the marker is
-    #: disabled or the reply didn't end with one; drives whether the per-row
-    #: *Remind* submenu item is enabled (re-speaks this) or disabled.
-    remind_summary: str = ""
     #: Model string from the latest assistant event in the transcript
     #: (e.g. ``claude-opus-4-7``). ``None`` for older transcripts whose
     #: tail has no parseable ``"model":"..."`` match — :func:`_model_badge`

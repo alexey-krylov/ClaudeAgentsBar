@@ -14,6 +14,7 @@
   "menu.multi_workspace": "Параллельные рабочие пространства",
   "menu.config": "Конфигурация…",
   "menu.remind_session": "Напомнить",
+  "remind.no_marker": "В последнем ответе нет сводки. Настройте Claude, чтобы он завершал ответы строкой-сводкой.",
   "menu.forget_session": "Забыть",
   "menu.delete_session": "Удалить…",
   "menu.mark_read": "Отметить прочитанным",

@@ -164,27 +164,10 @@ fi
 PHRASE="${PHRASES[$RANDOM % ${#PHRASES[@]}]}"
 
 # ── Extract the spoken summary (spec 0005) ───────────────────────────────────
-# When a marker is configured, look at the LAST non-blank line of the
-# assistant's reply: if (after stripping any markdown italic/bold wrappers) it
-# starts with the marker, SUMMARY is the text after it. The assistant is
-# expected to emit that line in italics (`*-- did the thing*`), so we peel
-# leading/trailing `*`/`_` before the literal prefix test (`index==1`, no
-# regex, Unicode-safe). Any miss (marker off, no transcript, no jq, last line
-# isn't a marker line) leaves SUMMARY empty — a silent, non-fatal fallback.
-SUMMARY=""
-if [ -n "$MARKER" ] && [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; then
-    SUMMARY=$(/usr/bin/jq -r 'select(.type=="assistant")
-                              | .message.content[]?
-                              | select(.type=="text") | .text' "$TRANSCRIPT" 2>/dev/null \
-        | /usr/bin/awk -v m="$MARKER" \
-            'NF { last = $0 }
-             END {
-                 sub(/^[*_]+/, "", last)        # strip leading markdown italic/bold (*, _, **, ***)
-                 sub(/[*_]+$/, "", last)        # strip trailing markers
-                 if (index(last, m) == 1) print substr(last, length(m) + 1)
-             }' \
-        | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-fi
+# The LAST non-blank line of the assistant's reply, after the marker, if any —
+# see _extract_summary in _notify-common.sh (shared with the Remind action).
+# Any miss leaves SUMMARY empty — a silent, non-fatal fallback to the phrase.
+SUMMARY=$(_extract_summary "${TRANSCRIPT:-}" "$MARKER")
 
 # Speech keeps the random phrase and appends the summary when present, so it
 # reads as a natural sentence ("Done. Migrated the auth module"). The banner

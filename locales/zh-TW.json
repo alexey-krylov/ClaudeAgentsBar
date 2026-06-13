@@ -15,6 +15,7 @@
   "menu.multi_workspace": "多工作區模式",
   "menu.config": "設定…",
   "menu.remind_session": "提醒",
+  "remind.no_marker": "最後的回覆沒有摘要。請設定 Claude 在回覆結尾加上摘要行。",
   "menu.forget_session": "忽略",
   "menu.delete_session": "刪除…",
   "menu.mark_read": "標示為已讀",

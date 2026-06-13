@@ -232,11 +232,15 @@ closing line.
 
 The same marker gates the **Remind** item at the top of each session
 row's submenu: it re-speaks that session's summary on demand, using
-`notify_voice`. The item is enabled only when there's a summary to speak
-(marker on, last reply ended with a marker line); otherwise it renders
-greyed-out. Unlike the automatic Stop speech, an explicit *Remind* click
-speaks even under *Banner only* or `notify_voice: "off"` — those mute only
-the automatic notification, not a deliberate click.
+`notify_voice`. The transcript is read **when you click**, not on the
+render tick, so it adds no per-tick cost. The item is enabled whenever a
+marker is configured and greyed-out when you disable it (`null` / `""`).
+If the marker is on but the session's latest reply had no summary line,
+the click speaks a short "configure Claude to end replies with a summary
+line" hint rather than staying silent. Unlike the automatic Stop speech,
+an explicit *Remind* click speaks even under *Banner only* or
+`notify_voice: "off"` — those mute only the automatic notification, not a
+deliberate click.
 
 ### Setting up Claude to produce the summary line
 

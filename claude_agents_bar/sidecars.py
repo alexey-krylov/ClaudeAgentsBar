@@ -970,66 +970,6 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
     return last_summary
 
 
-def last_assistant_summary(jsonl_path: Path, marker: str) -> str:
-    """Return the last spoken-summary line of the assistant's reply, or ``""``.
-
-    Mirrors the awk extraction in ``hooks/notify-stop.sh``: take the LAST
-    non-blank line of the assistant's latest reply. After peeling
-    leading/trailing markdown italic/bold wrappers (``*``/``_``), if that line
-    starts with ``marker`` the summary is the text after it; otherwise ``""``.
-
-    Drives the per-row *Remind* submenu item: a non-empty result means there's
-    something to re-speak (item enabled), empty means nothing to say (item
-    rendered disabled). An empty ``marker`` means the feature is off — return
-    ``""`` without touching disk. Fail-soft: any read/parse error → ``""``.
-
-    Scans the tail buffer *back to front* and stops at the first assistant
-    event that carries non-blank text — that's the latest reply. Only those
-    trailing event(s) get ``json.loads``'d, not every assistant turn in the
-    128 KB window (replies are large, so a full forward parse is the costliest
-    tail signal we run per tick).
-    """
-    if not marker:
-        return ""
-    data = _read_jsonl_tail(jsonl_path)
-    if not data:
-        return ""
-    for raw in reversed(data.splitlines()):
-        if b'"type":"assistant"' not in raw:
-            continue
-        try:
-            event = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if event.get("type") != "assistant":
-            continue
-        message = event.get("message")
-        if not isinstance(message, dict):
-            continue
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        last_line = ""
-        for chunk in content:
-            if not isinstance(chunk, dict) or chunk.get("type") != "text":
-                continue
-            text = chunk.get("text")
-            if not isinstance(text, str):
-                continue
-            for line in text.splitlines():
-                if line.strip():
-                    last_line = line
-        if not last_line:
-            # Assistant turn with no text (e.g. tool_use only) — keep walking
-            # back to the previous reply that actually said something.
-            continue
-        stripped = last_line.strip().strip("*_")
-        if stripped.startswith(marker):
-            return stripped[len(marker):].strip()
-        return ""
-    return ""
-
-
 def read_subagent_meta(meta_path: Path) -> dict | None:
     """Return the parsed ``agent-<id>.meta.json`` for a subagent, or ``None``.
 
