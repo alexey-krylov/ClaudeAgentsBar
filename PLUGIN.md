@@ -40,8 +40,8 @@ six sources:
 
 1. The JSONL transcripts Claude Code already writes (titles, cwd).
    - **Session title sourcing** (priority order):
-     - `session_title` — the **name** field of the last response's two-field marker line `*-- Name - Summary*` (prefix = `notify_summary_marker`, default `-- `; name/summary split on the first `" - "`). The parse runs at render time but is gated on `notify_summary_marker` and skips non-assistant lines with a byte prefilter, so a disabled marker costs nothing. The prefix + divider are split identically in `sidecars._parse_marker_line` and `hooks/_notify-common.sh`, so the menu name, the spoken Stop summary, and the awaiting name+summary all agree. Claude agents follow the global CLAUDE.md instruction to write this marker in every response.
-     - `ai_title` — Claude Code's auto-generated conversation summary (event type `ai-title`). A single-field marker (`*-- Summary*`, no name) falls through to this.
+     - `session_title` — the **name** field of the last response's two-field marker line `*-- Name - Summary*` (prefix = `notify_summary_marker`, default `-- `; name/summary split on the first `" - "`). **Opt-in via `use_session_titles_for_menubar` (default off).** When off, `read_transcript_meta` skips the per-tick parse and leaves this empty, so the menu shows `ai_title` — the same label VSCode displays. When on, the parse runs at render time (still gated on `notify_summary_marker`, byte-prefiltered to assistant lines, so it's cheap). The prefix + divider are split identically in `sidecars._parse_marker_line` and `hooks/_notify-common.sh`. Note: the marker is parsed for the *spoken* notifications regardless of this knob (the hooks do it in Bash) — the toggle only affects the menu title.
+     - `ai_title` — Claude Code's auto-generated conversation summary (event type `ai-title`). The **menu default**; a single-field marker (`*-- Summary*`, no name) or the opt-in being off both fall through to this.
      - `last_user_message` — latest user prompt (for fresh sessions).
      - `raw_title` — initial session title or first message (fallback).
 2. `agent-state.tsv` that `agent-state.sh` maintains (parent state, last
@@ -337,7 +337,27 @@ side effects (sound, banner) rather than touching the TSV:
 | `hooks/notify-wait.sh` | `PermissionRequest` | Plays `Funk.aiff`, speaks a phrase from `notify_wait_phrases`, shows a banner whose click jumps straight to the waiting session. No threshold — every approval prompt is intentional. |
 
 Both read the same JSON config the plugin uses and degrade gracefully
-when `terminal-notifier` / `jq` / the icon asset isn't present.
+when `terminal-notifier` / `jq` / the icon asset isn't present. The
+chime + speech + banner tail and the random-phrase picker are factored
+into `_emit_notification` / `_pick_phrase` in `hooks/_notify-common.sh`,
+so all three notify scripts share one implementation and differ only in
+sound / phrases / title.
+
+A third script, `hooks/notify-idle.sh`, is **not** a Claude Code hook —
+it isn't registered in `settings-hooks.json` and reads its session id +
+cwd from positional arguments, not a hook payload. It's fired by the
+plugin itself (`claude_agents_bar/idle_reminders.py`) on the SwiftBar
+tick for 🟢 green sessions left unread too long (spec 0008). There's no
+"N minutes after Stop" Claude Code event and the project runs no daemon,
+so the periodic tick is the only place a time-based reminder can come
+from. `reconcile` (called from `main` right after `keep_awake.reconcile`)
+does only cheap work — read the `agent-state.idle-reminders` sidecar,
+compare timestamps against the doubling schedule, and `Popen` the
+detached script (so the transcript parse for the spoken name/summary
+happens off the tick). Progress is tracked in `agent-state.idle-reminders`
+(`{sid → (stop_ts, fired_count)}`); the escalation is bounded by the
+green window (`fresh_sec`) because `reconcile` only ever considers
+`RenderGroup.FRESH` sessions.
 
 [cc-hooks]: https://code.claude.com/docs/en/hooks.md
 

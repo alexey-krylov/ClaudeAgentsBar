@@ -29,7 +29,7 @@ import sys
 import time
 from dataclasses import replace
 
-from . import actions, core, doctor, keep_awake, render, sidecars
+from . import actions, core, doctor, idle_reminders, keep_awake, render, sidecars
 
 # --- Re-exports from .core -------------------------------------------------- #
 from .core import (
@@ -40,6 +40,7 @@ from .core import (
     FORGET_PATH,
     HOME,
     HookSnapshot,
+    IDLE_REMINDERS_PATH,
     INTERACTIVE_ENTRYPOINTS,
     KEEP_AWAKE_MODE_PATH,
     KEEP_AWAKE_PID_PATH,
@@ -109,10 +110,12 @@ from .sidecars import (
     read_clicks,
     read_dismiss_ts,
     read_forget,
+    read_idle_reminders,
     read_quiet_bypass_until,
     read_quiet_until,
     read_sidecar,
     read_transcript_meta,
+    write_idle_reminders,
 )
 
 # --- Re-exports from .render ----------------------------------------------- #
@@ -209,7 +212,8 @@ def main() -> int:
             return 1
         return core.write_notify_audio_mode(arg == "on")
     try:
-        sessions = render.collect_sessions(int(time.time()))
+        now = int(time.time())
+        sessions = render.collect_sessions(now)
         render.render(sessions)
         # Keep-awake reconcile rides on the render tick — we already paid
         # to enumerate sessions for the menu, and the decision logic only
@@ -219,6 +223,13 @@ def main() -> int:
             keep_awake.reconcile(sessions)
         except Exception as exc:
             core._warn(f"keep_awake: reconcile failed: {exc}")
+        # Idle-session reminders ride the same tick (the only periodic
+        # heartbeat) and reuse the session list — same crash-isolation so a
+        # reminder bug can't break the menu. See :mod:`idle_reminders`.
+        try:
+            idle_reminders.reconcile(sessions, now)
+        except Exception as exc:
+            core._warn(f"idle_reminders: reconcile failed: {exc}")
     except Exception as exc:
         # Catch-all so SwiftBar never sees a Python traceback in the menu.
         print("⚠️ | color=red")

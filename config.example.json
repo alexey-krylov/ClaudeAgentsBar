@@ -97,8 +97,20 @@
   "// notify_summary_marker.4": "Tell your Claude to END every reply with an italic line like '*-- did the thing*' — see docs/configuration.md § Spoken summary. Matched literally (no regex). Default: '-- '.",
   "notify_summary_marker": "-- ",
 
+  "// use_session_titles_for_menubar": "Use the response-marker NAME (the part before ' - ' in '*-- Name - Summary*') as the menu row title. false (default): the row shows Claude Code's own ai-title — the same English label VSCode displays, so the menu stays consistent with the editor. true: the marker name takes priority over ai-title, surfacing your own wording (e.g. Russian) in the menu. The marker is ALWAYS parsed for the spoken notifications regardless of this knob — this only affects the menu title (and when false the per-tick title parse is skipped).",
+  "use_session_titles_for_menubar": false,
+
   "// remind_recap_after_min": "Remind submenu action. When the time since a session's last output (its transcript mtime) is at least this many minutes, a Remind click first speaks the session's OPENING summary, then its latest one — so you recall what a cold session was about before where it is now. While still in the flow (less time elapsed) it speaks only the latest. null / absent (default) → always latest only; 0 → always recap. Sessions with a single summary speak it once regardless.",
   "remind_recap_after_min": null,
+
+  "// notify_idle_interval_min": "Idle-session reminders. When a finished session sits 🟢 GREEN (unread, not yet clicked) past this many minutes, the plugin re-nudges you (chime + spoken phrase + banner, like an awaiting prompt) on its 5-second tick. Each subsequent reminder DOUBLES the wait: 20, 40, 80, … minutes after the session finished. The count is bounded by how long the row stays green (fresh_minutes, default 60) — with the default 20-min start that's two reminders (at 20 and 40 min); raise fresh_minutes for more. Clicking the session (or Tools → Acknowledge all) stops the reminders. Default 20 (on). Set to 0 or null to turn the feature off. Respects quiet_hours and the Banner-only audio mode.",
+  "notify_idle_interval_min": 20,
+
+  "// notify_idle_phrases": "Phrases spoken via 'say' and shown in the banner for an idle-session reminder. One is chosen at random per reminder. Default is a short built-in list.",
+  "notify_idle_phrases": ["Don't forget me", "Still unread", "Pending review", "Your turn"],
+
+  "// notify_sound_idle": "Chime played on an idle-session reminder — same value shapes as notify_sound_stop (bare name / absolute path / ~-path / null to mute). Default: 'Submarine' (a soft ping, distinct from Hero=done and Funk=awaiting).",
+  "notify_sound_idle": "Submarine",
 
   "// quiet_hours": "Scheduled silence window (24h local, 'HH:MM-HH:MM'). start>end wraps midnight. Default '23:00-08:00' — set to null to disable.",
   "quiet_hours": "23:00-08:00",

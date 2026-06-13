@@ -18,6 +18,17 @@ that name as the menu title. One authoring habit, three payoffs: a
 meaningful menu title, the spoken Stop summary (unchanged), and — new —
 the session name spoken when a session is waiting on you.
 
+**Primary purpose is voice; the menu title is opt-in.** The reason the
+marker carries a name is to make the *spoken* notifications useful — by
+ear you can tell which of several sessions is waiting and what it was
+doing. Using that name as the **menu title** is a secondary, optional use:
+it overrides Claude Code's `ai-title`, which is what VSCode shows, so by
+default it would make the menu *inconsistent* with the editor. So the
+menu-title use is gated behind **`use_session_titles_for_menubar`
+(default `false`)**; the voice use is always on. With the knob off the
+menu keeps showing `ai-title` (editor-consistent) and the per-tick title
+parse is skipped; with it on the marker name takes priority.
+
 ## The marker line
 
 ```
@@ -39,12 +50,16 @@ non-blank line** of a reply is tested.
 
 ## Who consumes which field
 
-| Surface | Field | Where |
-|---|---|---|
-| Menu title | **name** | `sidecars._latest_session_title_from_response` → `TranscriptMeta.session_title` → `display_title` (ahead of `ai_title`). |
-| `Stop` notification | **summary** | `hooks/notify-stop.sh` via `_extract_summary` (now drops the name field). |
-| `Remind` action | **summary** | `bin/app/remind-session.sh` via `_summary_endpoints` (drops the name field). |
-| Awaiting (`PermissionRequest`) | **name + summary** | `hooks/notify-wait.sh` via `_marker_fields_latest`. |
+| Surface | Field | Gated by | Where |
+|---|---|---|---|
+| Menu title | **name** | `use_session_titles_for_menubar` (default off) | `sidecars._latest_session_title_from_response` → `TranscriptMeta.session_title` → `display_title` (ahead of `ai_title`). Off → `session_title=""`, parse skipped, menu shows `ai_title`. |
+| `Stop` notification | **summary** | always | `hooks/notify-stop.sh` via `_extract_summary` (drops the name field). |
+| `Remind` action | **summary** | always | `bin/app/remind-session.sh` via `_summary_endpoints` (drops the name field). |
+| Awaiting (`PermissionRequest`) | **name + summary** | always | `hooks/notify-wait.sh` via `_marker_fields_latest`. |
+
+The voice surfaces (Stop / Remind / awaiting) parse the marker in Bash and
+are **independent** of `use_session_titles_for_menubar` — turning the menu
+title off never silences or changes the spoken notifications.
 
 The split rule lives in two places that must agree byte-for-byte:
 `sidecars._parse_marker_line` (Python, render side) and the `awk` in
@@ -52,6 +67,12 @@ The split rule lives in two places that must agree byte-for-byte:
 (`notify_summary_marker`) and the same `" - "` divider.
 
 ## Render-side cost
+
+When `use_session_titles_for_menubar` is **off** (the default),
+`read_transcript_meta` doesn't even call
+`_latest_session_title_from_response` — the per-tick title parse is
+skipped entirely and the menu shows `ai_title`. The cost notes below
+apply only when the knob is **on**:
 
 `session_title` is needed at render time (the menu draws every tick), so
 unlike Remind it can't be a click-only parse. It's kept cheap:
@@ -84,6 +105,9 @@ fresh marker to read mid-prompt.
 
 ## Backward compatibility
 
+* **Menu title defaults to `ai_title`** (`use_session_titles_for_menubar`
+  off) — the same label VSCode shows, so an upgrade doesn't change what
+  the menu displays. Opt in to surface the marker name instead.
 * Single-field `*-- Summary*` lines keep working: no name (menu falls
   through to `ai_title`), summary spoken on `Stop` / `Remind` as before.
 * `notify_summary_marker: null` / `""` disables every surface — menu
@@ -94,9 +118,12 @@ fresh marker to read mid-prompt.
 * `_parse_marker_line` / `_session_name_from_reply` unit tests: two-field
   split, first-divider-only, single-field → empty name, emphasis
   wrappers, closing-line-only, empty marker.
-* `read_transcript_meta` tests: latest marker name wins and becomes
-  `display_title`; single-field falls through to `ai_title`; disabled
-  marker skips the parse.
+* `read_transcript_meta` tests (with `use_session_titles_for_menubar` on):
+  latest marker name wins and becomes `display_title`; single-field falls
+  through to `ai_title`; disabled marker skips the parse. With the knob
+  **off** (default): a valid marker is ignored and the menu shows
+  `ai_title`. `Config` tests: knob default `false`, `true` override,
+  non-bool ignored.
 * `awk` helpers exercised over a synthetic transcript: Stop summary,
   awaiting name+summary from the previous completed turn (in-flight turn
   has no marker), Remind endpoints.

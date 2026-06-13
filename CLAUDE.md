@@ -19,12 +19,12 @@ reads JSONL transcripts under `~/.claude/projects/*/*.jsonl` for
 titles + `cwd` and joins them with the TSV at render time.
 
 **Session titles** are sourced in priority order:
-1. **`session_title`** — parsed from the last Claude response. The marker line is two-field: `*-- Name - Summary*` — the `notify_summary_marker` prefix (`-- `), then the name, a `" - "` divider (a lone hyphen padded with spaces, split on the **first** occurrence), then the summary. The menu uses the **name**; prefix and divider are split byte-for-byte the same way in `claude_agents_bar/sidecars.py` and `hooks/_notify-common.sh`. Claude agents write this following the global CLAUDE.md instructions.
-2. **`ai_title`** — Claude Code's auto-generated summary of the conversation
+1. **`session_title`** — parsed from the last Claude response marker `*-- Name - Summary*` (the `notify_summary_marker` prefix `-- `, then the name, a `" - "` divider split on the **first** occurrence, then the summary). **Opt-in**: only used when `use_session_titles_for_menubar` is `true` (default `false`). When off, this field is left empty (the per-tick parse is skipped) and the menu falls through to `ai_title` — the same label VSCode shows, so the menu stays consistent with the editor. Prefix and divider are split byte-for-byte the same way in `claude_agents_bar/sidecars.py` and `hooks/_notify-common.sh`.
+2. **`ai_title`** — Claude Code's auto-generated summary of the conversation (the menu default)
 3. **`last_user_message`** — latest user prompt (for fresh sessions)
 4. **`raw_title`** — initial session title (fallback)
 
-The same marker feeds the spoken notifications: **Stop** speaks the summary alone, an **awaiting** permission prompt speaks the session name + summary (`hooks/notify-stop.sh` / `hooks/notify-wait.sh`). A single-field line (`*-- Summary*`, no `" - "`) has no name, so the menu falls through to `ai_title` and only the summary is spoken — backward-compatible with spec 0005.
+The marker's **primary purpose is the spoken notifications**, which parse it in Bash **independently of `use_session_titles_for_menubar`**: **Stop** speaks the summary alone, an **awaiting** permission prompt speaks the session name + summary (`hooks/notify-stop.sh` / `hooks/notify-wait.sh`). A single-field line (`*-- Summary*`, no `" - "`) has no name; the menu (when the opt-in is on) falls through to `ai_title` and only the summary is spoken — backward-compatible with spec 0005. Claude agents write the marker following the global CLAUDE.md instructions.
 
 Stateless: no daemon, no IPC. Each tick rebuilds the menu from disk.
 

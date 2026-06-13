@@ -57,6 +57,22 @@ _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 #: back. Use the per-row *Delete session…* action for permanent removal.
 FORGET_PATH = HOME / ".claude" / "agent-state.forget"
 
+#: ``{session_id: (stop_ts, fired_count)}`` sidecar for the idle-session
+#: reminder feature (spec 0008). One row per 🟢 FRESH session the plugin
+#: has already nudged the user about, written by the per-tick
+#: :func:`claude_agents_bar.idle_reminders.reconcile`. ``stop_ts`` pins the
+#: green episode — a newer ``stop_ts`` (the session finished again) resets
+#: ``fired_count`` to 0 so the escalation schedule restarts. Three
+#: tab-separated columns: ``session_id\tstop_ts\tfired_count``.
+IDLE_REMINDERS_PATH = HOME / ".claude" / "agent-state.idle-reminders"
+
+#: Mutex on :data:`IDLE_REMINDERS_PATH`. The plugin tick is the sole
+#: writer, but a slow tick could overlap the next one, so the rewrite
+#: takes the same ``mkdir``-based lock as the other sidecars.
+_IDLE_REMINDERS_LOCK_DIR = IDLE_REMINDERS_PATH.with_suffix(
+    IDLE_REMINDERS_PATH.suffix + ".lock.d"
+)
+
 #: Ad-hoc quiet-hours pause sidecar maintained by ``bin/app/quiet-pause.sh``
 #: and ``bin/app/quiet-resume.sh``. Holds a single naive ISO-8601 local
 #: timestamp (``"2026-05-26T23:00:00"``); a value in the future means
@@ -470,6 +486,17 @@ class Config:
     #: ``False`` to suppress the glyph and the row entirely. See
     #: ``docs/specs/0004-subagent-grouping.md`` § Model badge & submenu row.
     model_badge: bool = True
+    #: Use the response-marker **name** (`*-- Name - Summary*`) as the menu
+    #: row title. ``False`` (default): the row shows Claude Code's own
+    #: ``ai-title`` — the same English label VSCode displays, so the menu
+    #: stays consistent with the editor. ``True``: the marker name takes
+    #: priority over ``ai-title`` (see :attr:`TranscriptMeta.display_title`),
+    #: surfacing your own wording in the menu. The marker is *always* parsed
+    #: for the spoken notifications (the awaiting hook reads name + summary in
+    #: Bash, independent of this knob) — this toggle only affects the menu
+    #: title, and when off the per-tick title parse is skipped entirely.
+    #: See ``docs/specs/0007-session-title.md``.
+    use_session_titles_for_menubar: bool = False
     #: Quiet-hours window, ``"HH:MM-HH:MM"`` (24h local) or ``None``.
     #: Default ``"23:00-08:00"`` — a hands-off night window so the menu
     #: doesn't ding/speak while the user is asleep (the banner still
@@ -515,6 +542,20 @@ class Config:
     #: file, higher just adds latency. ``0`` disables the settle entirely.
     #: Range ``0..5``.
     editor_focus_settle_sec: float = 0.1
+    #: Base interval (seconds) for the idle-session reminder escalation
+    #: (spec 0008). While a session is 🟢 *fresh* (finished, not yet
+    #: clicked) the plugin re-nudges the user at doubling intervals —
+    #: ``interval, interval*2, interval*4, …`` — until the session leaves
+    #: the fresh window (a click, or the ``fresh_sec`` auto-promotion), so
+    #: the number of reminders is naturally bounded by how long green
+    #: lasts. Derived from ``notify_idle_interval_min`` in the JSON
+    #: (default 20 min → 1200 s, so the feature is on out of the box). An
+    #: explicit ``0`` / ``null`` / negative disables it. Read only on the
+    #: Python tick; the reminder banner/chime itself is fired by
+    #: ``hooks/notify-idle.sh`` (which reads ``notify_idle_phrases`` /
+    #: ``notify_sound_idle`` directly from the config, like the other
+    #: notify hooks).
+    notify_idle_interval_sec: int = 20 * 60
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -624,6 +665,12 @@ class Config:
             coerced["compact"] = data["compact"]
         if "model_badge" in data and isinstance(data["model_badge"], bool):
             coerced["model_badge"] = data["model_badge"]
+        if "use_session_titles_for_menubar" in data and isinstance(
+            data["use_session_titles_for_menubar"], bool
+        ):
+            coerced["use_session_titles_for_menubar"] = data[
+                "use_session_titles_for_menubar"
+            ]
         if "multi_workspace_mode" in data and isinstance(
             data["multi_workspace_mode"], bool
         ):
@@ -698,6 +745,32 @@ class Config:
                 _warn(
                     f"config: ignoring invalid keep_awake={raw_ka!r}; "
                     f"allowed: {sorted(_KEEP_AWAKE_MODES)}"
+                )
+
+        # Idle-reminder base interval (spec 0008). Doubles as the on/off
+        # switch: 0 / null / negative all disable the feature (interval 0 →
+        # reconcile returns early). take() won't do here — an explicit
+        # ``null`` must map to "off", not "keep the default", and a
+        # negative value should clamp to off rather than schedule a
+        # reminder in the past. A non-number is logged and the default
+        # (enabled, 20 min) is kept.
+        if "notify_idle_interval_min" in data:
+            raw_idle = data["notify_idle_interval_min"]
+            if raw_idle is None:
+                coerced["notify_idle_interval_sec"] = 0
+            elif isinstance(raw_idle, bool):
+                # JSON ``true``/``false`` are bool (a subclass of int); a
+                # boolean here is a config mistake, not a duration.
+                _warn(
+                    f"config: ignoring invalid notify_idle_interval_min="
+                    f"{raw_idle!r} (must be a number of minutes, 0, or null)"
+                )
+            elif isinstance(raw_idle, (int, float)):
+                coerced["notify_idle_interval_sec"] = max(0, int(raw_idle * 60))
+            else:
+                _warn(
+                    f"config: ignoring invalid notify_idle_interval_min="
+                    f"{raw_idle!r} (must be a number of minutes, 0, or null)"
                 )
 
         # Drop unknown keys silently — they're forward-compatibility hooks.
@@ -1065,6 +1138,11 @@ class TranscriptMeta:
         user just asked rather than a stale opening line) → first user
         prompt (works on truncated transcripts where the tail doesn't
         carry a parseable user event yet).
+
+        ``session_title`` is only populated when
+        :attr:`Config.use_session_titles_for_menubar` is on — otherwise it's
+        empty and the title falls through to ``ai_title`` (the VSCode-
+        consistent default). See ``read_transcript_meta``.
         """
         return _shorten(
             self.session_title or self.ai_title or self.last_user_message or self.raw_title

@@ -147,21 +147,8 @@ TITLE=$(printf '%s' "$TASK" | tr '\n' ' ' | head -c 240)
 TITLE="${TITLE:-Done}"
 
 # ── Pick a random phrase ─────────────────────────────────────────────────────
-# Bash 3.2 (system /bin/bash on macOS) lacks mapfile, so we use a while loop.
-_emit_phrases() {
-    [ -f "$_CAB_CONFIG" ] || return
-    /usr/bin/jq -r '.notify_phrases // empty | .[]?' "$_CAB_CONFIG" 2>/dev/null
-}
-PHRASES=()
-while IFS= read -r _phrase; do
-    [ -n "$_phrase" ] && PHRASES+=("$_phrase")
-done < <(_emit_phrases)
-
-if [ "${#PHRASES[@]}" -eq 0 ]; then
-    PHRASES=("Check it" "Done" "Ready for review" "Your turn")
-fi
-
-PHRASE="${PHRASES[$RANDOM % ${#PHRASES[@]}]}"
+PHRASE=$(_pick_phrase "notify_phrases" \
+    "Check it" "Done" "Ready for review" "Your turn")
 
 # ── Extract the spoken summary (spec 0005) ───────────────────────────────────
 # The LAST non-blank line of the assistant's reply, after the marker, if any —
@@ -177,47 +164,9 @@ SAY_TEXT="$PHRASE"
 BANNER_MSG="$PHRASE"
 [ -n "$SUMMARY" ] && BANNER_MSG="$SUMMARY"
 
-# ── Sound + speech (fire-and-forget, never block the hook) ───────────────────
-if [ "$SUPPRESS_SOUND" = "false" ] && [ -n "$SOUND_PATH" ]; then
-    afplay "$SOUND_PATH" >/dev/null 2>&1 &
-fi
-if [ "$SUPPRESS_VOICE" = "false" ] && [ "$VOICE" != "off" ]; then
-    if [ -n "$VOICE" ]; then
-        (sleep 1 && say -v "$VOICE" "$SAY_TEXT") >/dev/null 2>&1 &
-    else
-        (sleep 1 && say "$SAY_TEXT") >/dev/null 2>&1 &
-    fi
-fi
-disown 2>/dev/null || true
-
-# ── Banner notification ───────────────────────────────────────────────────────
-# terminal-notifier blocks macOS impersonation of Apple-signed bundles and
-# ignores -appIcon on recent macOS versions. We use -contentImage for the
-# side icon. The banner is clickable — clicking jumps to the right session
-# in the editor.
-#
-# With multi_workspace_mode on and the session's cwd + a window-raising
-# .app known, the click runs raise-and-open.sh (via -execute) so it lands
-# in the window matching the workspace rather than whatever is frontmost.
-# Otherwise (focus off, or args missing) we fall back to a plain -open of
-# the deeplink.
-if [ "$SUPPRESS_BANNER" = "false" ]; then
-    ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
-    # $BANNER_MSG is the extracted summary when present, else the random phrase.
-    NOTIFIER_ARGS=(-title "$TITLE" -subtitle "Claude Code" -message "$BANNER_MSG")
-    [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
-    if [ -n "$SESSION_URL" ]; then
-        EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")
-        if [ "$MULTI_WS" = "true" ] && [ -n "$CWD" ] && [ -n "$EDITOR_APP" ] \
-                && [ -d "$CWD" ] && [ -d "$EDITOR_APP" ]; then
-            NOTIFIER_ARGS+=(-execute "$(_raise_open_cmd "$SESSION_URL" "$CWD" "$EDITOR_APP" "$SID" "$SETTLE")")
-        else
-            NOTIFIER_ARGS+=(-open "$SESSION_URL")
-        fi
-    fi
-
-    if command -v terminal-notifier >/dev/null 2>&1; then
-        terminal-notifier "${NOTIFIER_ARGS[@]}" >/dev/null 2>&1 &
-        disown 2>/dev/null || true
-    fi
-fi
+# ── Chime + speech + banner (shared emit) ────────────────────────────────────
+# Banner title is the task title from the transcript; the click jumps to the
+# session in the editor. $BANNER_MSG is the extracted summary when present,
+# else the random phrase.
+_emit_notification "$TITLE" "$BANNER_MSG" "$SAY_TEXT" \
+    "$SESSION_URL" "$SID" "$CWD"

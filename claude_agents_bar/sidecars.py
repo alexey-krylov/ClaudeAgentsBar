@@ -371,6 +371,12 @@ def _forget_lock(timeout_sec: float = 2.0):
     return _mkdir_lock(core._FORGET_LOCK_DIR, timeout_sec)
 
 
+def _idle_reminders_lock(timeout_sec: float = 2.0):
+    """Mutex on ``agent-state.idle-reminders``. Only the plugin tick writes
+    it, but overlapping ticks could race, so the rewrite is serialised."""
+    return _mkdir_lock(core._IDLE_REMINDERS_LOCK_DIR, timeout_sec)
+
+
 # --------------------------------------------------------------------------- #
 # Sidecar GC                                                                   #
 # --------------------------------------------------------------------------- #
@@ -533,6 +539,67 @@ def read_forget() -> dict[str, int]:
     return _parse_clicks(raw)
 
 
+def read_idle_reminders() -> dict[str, tuple[int, int]]:
+    """Load the idle-reminders sidecar into ``{sid: (stop_ts, fired_count)}``.
+
+    Three-column TSV (``sid\tstop_ts\tfired_count``). A row missing a
+    column or with non-integer numbers is dropped silently — same
+    fail-open stance as :func:`read_clicks`; the worst case is one extra
+    reminder, never a crashed menu.
+    """
+    if not core.IDLE_REMINDERS_PATH.exists():
+        return {}
+    try:
+        raw = core.IDLE_REMINDERS_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    out: dict[str, tuple[int, int]] = {}
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        sid = parts[0]
+        try:
+            stop_ts = int(parts[1])
+            fired = int(parts[2])
+        except ValueError:
+            continue
+        out[sid] = (stop_ts, fired)
+    return out
+
+
+def write_idle_reminders(state: dict[str, tuple[int, int]]) -> None:
+    """Atomically replace the idle-reminders sidecar with ``state``.
+
+    Full rewrite (the map is tiny — one row per pending 🟢 session) under
+    :func:`_idle_reminders_lock`, via a tmp file + ``replace`` like
+    :func:`ack_fresh`. An empty ``state`` removes the file so a quiet
+    machine leaves no sidecar behind. Best-effort: any OSError is logged
+    and swallowed so a write failure never takes the menu down.
+    """
+    if not state:
+        try:
+            core.IDLE_REMINDERS_PATH.unlink()
+        except OSError:
+            pass
+        return
+    lines = [f"{sid}\t{stop_ts}\t{fired}" for sid, (stop_ts, fired) in state.items()]
+    with _idle_reminders_lock():
+        tmp = core.IDLE_REMINDERS_PATH.with_suffix(
+            core.IDLE_REMINDERS_PATH.suffix + f".{os.getpid()}.tmp"
+        )
+        try:
+            core.IDLE_REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            tmp.replace(core.IDLE_REMINDERS_PATH)
+        except OSError as exc:
+            _warn(f"idle-reminders write failed: {exc}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def ack_fresh(now: int) -> int:
     """Bulk-promote every currently-FRESH session to ACKNOWLEDGED.
 
@@ -639,6 +706,11 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
 
     Title priority: session_title (parsed from response marker) → ai-title
     (Claude Code event) → latest user message → raw_title (first message).
+    ``session_title`` is only parsed when
+    :attr:`core.Config.use_session_titles_for_menubar` is on; off (the
+    default) skips the per-tick parse and the menu shows ``ai-title`` — the
+    same label VSCode displays. The spoken notifications parse the marker
+    independently in Bash, so they're unaffected by this knob.
 
     The ``cwd`` returned here is the session's *initial* cwd; callers should
     prefer :attr:`HookSnapshot.cwd` when available, since sessions can change
@@ -682,7 +754,14 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
         # which visibly flap as tool output pushes the latest prompt out of
         # the tail window.
         ai_title = _latest_tail_ai_title(jsonl_path)
-    session_title = _latest_session_title_from_response(jsonl_path)
+    # Opt-in (default off): the menu shows ai-title unless the user asks for
+    # the marker name. When off we skip the parse entirely — keeps the tick
+    # cheap and the title consistent with what VSCode shows.
+    session_title = (
+        _latest_session_title_from_response(jsonl_path)
+        if core.CONFIG.use_session_titles_for_menubar
+        else ""
+    )
     return TranscriptMeta(
         session_title=session_title.strip(),
         ai_title=ai_title.strip(),

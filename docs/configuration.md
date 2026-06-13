@@ -51,8 +51,12 @@ restart needed.
 | `notify_sound_stop` | `"Hero"` | Chime played on `Stop`. Bare name (`"Hero"`, `"Glass"`, `"Funk"`, …) resolves under `/System/Library/Sounds/`. Absolute or `~`-paths are used as-is. `null` suppresses the chime — banner and voice still fire. Missing files log a warning to SwiftBar's log and fall back to no chime for that event. |
 | `notify_sound_wait` | `"Funk"` | Chime played on `PermissionRequest`. Same value shapes as `notify_sound_stop`. Default `"Funk"` is shorter and softer than `Hero` — *needs your attention* vs *task complete*. |
 | `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
-| `notify_summary_marker` | `"-- "` | Prefix of the assistant's italic closing line `*-- Name - Summary*` (name and summary split on the first `" - "`). Drives three things: the **menu title** (the name), the **Stop** speech/banner (the summary), and the **awaiting** speech/banner (name + summary). A single-field line (`*-- Summary*`, no name) still works — menu falls through to the auto-title, only the summary is spoken. `null` / `""` disables it everywhere. Matched literally (no regex), last line only. See *Spoken summary* below. |
+| `notify_summary_marker` | `"-- "` | Prefix of the assistant's italic closing line `*-- Name - Summary*` (name and summary split on the first `" - "`). Drives the **Stop** speech/banner (the summary), the **awaiting** speech/banner (name + summary), and — only when `use_session_titles_for_menubar` is on — the **menu title** (the name). `null` / `""` disables it everywhere. Matched literally (no regex), last line only. See *Spoken summary* below. |
+| `use_session_titles_for_menubar` | `false` | Whether the menu row title uses the response-marker **name** (`*-- Name - Summary*`). `false` (default): the row shows Claude Code's own `ai-title` — the same English label **VSCode displays**, so the menu stays consistent with the editor. `true`: the marker name takes priority over `ai-title`, surfacing your own wording (e.g. Russian) in the menu. Independent of this knob, the marker is **always** parsed for the spoken notifications (the awaiting hook reads name + summary in Bash) — so the primary reason to write the marker, *voice*, works either way. When off, the per-tick title parse is skipped entirely. See *Spoken summary* below. |
 | `remind_recap_after_min` | `null` | Controls the *Remind* submenu action. When the time since a session's last output (its transcript mtime) is **≥** this many minutes, a Remind click speaks the session's **opening** summary first, then its **latest** one — so you recall what a cold session was about before where it is now. While you're still in the flow (less time elapsed) it speaks only the latest. `null` / absent (default): always latest only. `0`: always recap. A session with a single summary speaks it once either way. See *Spoken summary* below. |
+| `notify_idle_interval_min` | `20` | Idle-session reminders. A finished session that sits 🟢 **green** (unread — you haven't clicked it) past this many minutes gets re-announced on the plugin tick (chime + spoken phrase + banner, like an awaiting prompt). Each subsequent reminder **doubles** the wait: 20, 40, 80, … minutes after the session finished. The number of reminders is bounded by how long the row stays green — `fresh_minutes` (default 60), after which it auto-fades to 🔵 and reminders stop — so the default 20-min start gives two reminders (20 and 40 min); raise `fresh_minutes` for more. Clicking the session (or *Tools → Acknowledge all*) ends the schedule. `0` / `null` turns the feature off. Respects `quiet_hours` and the *Banner only* audio mode. See *Idle reminders* below. |
+| `notify_idle_phrases` | `["Don't forget me", "Still unread", "Pending review", "Your turn"]` | Phrases spoken aloud and shown in the banner for an idle-session reminder. One is chosen at random per reminder. |
+| `notify_sound_idle` | `"Submarine"` | Chime played on an idle-session reminder. Same value shapes as `notify_sound_stop`. Default `"Submarine"` is a soft ping, distinct from `Hero` (done) and `Funk` (awaiting). |
 | `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
 | `quiet_hours_silences` | `["sound", "voice"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Default mutes audio (chime + voice) but the banner still appears so you don't miss the event. Add `"banner"` to go fully silent; list only `"voice"` to keep the chime. Unknown entries are dropped at load with a warning. |
 | `notify_audio` | `true` | Master switch for notification audio (chime **and** spoken `say`), independent of quiet hours. `true` (default): notifications sound off per `notify_sound_*` / `notify_voice`. `false`: banner only — no chime, no speech (the banner still appears). Toggled live from *Tools → Notifications* (*Banner and voice* / *Banner only*); once you pick one there, that sidecar choice overrides this knob, so it's only the first-launch default. |
@@ -170,6 +174,50 @@ Underlying hooks: `hooks/notify-stop.sh` and `hooks/notify-wait.sh`.
 Both are plain Bash, source the shared `hooks/_notify-common.sh`, read
 the same JSON config the plugin uses, and degrade silently when
 `terminal-notifier` / `jq` / the icon asset is missing.
+
+## Idle reminders
+
+`Stop` fires once, when the session finishes. But a finished session you
+never came back to just sits there 🟢 green — easy to forget. The
+**idle reminder** re-announces it.
+
+Unlike the notifications above, this isn't tied to a Claude Code event —
+there's no "20 minutes after Stop" hook, and the plugin runs no daemon.
+Instead it rides the SwiftBar tick (the plugin re-runs every 5 s whether
+or not the menu is open): on each tick the plugin checks which green,
+**unread** (not yet clicked) sessions have crossed their next reminder
+interval and fires `hooks/notify-idle.sh` for them — same chime + spoken
+phrase + clickable banner as an awaiting prompt, just with its own sound
+(`notify_sound_idle`), phrases (`notify_idle_phrases`) and title.
+
+The schedule **doubles** each time, measured from when the session
+finished:
+
+| Reminder | Default time after finish |
+|---|---|
+| 1st | 20 min (`notify_idle_interval_min`) |
+| 2nd | 40 min |
+| 3rd | 80 min |
+| … | ×2 each |
+
+How many actually fire is bounded by how long the row stays green —
+`fresh_minutes` (default **60**), after which the session auto-fades to
+🔵 *acknowledged* and reminders stop. So with the defaults you get **two**
+reminders (20 and 40 min; 80 > 60 is past the green window). Raise
+`fresh_minutes` to allow more, or shorten `notify_idle_interval_min` to
+fit more in.
+
+**Stopping reminders.** Clicking the session (or *Tools → Acknowledge
+all*) marks it read — it leaves the green group and the schedule ends.
+A new turn that finishes again restarts the schedule from the first
+reminder.
+
+**Turning it off.** Set `notify_idle_interval_min` to `0` or `null`.
+The feature is on by default at 20 minutes.
+
+Quiet hours and the *Banner only* audio mode apply exactly as they do to
+the other notifications. Progress is tracked in the
+`~/.claude/agent-state.idle-reminders` sidecar.
 
 ## Custom audio
 

@@ -9,16 +9,19 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ### Added
 
-- **Session titles from the response marker.** The summary line your
+- **Session titles from the response marker (opt-in).** The summary line your
   assistant ends each reply with is now **two-field** —
   `*-- Name - Summary*` (the `notify_summary_marker` prefix, then a `" - "`
-  divider). The menu shows the **name** as the session title — a meaningful,
-  context-aware label (e.g. your own Russian phrasing) in place of Claude
-  Code's auto-generated English `ai-title`. The parse runs at render time but
-  is gated on `notify_summary_marker` and skips non-assistant lines with a
-  byte prefilter, so a disabled marker costs nothing on the tick. A
-  single-field line (`*-- Summary*`, no `" - "`) has no name and falls
-  through to the auto-title — existing setups keep working. See
+  divider). With the new **`use_session_titles_for_menubar`** knob set to
+  `true`, the menu shows the **name** as the session title — your own
+  context-aware wording (e.g. Russian) in place of Claude Code's
+  auto-generated English `ai-title`. **Default `false`**: the menu keeps
+  showing `ai-title`, the same label VSCode displays, so the menu stays
+  consistent with the editor; when off the per-tick title parse is skipped
+  entirely. Either way the marker is parsed for the *spoken* notifications
+  (its primary purpose — see below), independent of this knob. When the
+  title parse does run it's gated on `notify_summary_marker` and byte-
+  prefiltered to assistant lines, so it stays cheap. See
   [spec 0007](./docs/specs/0007-session-title.md).
 - **Awaiting notifications now name the session.** A `PermissionRequest`
   (permission prompt) used to speak only a random "your turn" phrase. It now
@@ -54,6 +57,22 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   `notify_audio` config knob (default `true`) — the same
   first-launch-default-then-sidecar precedence as *Multi-workspace mode*.
   Localised across all shipped locales.
+- **Idle-session reminders.** A finished session that sits 🟢 green (unread —
+  you never clicked it) past a configurable interval is now re-announced —
+  chime + spoken phrase + clickable banner, like an awaiting prompt — with its
+  own sound (`notify_sound_idle`, default `Submarine`) and phrases
+  (`notify_idle_phrases`). The schedule **doubles** from when the session
+  finished: 20, 40, 80, … minutes (`notify_idle_interval_min`, default 20).
+  How many fire is bounded by how long the row stays green (`fresh_minutes`,
+  default 60) — with the defaults you get two reminders (20 and 40 min).
+  Clicking the session (or *Tools → Acknowledge all*) ends the schedule; a new
+  finished turn restarts it. There's no Claude Code "N minutes after Stop"
+  event and the plugin runs no daemon, so the reminder rides the 5-second
+  SwiftBar tick: `claude_agents_bar/idle_reminders.py` checks the green-and-
+  unread sessions each tick and fires the new (non-hook) `hooks/notify-idle.sh`,
+  tracking progress in `~/.claude/agent-state.idle-reminders`. Respects quiet
+  hours and *Banner only*. Set `notify_idle_interval_min` to `0` / `null` to
+  turn it off. See [spec 0008](./docs/specs/0008-idle-reminders.md).
 - **Three new row indicators.** A waiting row's right-hand label now reads
   *waiting {duration}* (e.g. *waiting 6m*) instead of a bare red duration, so a
   blocked session names its state. A **cwd collision** — two or more active
@@ -77,6 +96,11 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   `Stop` notification (and the *Remind* action) speak the **summary** — the
   text after the `" - "` divider — not the whole line, so the session name
   isn't read aloud as part of the summary.
+- **Notification hooks share one emit path.** The chime + speech + banner
+  tail and the random-phrase picker — previously copy-pasted between
+  `notify-stop.sh` and `notify-wait.sh` — are now `_emit_notification` /
+  `_pick_phrase` in `hooks/_notify-common.sh`. Both hooks (and the new
+  `notify-idle.sh`) are thin shims over them; behaviour is unchanged.
 
 ### Fixed
 

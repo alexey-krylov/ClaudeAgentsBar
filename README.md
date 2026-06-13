@@ -60,7 +60,7 @@ one-line `editor_url_scheme` change). Above 80 % context usage the
 row gets an inline `⚠ {pct}%` warning (red past 90 %), so a glance
 tells you which sessions are close to auto-compact.
 
-**Session titles** — sourced by priority: session name from Claude's response marker (format: `*-- Session name - Summary*`), then Claude's auto-generated summary, then the first user message, then initial session name as fallback. The same marker drives the spoken notifications — see [docs/configuration.md § Spoken summary](./docs/configuration.md#spoken-summary). Claude agents are instructed to end each reply with this line; you set that up once in your CLAUDE.md.
+**Session titles** — by default the row shows Claude's auto-generated `ai-title`, the same label VSCode displays, so the menu stays consistent with the editor. Set `use_session_titles_for_menubar: true` to instead use the **name** from Claude's response marker (`*-- Session name - Summary*`) — your own wording in place of the English auto-title. Either way that marker drives the spoken notifications (its primary purpose) — see [docs/configuration.md § Spoken summary](./docs/configuration.md#spoken-summary). Claude agents are instructed to end each reply with this line; you set that up once in your CLAUDE.md.
 
 **Submenu per row** — *Mark as read*, *Forget*, *Delete…*, *Reveal
 in Finder*, plus git branch, the model running the session
@@ -90,7 +90,10 @@ for permission), and shows a clickable banner that jumps straight to
 the waiting session. Both phrase lists are config knobs — replace
 them with whatever you find funnier (jokes, your cat's name, a Star
 Wars soundboard). One-liner exchanges are skipped via
-`notify_threshold_sec`. Requires `terminal-notifier`; see
+`notify_threshold_sec`. A finished session you never came back to gets
+**re-nudged** at doubling intervals (20, 40, … min) while it sits 🟢
+unread — `notify_idle_interval_min`, off with `0`. Requires
+`terminal-notifier`; see
 [docs/configuration.md § Notifications](./docs/configuration.md#notifications)
 to silence one channel without losing the other.
 

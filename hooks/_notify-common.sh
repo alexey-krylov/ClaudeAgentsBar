@@ -467,3 +467,85 @@ _compute_quiet_state() {
         *,banner,*) SUPPRESS_BANNER=true ;;
     esac
 }
+
+# ── Random phrase picker ─────────────────────────────────────────────────────
+# Echo one random phrase for an event. Reads the JSON array at <config_key>
+# (e.g. notify_phrases / notify_wait_phrases / notify_idle_phrases); when it's
+# missing/empty/not-an-array, falls back to the defaults passed as the
+# remaining arguments. macOS ships bash 3.2 (no `mapfile`), hence the while
+# loop. Empty output only if the config array is empty AND no defaults given.
+_pick_phrase() {
+    local key="$1"; shift
+    local phrases=() p
+    while IFS= read -r p; do
+        [ -n "$p" ] && phrases+=("$p")
+    done < <(
+        [ -f "$_CAB_CONFIG" ] && /usr/bin/jq -r \
+            --arg k "$key" '.[$k] // empty | .[]?' "$_CAB_CONFIG" 2>/dev/null
+    )
+    if [ "${#phrases[@]}" -eq 0 ]; then
+        phrases=("$@")
+    fi
+    [ "${#phrases[@]}" -eq 0 ] && return
+    echo "${phrases[$RANDOM % ${#phrases[@]}]}"
+}
+
+# ── Notification emit (chime + speech + banner) ──────────────────────────────
+# The shared tail of every notify hook: play the chime, speak the phrase,
+# and pop the clickable terminal-notifier banner. Reads the channel state
+# the caller has already computed — the SUPPRESS_* flags (quiet hours +
+# audio master switch), SOUND_PATH / VOICE (resolved audio), and the
+# banner-click context SCHEME / MULTI_WS / SETTLE. Everything event-specific
+# (which sound, which phrase, which title, how SAY/BANNER read) is decided by
+# the caller and handed in as arguments:
+#
+#   $1 title        banner title line
+#   $2 banner_msg   banner body
+#   $3 say_text     full sentence read by say(1)
+#   $4 session_url  deeplink for the banner click ("" → non-clickable banner)
+#   $5 sid          session id (anchors the multi-workspace window raise)
+#   $6 cwd          session cwd (picks the editor window to raise)
+#
+# All audio/banner work is fire-and-forget (backgrounded + disowned) so the
+# hook never blocks on afplay/say/terminal-notifier.
+_emit_notification() {
+    local title="$1" banner_msg="$2" say_text="$3" session_url="$4" sid="$5" cwd="$6"
+
+    if [ "$SUPPRESS_SOUND" = "false" ] && [ -n "$SOUND_PATH" ]; then
+        afplay "$SOUND_PATH" >/dev/null 2>&1 &
+    fi
+    if [ "$SUPPRESS_VOICE" = "false" ] && [ "$VOICE" != "off" ]; then
+        if [ -n "$VOICE" ]; then
+            (sleep 1 && say -v "$VOICE" "$say_text") >/dev/null 2>&1 &
+        else
+            (sleep 1 && say "$say_text") >/dev/null 2>&1 &
+        fi
+    fi
+    disown 2>/dev/null || true
+
+    [ "$SUPPRESS_BANNER" = "false" ] || return
+
+    # terminal-notifier ignores -appIcon on recent macOS; -contentImage is
+    # the side icon. The banner is clickable — with multi_workspace_mode on
+    # and the session's cwd + a window-raising .app known, the click runs
+    # raise-and-open.sh (via -execute) so it lands in the window matching the
+    # workspace rather than whatever is frontmost; otherwise it falls back to
+    # a plain -open of the deeplink.
+    local icon="${HOME}/.claude/hooks/assets/claude-icon.png"
+    local notifier_args=(-title "$title" -subtitle "Claude Code" -message "$banner_msg")
+    [ -f "$icon" ] && notifier_args+=(-contentImage "$icon")
+    if [ -n "$session_url" ]; then
+        local editor_app
+        editor_app=$(_editor_app_for_scheme "$SCHEME")
+        if [ "$MULTI_WS" = "true" ] && [ -n "$cwd" ] && [ -n "$editor_app" ] \
+                && [ -d "$cwd" ] && [ -d "$editor_app" ]; then
+            notifier_args+=(-execute "$(_raise_open_cmd "$session_url" "$cwd" "$editor_app" "$sid" "$SETTLE")")
+        else
+            notifier_args+=(-open "$session_url")
+        fi
+    fi
+    if command -v terminal-notifier >/dev/null 2>&1; then
+        terminal-notifier "${notifier_args[@]}" >/dev/null 2>&1 &
+        disown 2>/dev/null || true
+    fi
+}
