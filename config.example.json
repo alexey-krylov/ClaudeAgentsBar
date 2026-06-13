@@ -97,6 +97,9 @@
   "// notify_summary_marker.4": "Tell your Claude to END every reply with an italic line like '*-- did the thing*' — see docs/configuration.md § Spoken summary. Matched literally (no regex). Default: '-- '.",
   "notify_summary_marker": "-- ",
 
+  "// remind_recap_after_min": "Remind submenu action. When the time since a session's last output (its transcript mtime) is at least this many minutes, a Remind click first speaks the session's OPENING summary, then its latest one — so you recall what a cold session was about before where it is now. While still in the flow (less time elapsed) it speaks only the latest. null / absent (default) → always latest only; 0 → always recap. Sessions with a single summary speak it once regardless.",
+  "remind_recap_after_min": null,
+
   "// quiet_hours": "Scheduled silence window (24h local, 'HH:MM-HH:MM'). start>end wraps midnight. Default '23:00-08:00' — set to null to disable.",
   "quiet_hours": "23:00-08:00",
 
@@ -113,5 +116,5 @@
   "multi_workspace_mode": true,
 
   "// editor_focus_settle_sec": "Only used when multi_workspace_mode is true. Seconds to wait after raising the window before firing the deeplink, so the anchor tab finishes rendering and the resumed chat lands on top of it instead of under it. Default 0.1. Lower trims latency but risks landing on the file under load; 0 skips the wait. Range 0..5.",
-  "editor_focus_settle_sec": 0.1
+  "editor_focus_settle_sec": 0.3
 }

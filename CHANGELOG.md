@@ -22,7 +22,11 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   "configure Claude to end replies with a summary line" hint instead of going
   silent. Being an explicit click, it speaks even under *Banner only* mode or
   `notify_voice: "off"` (which only mute the *automatic* speech). Localised
-  across all shipped locales.
+  across all shipped locales. With the new `remind_recap_after_min` knob, a
+  click on a session that's gone quiet for at least that many minutes also
+  speaks the session's **opening** summary first (then the latest), so you can
+  recall what a cold thread was about before where it is now; while you're
+  still in the flow it stays on the latest only. Unset (default) → latest only.
 - **Notification mode in the menu** — *Tools → Notifications* now has a
   *Banner and voice* / *Banner only* radio pair. *Banner only* mutes the
   chime **and** the spoken `say` for every notification while keeping the

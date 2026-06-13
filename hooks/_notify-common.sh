@@ -179,6 +179,37 @@ _extract_summary() {
         | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
+# Echo the FIRST and LAST spoken-summary of a session as two lines (in that
+# order), or nothing when the session has none. Unlike _extract_summary (which
+# only looks at the very last reply), this scans every assistant turn: for each
+# it takes the turn's last non-blank line and, if that starts with the marker,
+# treats it as that turn's summary. The first such line is the session's
+# opening summary ("what was this about?"), the last is its current state. Only
+# each turn's *closing* line is tested, so a `-- ` mid-reply can't false-match.
+# first == last when the session has exactly one summary — caller de-dupes.
+# Powers the Remind click, which can speak both to refresh context.
+_summary_endpoints() {
+    local transcript="$1" marker="$2"
+    [ -n "$marker" ] && [ -n "$transcript" ] && [ -f "$transcript" ] || return
+    /usr/bin/jq -rc '
+        select(.type=="assistant")
+        | [ .message.content[]? | select(.type=="text") | .text ]
+        | join("\n") | split("\n")
+        | map(select(test("\\S"))) | last // empty
+    ' "$transcript" 2>/dev/null \
+    | /usr/bin/awk -v m="$marker" '
+        { line = $0
+          sub(/^[*_]+/, "", line)        # strip leading markdown italic/bold
+          sub(/[*_]+$/, "", line)        # strip trailing markers
+          if (index(line, m) == 1) {
+              s = substr(line, length(m) + 1)
+              sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s)
+              if (!fs) { first = s; fs = 1 }
+              last = s
+          } }
+        END { if (fs) { print first; print last } }'
+}
+
 # ── Sound resolver ───────────────────────────────────────────────────────────
 # Resolve a `notify_sound_*` value to an absolute, existing file path.
 # Echoes the resolved path on stdout or the empty string when the chime

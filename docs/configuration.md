@@ -52,6 +52,7 @@ restart needed.
 | `notify_sound_wait` | `"Funk"` | Chime played on `PermissionRequest`. Same value shapes as `notify_sound_stop`. Default `"Funk"` is shorter and softer than `Hero` — *needs your attention* vs *task complete*. |
 | `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
 | `notify_summary_marker` | `"-- "` | On `Stop`, if the **last line** of the assistant's reply starts with this prefix (after stripping markdown italic/bold wrappers), the text after it is the summary: `say` reads the random phrase **then** the summary ("Done. …"), while the banner shows the **summary alone**. Last line isn't a marker line — or `null` / `""` — both fall back to just a random phrase. Matched literally (no regex). You tell your Claude to end replies with an italic `*-- …*` line; see *Spoken summary* below. |
+| `remind_recap_after_min` | `null` | Controls the *Remind* submenu action. When the time since a session's last output (its transcript mtime) is **≥** this many minutes, a Remind click speaks the session's **opening** summary first, then its **latest** one — so you recall what a cold session was about before where it is now. While you're still in the flow (less time elapsed) it speaks only the latest. `null` / absent (default): always latest only. `0`: always recap. A session with a single summary speaks it once either way. See *Spoken summary* below. |
 | `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
 | `quiet_hours_silences` | `["sound", "voice"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Default mutes audio (chime + voice) but the banner still appears so you don't miss the event. Add `"banner"` to go fully silent; list only `"voice"` to keep the chime. Unknown entries are dropped at load with a warning. |
 | `notify_audio` | `true` | Master switch for notification audio (chime **and** spoken `say`), independent of quiet hours. `true` (default): notifications sound off per `notify_sound_*` / `notify_voice`. `false`: banner only — no chime, no speech (the banner still appears). Toggled live from *Tools → Notifications* (*Banner and voice* / *Banner only*); once you pick one there, that sidecar choice overrides this knob, so it's only the first-launch default. |
@@ -235,12 +236,20 @@ row's submenu: it re-speaks that session's summary on demand, using
 `notify_voice`. The transcript is read **when you click**, not on the
 render tick, so it adds no per-tick cost. The item is enabled whenever a
 marker is configured and greyed-out when you disable it (`null` / `""`).
-If the marker is on but the session's latest reply had no summary line,
-the click speaks a short "configure Claude to end replies with a summary
-line" hint rather than staying silent. Unlike the automatic Stop speech,
-an explicit *Remind* click speaks even under *Banner only* or
-`notify_voice: "off"` — those mute only the automatic notification, not a
-deliberate click.
+
+By default a click speaks just the **latest** summary. Set
+[`remind_recap_after_min`](#configuration) to also hear the session's
+**opening** summary first when the session has gone cold (no output for
+that many minutes) — handy for picking a thread back up: you hear what it
+was about, then where it is now. While you're still in the flow it stays
+on the latest only, so an active session isn't verbose. A session with
+only one summary speaks it once regardless.
+
+If the marker is on but the session has no summary at all, the click
+speaks a short "configure Claude to end replies with a summary line" hint
+rather than staying silent. Unlike the automatic Stop speech, an explicit
+*Remind* click speaks even under *Banner only* or `notify_voice: "off"` —
+those mute only the automatic notification, not a deliberate click.
 
 ### Setting up Claude to produce the summary line
 
