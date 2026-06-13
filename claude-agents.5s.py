@@ -6,7 +6,7 @@
 # <xbar.title.de>Claude Agents Bar</xbar.title.de>
 # <xbar.title.it>Claude Agents Bar</xbar.title.it>
 # <xbar.title.vi>Claude Agents Bar</xbar.title.vi>
-# <xbar.version>1.1.2</xbar.version>
+# <xbar.version>1.2.0</xbar.version>
 # <xbar.author>Alexey Krylov</xbar.author>
 # <xbar.author.github>alexey-krylov/ClaudeAgentsBar</xbar.author.github>
 # <xbar.desc>Live status of Claude Code sessions across all projects</xbar.desc>
