@@ -80,6 +80,18 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ### Fixed
 
+- **Clicking a session in a freshly-opened, still-empty folder now lands in
+  the right window.** With `multi_workspace_mode` on, `hooks/raise-and-open.sh`
+  surfaces the owning window by opening a file inside the session's cwd — but
+  a brand-new window whose folder has no files yet had nothing to anchor on,
+  so the click fell through to a bare deeplink and resumed in whatever window
+  was frontmost (the wrong one). It now falls back to opening the **folder**
+  itself (`open -a <editor> <cwd>`), which focuses the single-folder window
+  already holding it instead of spawning a new one — no extra tab, no
+  Accessibility permission. (A cwd that is one root of a multi-root workspace
+  *and* file-empty can still spawn a new window per
+  [VS Code #215749](https://github.com/microsoft/vscode/issues/215749), but
+  that combination is rare and the prior behaviour was no better.)
 - **Session title no longer flickers mid-turn** — in sessions whose first
   message carried large pasted attachments (images → big base64), the
   AI-generated title sat past the 256 KB head-scan window, so the row fell

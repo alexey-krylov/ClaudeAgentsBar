@@ -31,6 +31,12 @@ terminal-notifier `-execute`):
    stable project file (`README`, …).
 2. `open -a <editor.app> <anchor>` — an "open document" Apple Event the
    editor routes to the window whose workspace already contains the file.
+   When the cwd has **no file at all** (a freshly-opened folder with
+   nothing created yet), open the **folder** instead (`open -a
+   <editor.app> <cwd>`): a single-folder window is focused rather than a
+   new one spawned, recovering the "new window, no files yet" case
+   permission-free. The multi-root caveat below applies, but is rare here
+   since this branch only runs when no file exists to anchor on.
 3. Wait for the editor to be frontmost (`lsappinfo`), then a short
    `editor_focus_settle_sec` pause, then `open <deeplink>`.
 
@@ -41,12 +47,18 @@ the deeplink directly (the pre-existing single-window path).
 
 ## Reasons
 
-**Open a file, not the folder.** `open -a <app> <cwd>` / `code <cwd>` are
-folder-identity based: when the cwd is one root of an already-open
-multi-root workspace they spawn a brand-new single-folder window
-([VS Code #215749](https://github.com/microsoft/vscode/issues/215749)).
+**Open a file, not the folder — when there is one.** `open -a <app> <cwd>`
+/ `code <cwd>` are folder-identity based: when the cwd is one root of an
+already-open multi-root workspace they spawn a brand-new single-folder
+window ([VS Code #215749](https://github.com/microsoft/vscode/issues/215749)).
 Opening a *file* is workspace-aware and surfaces the existing window,
-multi-root included.
+multi-root included — so it's the preferred path. The folder form is kept
+only as a last-resort fallback for a cwd with no file to anchor on (a
+freshly-opened, still-empty folder): there's nothing else to target, and
+for the single-folder window that case actually is, folder-identity
+focusing is exactly right. The #215749 hazard is accepted there because it
+only fires for a multi-root root that also happens to be file-empty — rare,
+and the alternative (landing in the frontmost window) is no better.
 
 **`open -a`, not the editor CLI.** `code -g <file>` is also
 workspace-aware but pays a ~1 s Node CLI startup per click; `open -a`

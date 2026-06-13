@@ -11,20 +11,27 @@
 # window (and can miss entirely, since the session must belong to the
 # focused workspace). Surfacing the matching window first fixes that.
 #
-# How it surfaces the window: by opening a *file* inside <cwd> with
-# `open -a <app> <file>`, NOT the folder. The folder vs file distinction
-# is the whole trick:
-#   * `open -a <app> <cwd>` / `code <cwd>` are folder-identity based — if
-#     <cwd> is one of the roots of an already-open *multi-root* workspace,
-#     they spawn a brand-new single-folder window instead of focusing the
-#     existing one (VS Code issue #215749).
+# How it surfaces the window: preferably by opening a *file* inside <cwd>
+# with `open -a <app> <file>`, falling back to the *folder* when no file is
+# anchorable. The file-vs-folder distinction is the trick:
 #   * `open -a <app> <file>` sends an "open document" Apple Event, which
 #     the editor routes to the window whose workspace already contains
 #     that file — multi-root included. Same workspace-aware result as
 #     `code -g <file>`, but via LaunchServices, so it skips the ~1s
 #     node-CLI startup and stays near-instant (~0.07s). That speed is why
 #     no "is more than one window open?" check is needed — the focus step
-#     is cheap enough to always run.
+#     is cheap enough to always run. This is the preferred path.
+#   * `open -a <app> <cwd>` / `code <cwd>` are folder-identity based. For a
+#     single-folder window VS Code focuses the window already holding <cwd>
+#     (its documented reuse behaviour) — which is exactly what we want when
+#     <cwd> has no anchorable file yet (a freshly-opened folder with nothing
+#     created in it). The one caveat: if <cwd> is one root of an already-open
+#     *multi-root* workspace, this spawns a brand-new single-folder window
+#     instead of focusing the existing one (VS Code issue #215749). A
+#     brand-new empty folder is single-root in practice, so the folder path
+#     is the right recovery for the common "new window, no files yet" case —
+#     and it needs no Accessibility/Automation permission. We only reach it
+#     when there's no file to anchor on, so the multi-root hazard stays rare.
 #
 # Anchor choice: the deeplink itself can't be the anchor — a Claude Code
 # session tab is a virtual extension document, not a file we can target,
@@ -33,8 +40,10 @@
 # real file Claude touched in this session (newest tool_use `file_path`
 # inside <cwd>, read from the transcript) — that both surfaces the correct
 # window AND lands you on the file the work was about. Falls back to a
-# stable project file (README, …) when the transcript has no usable path.
-# The cost is one editor tab; the deeplink then focuses the session on top.
+# stable project file (README, …) when the transcript has no usable path,
+# and finally to opening <cwd> itself when the folder holds no file at all.
+# The cost is one editor tab (none for the folder fallback); the deeplink
+# then focuses the session on top.
 #
 # Two callers, both clicks that resume a session in the editor:
 #   * the menu-bar dropdown row — bin/app/open-session.sh runs this
@@ -49,9 +58,10 @@
 #
 # <settle-sec> is the post-raise pause before the deeplink (see below);
 # defaults to 0.1 when blank/invalid. Best-effort throughout: a
-# blank/unknown cwd or app, or a cwd with no anchorable file — any of
-# these just skips the focus step and opens the deeplink directly (the
-# pre-fix behaviour: it lands in the frontmost window).
+# blank/unknown cwd or app skips the focus step and opens the deeplink
+# directly (the pre-fix behaviour: it lands in the frontmost window). A
+# cwd with no anchorable file no longer skips — it now raises the window
+# by opening the folder itself (see "How it surfaces the window" above).
 
 set -u
 
@@ -121,10 +131,20 @@ _anchor_file() {
 _raise_window() {
     [ -n "$CWD" ] && [ -n "$APP" ] && [ -d "$CWD" ] && [ -d "$APP" ] || return 1
     local anchor
-    anchor="$(_anchor_file "$CWD" "$SID")" && [ -n "$anchor" ] || return 1
-    # `open -a <app> <file>` = "open document" Apple Event → routed to the
-    # window owning <file>'s workspace (multi-root aware), near-instant.
-    /usr/bin/open -a "$APP" "$anchor" >/dev/null 2>&1 || return 1
+    anchor="$(_anchor_file "$CWD" "$SID")"
+    if [ -n "$anchor" ]; then
+        # `open -a <app> <file>` = "open document" Apple Event → routed to the
+        # window owning <file>'s workspace (multi-root aware), near-instant.
+        /usr/bin/open -a "$APP" "$anchor" >/dev/null 2>&1 || return 1
+        return 0
+    fi
+    # No anchorable file — a freshly-opened folder with nothing created in it
+    # yet. Open the *folder*: for a single-folder window VS Code focuses the
+    # window already holding <cwd> instead of spawning a new one, recovering
+    # the otherwise-unreachable "new window on its own folder, no files yet"
+    # case with no Accessibility permission. (Multi-root caveat noted in the
+    # header; rare here since we only reach this when no file exists at all.)
+    /usr/bin/open -a "$APP" "$CWD" >/dev/null 2>&1 || return 1
     return 0
 }
 

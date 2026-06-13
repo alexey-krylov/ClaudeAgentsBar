@@ -426,6 +426,9 @@ touched file** as the anchor (so you land where the work was), falling
 back to a stable project file like `README`. That costs one extra editor
 tab; `editor_focus_settle_sec` is the brief pause that lets the tab
 render so the resumed chat ends up on top of it rather than under it.
+When the cwd has no file to anchor on yet — a freshly-opened folder with
+nothing created in it — it opens the *folder* instead (`open -a <editor>
+<cwd>`), which focuses a single-folder window without an extra tab.
 
 Turn `multi_workspace_mode` **off** if you only ever run one editor
 window and want the snappiest open: clicks then fire the deeplink

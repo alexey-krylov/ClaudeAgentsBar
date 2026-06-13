@@ -199,11 +199,21 @@ session transcript) — so the tab you land on is the one the work was
 about. It falls back to a stable project file (`README`, …) when the
 transcript has no usable path. The trade-off is one extra editor tab.
 
+When the cwd holds **no file at all** — a folder you just opened in a
+fresh window and haven't created anything in yet — it instead opens the
+**folder** (`open -a <editor> <cwd>`). For a single-folder window the
+editor focuses the window already holding that folder rather than
+spawning a new one, so this still lands you in the right window (and
+without an extra tab). The one edge it can't cover: if that cwd is one
+root of an already-open multi-root workspace, opening the folder spawns
+a new single-folder window ([VS Code #215749](https://github.com/microsoft/vscode/issues/215749)) —
+unlikely for a brand-new empty folder, which is single-root in practice.
+
 This only kicks in for the built-in schemes (`vscode://`, `vscodium://`,
 `cursor://`, `windsurf://`, `positron://`) whose `.app` and CLI the
-plugin knows. If the editor CLI can't be resolved, the cwd has no
-anchorable file, or a custom `editor_url_scheme` is set, it falls back to
-opening the deeplink directly (which lands in the frontmost window).
+plugin knows. If the editor CLI can't be resolved or a custom
+`editor_url_scheme` is set, it falls back to opening the deeplink
+directly (which lands in the frontmost window).
 
 ## "Configuration…" opens TextEdit, not my editor
 
