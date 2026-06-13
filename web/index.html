@@ -173,7 +173,7 @@
       <article class="rounded-xl border border-brand/40 bg-brand/5 p-5">
         <div class="text-xl">🔔</div>
         <h3 class="mt-2 font-semibold">Audible nudges <span class="text-brand text-xs font-mono align-middle">· most-loved</span></h3>
-        <p class="text-sm text-mute mt-1">Chime + a spoken phrase via macOS <code>say</code> + a click-to-jump banner when a session finishes or stalls. <span class="text-text">Every phrase and the voice are yours to set</span> — see below.</p>
+        <p class="text-sm text-mute mt-1">Chime + a spoken line via macOS <code>say</code> + a click-to-jump banner when a session finishes, stalls, or sits unread. It speaks <span class="text-text">what the session did and which one needs you</span> — every phrase and the voice yours to set. See below.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">🤖</div>
@@ -186,6 +186,11 @@
         <p class="text-sm text-mute mt-1">Past 80% context the row shows <code class="text-warn">⚠ {pct}%</code> (red past 90%) — a glance flags who's near auto-compact.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
+        <div class="text-xl">⎇</div>
+        <h3 class="mt-2 font-semibold">Branch &amp; worktree cues</h3>
+        <p class="text-sm text-mute mt-1">Rows flag a shared-folder <strong class="text-text">collision</strong> (<code class="text-warn">⎇</code>), an isolated <strong class="text-text">worktree</strong> checkout (<code class="text-fresh">ⓦ</code>), and a blocked one reads <code>waiting {duration}</code> — so you see <em>where</em> work lands, not just that it's running.</p>
+      </article>
+      <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">🌙</div>
         <h3 class="mt-2 font-semibold">Quiet hours & keep-awake</h3>
         <p class="text-sm text-mute mt-1">Pause notifications on a schedule; <code>caffeinate -i</code> wrapper (off / auto / always) keeps the Mac up while agents run.</p>
@@ -193,12 +198,12 @@
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">🏷️</div>
         <h3 class="mt-2 font-semibold">Per-row submenu</h3>
-        <p class="text-sm text-mute mt-1">Mark as read, Forget, Delete, Reveal in Finder — plus git branch, model chip, context %, and last <code>tool_use</code> on hover.</p>
+        <p class="text-sm text-mute mt-1"><strong class="text-text">Remind</strong> (re-speak its last summary), Mark as read, Forget, Delete, Reveal in Finder — plus git branch, model chip, context %, and last <code>tool_use</code> on hover.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">🧰</div>
         <h3 class="mt-2 font-semibold">Tools submenu</h3>
-        <p class="text-sm text-mute mt-1">Bulk acknowledge/forget, today's activity (turns, tokens, by model), notification controls, and a jump to your config.</p>
+        <p class="text-sm text-mute mt-1">Bulk acknowledge/forget, today's activity (turns, tokens, by model), a <em>Banner-and-voice / Banner-only</em> toggle, and a jump to your config.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">📐</div>
@@ -224,20 +229,26 @@
       <p class="text-brand text-sm font-mono">most-mentioned feature</p>
       <div class="mt-3 grid lg:grid-cols-2 gap-10 items-center">
         <div>
-          <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">Voice notifications you actually write yourself.</h2>
+          <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">Hear <em>what</em> a session did — and <em>which</em> one needs you.</h2>
           <p class="mt-4 text-mute">
-            When a session finishes or stalls on a permission prompt, your Mac
-            <em>says it out loud</em> — so you can keep working in another window
-            and still know exactly when an agent needs you. The thing people
-            keep calling out: <strong class="text-text">every spoken line is yours to change.</strong>
+            When a session finishes, stalls on a permission prompt, or sits
+            unread, your Mac <em>says it out loud</em> — not just a chime, but a
+            one-line summary of what it did and, for a blocked session, its
+            name, so with five agents running you know by ear which to open
+            without ⌘-tabbing. The summary comes from the
+            <code class="text-text">*-- Name - Summary*</code> line your replies end
+            with. And the thing people keep calling out:
+            <strong class="text-text">every spoken phrase is yours to change.</strong>
           </p>
           <ul class="mt-5 space-y-2 text-sm text-mute">
-            <li>🟢 <strong class="text-text">On finish</strong> — random line from <code class="text-fresh">notify_phrases</code></li>
-            <li>🟡 <strong class="text-text">On permission prompt</strong> — random line from <code class="text-working">notify_wait_phrases</code></li>
-            <li>🗣️ Any macOS voice via <code>notify_voice</code> (<code>say -v Samantha …</code>); <code>say</code> reads any UTF-8 string</li>
-            <li>🤫 <code>notify_threshold_sec</code> skips quick one-liner turns; quiet hours mute it on a schedule</li>
+            <li>🟢 <strong class="text-text">On finish</strong> — speaks the summary of what the session just did (no marker → a random <code class="text-fresh">notify_phrases</code> line)</li>
+            <li>🟡 <strong class="text-text">On a permission prompt</strong> — names the blocked session + what it was doing, after a <code class="text-working">notify_wait_phrases</code> line</li>
+            <li>⏰ <strong class="text-text">Idle nudge</strong> — a finished session you never opened is re-announced on a doubling schedule (20 → 40 → 80 min) with its own <code>notify_idle_phrases</code></li>
+            <li>🔁 <strong class="text-text">Remind</strong> — any row's submenu re-speaks its last summary on demand, even under <em>Banner only</em></li>
+            <li>🔇 One-click <strong class="text-text">Banner only</strong> in <em>Tools → Notifications</em> mutes speech + chime, keeps the banner</li>
+            <li>🗣️ Any macOS voice via <code>notify_voice</code>; multi-part lines land as separate beats with a short pause between them</li>
           </ul>
-          <p class="mt-5 text-sm text-mute">Your name, inside jokes, a movie line, your dog's name — whatever makes you look up. Each event picks one at random.</p>
+          <p class="mt-5 text-sm text-mute">Your name, inside jokes, a movie line, your dog's name — whatever makes you look up. The same marker can also retitle the menu rows (opt-in).</p>
 
           <button id="speakBtn"
             class="mt-6 inline-flex items-center gap-2 rounded-lg border border-brand px-4 py-2.5 text-sm text-brand hover:bg-brand hover:text-ink transition">
@@ -256,19 +267,20 @@
 <pre class="px-4 py-3 text-xs font-mono leading-relaxed overflow-x-auto"><span class="text-mute">{</span>
   <span class="text-ack">"notify_phrases"</span>: [<span class="text-fresh">"It is done, my liege"</span>, <span class="text-fresh">"Touch grass, I got this"</span>],
   <span class="text-ack">"notify_wait_phrases"</span>: [<span class="text-working">"I need an adult"</span>, <span class="text-working">"Halt — human required"</span>],
+  <span class="text-ack">"notify_idle_phrases"</span>: [<span class="text-warn">"Still here — still unread"</span>],
   <span class="text-ack">"notify_voice"</span>: <span class="text-fresh">"Samantha"</span>,
   <span class="text-ack">"notify_threshold_sec"</span>: <span class="text-brand">30</span>
 <span class="text-mute">}</span></pre>
           </div>
-          <!-- macOS-ish banner -->
+          <!-- macOS-ish banner (v2: emoji+phrase title, project — branch, name — summary) -->
           <div class="rounded-2xl bg-panel2/90 border border-line p-4 flex items-start gap-3 glow">
             <div class="text-2xl">◐</div>
-            <div class="flex-1">
-              <div class="text-sm font-semibold">Claude Code</div>
-              <div id="bannerPhrase" class="text-sm text-mute">It is done, my liege</div>
-              <div class="text-xs text-mute/70 mt-1">Refactor authentication middleware · click to open</div>
+            <div class="flex-1 min-w-0">
+              <div id="bannerPhrase" class="text-sm font-semibold truncate">❓ I need an adult</div>
+              <div id="bannerSub" class="text-xs text-mute mt-0.5 truncate">api-gateway — <span class="text-fresh">ⓦ</span> feat/rate-limit</div>
+              <div id="bannerDetail" class="text-xs text-mute/70 mt-1 truncate">Rate limiter — needs approval to edit nginx.conf · click to open</div>
             </div>
-            <div class="text-xs text-mute">now</div>
+            <div class="text-xs text-mute shrink-0">now</div>
           </div>
         </div>
       </div>
@@ -482,37 +494,43 @@ brew install alexey-krylov/claude-agents-bar/claude-agents-bar</pre>
     }, 1900);
 
     // ── voice notification demo (Web Speech API) ─────────────────
-    // Mirrors notify_phrases / notify_wait_phrases. Click to actually
-    // hear a line — the real plugin does this via macOS `say`.
-    const PHRASES = [
-      'It is done, my liege',
-      'Touch grass, I got this',
-      'Done — you may praise me now',
-      'Beep boop, mission complete',
-      'I need an adult',
-      'Halt — human required',
-      'Permission, please, peasant',
-      'I have spoken. Now you.',
+    // Cycles the three banner event types. Each fills the v2 banner
+    // (emoji+phrase title · project — branch · name — summary) and
+    // speaks its parts as separate beats — the real plugin does this
+    // via macOS `say`, with a 100ms [[slnc]] pause between parts.
+    const EVENTS = [
+      { emoji:'🟢', phrase:'It is done, my liege',  proj:'ClaudeAgentsBar', branch:['⎇','main'],          name:'Voice spotlight', summary:'rewrote the banner mock, tests green', say:['summary'] },
+      { emoji:'❓', phrase:'I need an adult',         proj:'api-gateway',     branch:['ⓦ','feat/rate-limit'], name:'Rate limiter',   summary:'needs approval to edit nginx.conf',    say:['phrase','name','summary'] },
+      { emoji:'⚠️', phrase:'Still here — still unread', proj:'parser',        branch:['⎇','fix/utf8'],        name:'UTF-8 parser',   summary:'finished 40 min ago, never opened',    say:['phrase','summary'] },
     ];
     const speakBtn   = document.getElementById('speakBtn');
     const speakLabel = document.getElementById('speakLabel');
-    const banner     = document.getElementById('bannerPhrase');
+    const bTitle  = document.getElementById('bannerPhrase');
+    const bSub    = document.getElementById('bannerSub');
+    const bDetail = document.getElementById('bannerDetail');
     const synth = window.speechSynthesis;
     if (!synth) {
       document.getElementById('speakUnsupported').classList.remove('hidden');
     }
-    let pi = 0;
+    let ei = 0;
     speakBtn.addEventListener('click', () => {
-      const phrase = PHRASES[pi % PHRASES.length];
-      pi++;
-      banner.textContent = phrase;
-      banner.classList.add('pop');
-      setTimeout(() => banner.classList.remove('pop'), 350);
+      const e = EVENTS[ei % EVENTS.length];
+      ei++;
+      const branchColor = e.branch[0] === 'ⓦ' ? 'text-fresh' : 'text-mute';
+      bTitle.textContent  = `${e.emoji} ${e.phrase}`;
+      bSub.innerHTML      = `${e.proj} — <span class="${branchColor}">${e.branch[0]}</span> ${e.branch[1]}`;
+      bDetail.textContent = `${e.name} — ${e.summary} · click to open`;
+      bTitle.classList.add('pop');
+      setTimeout(() => bTitle.classList.remove('pop'), 350);
       if (synth) {
         synth.cancel();
-        const u = new SpeechSynthesisUtterance(phrase);
-        u.rate = 1.0;
-        synth.speak(u);
+        // Queue each part as its own utterance — they land as separate
+        // beats, mirroring the [[slnc]] pause `say` inserts between parts.
+        e.say.forEach((part) => {
+          const u = new SpeechSynthesisUtterance(e[part]);
+          u.rate = 1.0;
+          synth.speak(u);
+        });
         speakLabel.textContent = 'Hear another';
       }
     });
