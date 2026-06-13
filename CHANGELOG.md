@@ -37,7 +37,7 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   first-launch-default-then-sidecar precedence as *Multi-workspace mode*.
   Localised across all shipped locales.
 - **Three new row indicators.** A waiting row's right-hand label now reads
-  *waiting {duration}* (e.g. *ждёт 6m*) instead of a bare red duration, so a
+  *waiting {duration}* (e.g. *waiting 6m*) instead of a bare red duration, so a
   blocked session names its state. A **cwd collision** — two or more active
   sessions sharing the same `cwd` — is flagged two ways: a red `⑂` fork glyph
   on the main row between the title and the duration, and the submenu branch
@@ -678,9 +678,8 @@ for the trade-off.
 The per-row *Delete session…* confirmation now lists the exact
 filesystem paths that are about to be removed — the transcript
 `.jsonl` and, when the session ever invoked any tools, the
-tool-results directory — each under a localized label (`Транскрипт:`
-/ `Transcript:` / …, `Результаты инструментов:` / `Tool artifacts:`
-/ …). Paths are shown with `$HOME` collapsed to `~` so they stay
+tool-results directory — each under a localized label (`Transcript:`
+/ …, `Tool artifacts:` / …). Paths are shown with `$HOME` collapsed to `~` so they stay
 readable inside the narrow text column. The question itself is
 prepended to the body as the first line so it stands out above the
 paths.
@@ -730,7 +729,7 @@ Same pass tightened the submenu layout:
 
 `menu.forget_session` label added to all six locale tables (en / ru / de
 / fr / it / zh) and `menu.delete_session` retranslated as the shorter
-"Delete…" / "Удалить…" / … in all six. New `bin/forget-session.sh`
+"Delete…" / … in all six. New `bin/forget-session.sh`
 carries the awk-based record-or-replace write under the same mkdir
 mutex used by the other sidecars. Six new tests in `TestForgetSidecar`;
 total is now 90.

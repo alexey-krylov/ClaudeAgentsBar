@@ -131,6 +131,11 @@ plugin render code, no sidecar, no i18n) is the smaller, simpler design.
 reads it, only the hook does, so it stays out of the Python schema (like
 `notify_phrases` / `notify_voice`).
 
+> **Updated in 1.1.3:** the Remind action ([spec 0006](./0006-remind.md))
+> gates its submenu item on the marker, so the plugin now *does* read it —
+> `notify_summary_marker` became a `Config` field. The hook still reads its
+> own copy via `_cfg_string_or_null`.
+
 ## Edge cases
 
 - **`--` mid-reply** — only the last non-blank line is checked, so an
