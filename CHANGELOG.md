@@ -60,11 +60,16 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   sessions sharing the same `cwd` — is flagged two ways: a red `⑂` fork glyph
   on the main row between the title and the duration, and the submenu branch
   name turned red with an "another session is working in this folder" tooltip.
-  A session whose checkout is a git **worktree** gets its submenu branch name
-  turned green with a "changes isolated under worktree" tooltip. (Colour rides
-  on the branch *text* — SF Symbols in a submenu render monochrome, so the
-  icon can't carry it.) Branch-line priority is collision > worktree > plain.
-  All three are localised across every shipped locale.
+  A session whose checkout is a git **worktree** gets a green `ⓦ` marker on
+  the main row (right after the collision fork, before the duration) *and* its
+  submenu branch name turned green, both signalling "changes isolated under
+  worktree". The inline `ⓦ` turns red when the worktree is *also* a collision
+  (two sessions sharing one worktree checkout) and the fork is then dropped, so
+  the row shows the single red `ⓦ` rather than two red markers. (Submenu
+  colour rides on the branch *text* — SF Symbols in a submenu
+  render monochrome, so the icon can't carry it.) Branch-line priority is
+  collision > worktree > plain. All three are localised across every shipped
+  locale.
 
 ### Changed
 

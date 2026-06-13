@@ -1125,8 +1125,10 @@ class Session:
     subagents: tuple[SubagentSnapshot, ...] = ()
     #: ``True`` when the session's ``cwd`` is a git *worktree* checkout
     #: (``.git`` is a file of the form ``gitdir: …`` rather than a
-    #: directory). Surfaced as a green branch line in the submenu to signal
-    #: that the agent's changes are isolated from the main checkout.
+    #: directory). Surfaced both as a green ``ⓦ`` marker inline in the main
+    #: row and as a green branch line in the submenu, to signal that the
+    #: agent's changes are isolated from the main checkout. The inline marker
+    #: turns red when the worktree also has a :attr:`cwd_collision`.
     #: Computed once in :func:`render.build_session`.
     is_worktree: bool = False
     #: ``True`` when two or more *active* sessions share the same non-empty

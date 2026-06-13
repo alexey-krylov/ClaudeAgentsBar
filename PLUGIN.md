@@ -276,6 +276,15 @@ A few signals ride on top of the bucket colour:
   (two or more active sessions sharing a normalised non-empty `cwd`);
   `is_worktree` is computed once in `build_session` from
   `sidecars.is_worktree_checkout`.
+* **Inline main-row markers.** `_print_session_row` emits the same two
+  signals inline between the title and the duration, as ANSI-coloured
+  glyphs (the main row is `ansi=true`, so it can't use `sfimage`):
+  `cwd_collision` → a red `⑂` fork, `is_worktree` → a `ⓦ` that is green
+  normally and red when the worktree *also* collides. A colliding worktree
+  shows the red `ⓦ` *alone* — the marker absorbs the collision signal and
+  the fork is suppressed, so the row never carries two red markers. The
+  worktree marker is always on (no config knob), mirroring the collision
+  fork; `is_worktree` is already computed each tick, so it adds no cost.
 
 ## Touching the hook
 

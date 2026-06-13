@@ -3395,6 +3395,42 @@ class TestCwdCollision(unittest.TestCase):
         self.assertFalse(a.cwd_collision)
 
 
+class TestWorktreeRowMarker(unittest.TestCase):
+    """The inline ``ⓦ`` marker on the main row mirrors the submenu's green
+    branch line: present (green) for a worktree, red when that worktree also
+    collides, absent otherwise.
+    """
+
+    def _render_row(self, **overrides):
+        import contextlib
+        import io
+        from claude_agents_bar import render
+        session = _make_session(**overrides)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            render._print_session_row(session)
+        # Only the first line is the main row; the rest is the submenu.
+        return buf.getvalue().splitlines()[0]
+
+    def test_non_worktree_has_no_marker(self):
+        self.assertNotIn("ⓦ", self._render_row(is_worktree=False))
+
+    def test_worktree_shows_green_marker(self):
+        row = self._render_row(is_worktree=True)
+        self.assertIn(f"{plugin.core._ANSI_FRESH_BAR}ⓦ{plugin.core._ANSI_RESET}", row)
+
+    def test_colliding_worktree_shows_red_marker_only(self):
+        row = self._render_row(is_worktree=True, cwd_collision=True)
+        self.assertIn(f"{plugin.core._ANSI_WAITING}ⓦ{plugin.core._ANSI_RESET}", row)
+        # The red ⓦ absorbs the collision signal — the fork is suppressed.
+        self.assertNotIn("⑂", row)
+
+    def test_non_worktree_collision_shows_fork(self):
+        row = self._render_row(is_worktree=False, cwd_collision=True)
+        self.assertIn(f"{plugin.core._ANSI_WAITING}⑂{plugin.core._ANSI_RESET}", row)
+        self.assertNotIn("ⓦ", row)
+
+
 class TestLocaleCompleteness(unittest.TestCase):
     """Every non-English locale must define the same key set as en.json.
 
