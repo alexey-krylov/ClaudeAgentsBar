@@ -32,7 +32,7 @@
   "age.hours_minutes": "{h} 小時 {m} 分",
 
   "label.blocked": "等待 {duration}",
-  "tooltip.cwd_collision": "另一個工作階段正在此資料夾中工作",
+  "tooltip.cwd_collision": "另一個代理正在此資料夾中工作！",
   "tooltip.worktree": "代理變更已隔離在 worktree 中",
 
   "dialog.delete.title": "刪除此 Claude Code 工作階段？",
