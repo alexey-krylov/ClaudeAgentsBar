@@ -138,6 +138,17 @@ phrase from the matching list via macOS `say`, and (3) shows a
 straight back to the waiting session in your editor — no need to
 hunt through the menu bar.
 
+**Banner layout** (spec 0009). The banner's three lines each carry
+something: **line 1** is the session's `ai-title` on `Stop`, or the
+random phrase prefixed with a type emoji on the other two surfaces
+(❓ awaiting, ⚠️ idle — the banner is plain text, so a coloured emoji
+is how the type reads at a glance); **line 2** is
+`<project> — <icon> <branch>` of the session (just `<project>` outside a
+repo), read from the session's working dir so it matches the row's
+submenu — `<icon>` is `ⓦ` for a worktree or `⎇` for an ordinary branch;
+**line 3** is the marker `name — summary` (empty when there's no marker).
+The emoji is banner-only — `say` never speaks it.
+
 **Why two knobs, not one.** Stop notifications are most useful for
 long turns and noisy for quick one-liners — that's what
 `notify_threshold_sec` (default 30 s) silences. Permission

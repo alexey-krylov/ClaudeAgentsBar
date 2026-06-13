@@ -101,6 +101,18 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   `notify-stop.sh` and `notify-wait.sh` — are now `_emit_notification` /
   `_pick_phrase` in `hooks/_notify-common.sh`. Both hooks (and the new
   `notify-idle.sh`) are thin shims over them; behaviour is unchanged.
+- **Reshuffled the notification banner's three lines** so each carries
+  information (spec 0009). The fixed status labels *Claude awaiting input* /
+  *Claude session unread* are gone from line 1; awaiting and idle now show
+  their random phrase there, prefixed with a coloured type emoji (❓ awaiting,
+  ⚠️ idle) — the banner is plain text, so an emoji is the only way to colour
+  the type. Line 2, previously the constant *Claude Code*, now shows the
+  session's `<project> — <icon> <branch>` (read from its working dir,
+  matching the row's submenu), where `<icon>` is `ⓦ` for a worktree or `⎇`
+  for an ordinary branch. Line 3 is just the marker `name — summary` (the random
+  phrase no longer leaks into it, and it's empty when there's no marker). Stop
+  is unchanged — its line 1 stays the `ai-title`. The emoji is banner-only;
+  `say` never speaks it.
 
 ### Fixed
 

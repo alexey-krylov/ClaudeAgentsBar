@@ -119,11 +119,13 @@ if [ -n "$MARKER" ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
 fi
 
 # Speech reads the reminder phrase, then the name, then the summary ("Still
-# unread. Чиню баг. нашёл причину"). Banner shows name (+ summary) when known.
+# unread. Чиню баг. нашёл причину") — the phrase carries no emoji. The banner
+# (spec 0009) splits them: line 1 is the phrase with a ⚠️ type marker, line 3
+# is just name — summary (empty when there is no marker turn, no phrase leak).
 SAY_TEXT="$PHRASE"
 [ -n "$NAME" ]    && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$NAME"
 [ -n "$SUMMARY" ] && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$SUMMARY"
-BANNER_MSG="$PHRASE"
+BANNER_MSG=""
 if [ -n "$NAME" ] && [ -n "$SUMMARY" ]; then
     BANNER_MSG="$NAME — $SUMMARY"
 elif [ -n "$NAME" ]; then
@@ -133,6 +135,8 @@ elif [ -n "$SUMMARY" ]; then
 fi
 
 # ── Chime + speech + banner (shared emit) ────────────────────────────────────
-# Click jumps straight to the unread session so the reminder is actionable.
-_emit_notification "Claude session unread" "$BANNER_MSG" "$SAY_TEXT" \
+# Title (line 1) is the phrase with a yellow ⚠️ so the banner reads as an
+# unread nudge without a status label. Click jumps straight to the unread
+# session so the reminder is actionable.
+_emit_notification "⚠️ $PHRASE" "$BANNER_MSG" "$SAY_TEXT" \
     "$SESSION_URL" "$SID" "$CWD"

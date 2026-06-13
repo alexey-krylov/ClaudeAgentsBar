@@ -497,6 +497,60 @@ _pick_phrase() {
 # here — deliberately a hook constant, not a config knob.
 _SAY_SEP=". [[slnc 100]] "
 
+# ── Banner subtitle: "<project> / <branch>" from the session cwd ─────────────
+# Spec 0009. Recomputed at banner time from the session's working dir so the
+# subtitle matches the menu submenu (project = basename, branch read straight
+# from .git/HEAD — worktree-aware, detached HEAD → short SHA). A couple of
+# small file reads, no `git` subprocess — cheap enough for an event hook. No
+# JSONL fallback: a deleted cwd yields project-only / empty, the accepted
+# trade-off in spec 0009.
+_git_branch_from_cwd() {
+    local cwd="$1" gitmarker head_file indirection gitdir head
+    [ -n "$cwd" ] || return 0
+    gitmarker="$cwd/.git"
+    if [ -d "$gitmarker" ]; then
+        head_file="$gitmarker/HEAD"
+    elif [ -f "$gitmarker" ]; then
+        # Linked worktree: .git is a file "gitdir: <path>"; HEAD lives there.
+        indirection=$(cat "$gitmarker" 2>/dev/null)
+        case "$indirection" in
+            gitdir:*) gitdir="${indirection#gitdir:}"
+                      gitdir="${gitdir# }"
+                      head_file="$gitdir/HEAD" ;;
+            *) return 0 ;;
+        esac
+    else
+        return 0
+    fi
+    head=$(cat "$head_file" 2>/dev/null) || return 0
+    case "$head" in
+        "ref: refs/heads/"*) printf '%s' "${head#ref: refs/heads/}" ;;
+        "") return 0 ;;
+        *) printf '%s' "${head:0:7}" ;;   # detached HEAD → short SHA
+    esac
+}
+
+# "<project> — <icon> <branch>", or just "<project>" outside a repo, or empty
+# when cwd is unknown. The icon before the branch marks the checkout kind: ⓦ
+# for a linked worktree (.git is a file), ⎇ for an ordinary branch — the
+# plain-text banner analogue of the submenu's worktree marker / branch glyph.
+_banner_subtitle() {
+    local cwd="$1" project branch icon
+    [ -n "$cwd" ] || return 0
+    project=$(basename "$cwd")
+    branch=$(_git_branch_from_cwd "$cwd")
+    if [ -z "$branch" ]; then
+        printf '%s' "$project"
+        return 0
+    fi
+    if [ -f "$cwd/.git" ]; then
+        icon="ⓦ"   # linked worktree
+    else
+        icon="⎇"   # ordinary branch
+    fi
+    printf '%s — %s %s' "$project" "$icon" "$branch"
+}
+
 # ── Notification emit (chime + speech + banner) ──────────────────────────────
 # The shared tail of every notify hook: play the chime, speak the phrase,
 # and pop the clickable terminal-notifier banner. Reads the channel state
@@ -539,7 +593,12 @@ _emit_notification() {
     # workspace rather than whatever is frontmost; otherwise it falls back to
     # a plain -open of the deeplink.
     local icon="${HOME}/.claude/hooks/assets/claude-icon.png"
-    local notifier_args=(-title "$title" -subtitle "Claude Code" -message "$banner_msg")
+    # Subtitle is the session's project / branch (spec 0009), computed from cwd;
+    # omitted when cwd is unknown so the banner doesn't carry a blank line.
+    local subtitle notifier_args
+    subtitle=$(_banner_subtitle "$cwd")
+    notifier_args=(-title "$title" -message "$banner_msg")
+    [ -n "$subtitle" ] && notifier_args+=(-subtitle "$subtitle")
     [ -f "$icon" ] && notifier_args+=(-contentImage "$icon")
     if [ -n "$session_url" ]; then
         local editor_app

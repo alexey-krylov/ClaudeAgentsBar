@@ -123,11 +123,13 @@ if [ -n "$MARKER" ] && [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; then
 fi
 
 # Speech reads the awaiting phrase, then the name, then the summary ("I'm
-# blocked. Чиню баг. нашёл причину"). Banner shows name (+ summary) when known.
+# blocked. Чиню баг. нашёл причину") — the phrase carries no emoji. The banner
+# (spec 0009) splits them: line 1 is the phrase with a ❓ type marker, line 3
+# is just name — summary (empty when there is no marker turn, no phrase leak).
 SAY_TEXT="$PHRASE"
 [ -n "$NAME" ]    && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$NAME"
 [ -n "$SUMMARY" ] && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$SUMMARY"
-BANNER_MSG="$PHRASE"
+BANNER_MSG=""
 if [ -n "$NAME" ] && [ -n "$SUMMARY" ]; then
     BANNER_MSG="$NAME — $SUMMARY"
 elif [ -n "$NAME" ]; then
@@ -137,7 +139,8 @@ elif [ -n "$SUMMARY" ]; then
 fi
 
 # ── Chime + speech + banner (shared emit) ────────────────────────────────────
-# Click jumps straight to the session — the user almost always wants to act
-# on the prompt, not just acknowledge it.
-_emit_notification "Claude awaiting input" "$BANNER_MSG" "$SAY_TEXT" \
+# Title (line 1) is the phrase with a red ❓ so the banner reads as an awaiting
+# prompt without a status label. Click jumps straight to the session — the user
+# almost always wants to act on the prompt, not just acknowledge it.
+_emit_notification "❓ $PHRASE" "$BANNER_MSG" "$SAY_TEXT" \
     "$SESSION_URL" "$SID" "$CWD"

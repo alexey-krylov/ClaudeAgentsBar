@@ -341,7 +341,14 @@ when `terminal-notifier` / `jq` / the icon asset isn't present. The
 chime + speech + banner tail and the random-phrase picker are factored
 into `_emit_notification` / `_pick_phrase` in `hooks/_notify-common.sh`,
 so all three notify scripts share one implementation and differ only in
-sound / phrases / title.
+sound / phrases / title. The shared banner layout (spec 0009): line 1 is
+the title each shim passes (Stop's `ai-title`; the phrase prefixed with a
+type emoji — ❓ awaiting, ⚠️ idle — for the other two), line 2 is the
+session's `<project> — <icon> <branch>` computed by `_banner_subtitle`
+from the cwd (`_git_branch_from_cwd` reads `.git/HEAD` worktree-aware,
+mirroring `sidecars.current_git_branch`; `<icon>` is `ⓦ` for a worktree
+or `⎇` for an ordinary branch), line 3 is the marker `name — summary`.
+The emoji is banner-only — it's never in the `say` text.
 
 A third script, `hooks/notify-idle.sh`, is **not** a Claude Code hook —
 it isn't registered in `settings-hooks.json` and reads its session id +
