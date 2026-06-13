@@ -154,29 +154,77 @@ _cfg_string_or_null() {
 }
 
 # ── Spoken-summary extraction (spec 0005) ────────────────────────────────────
-# Echo the summary text from a transcript given a marker, or "" (nothing).
-# Looks at the LAST non-blank line of the assistant's reply: after stripping
-# any markdown italic/bold wrappers (`*`/`_`), if it starts with the marker,
-# the summary is the text after it. The assistant emits that line in italics
-# (`*-- did the thing*`), so we peel leading/trailing `*`/`_` before the
-# literal prefix test (`index==1`, no regex, Unicode-safe). Empty marker,
-# missing transcript, missing jq, or a last line that isn't a marker line all
-# yield "" — a silent, non-fatal fallback. Shared by notify-stop.sh (speaks it
-# on Stop) and bin/app/remind-session.sh (re-speaks it on a Remind click).
+# The marker line carries two fields: `<marker>Name - Summary` (e.g.
+# `*-- Чиню баг - нашёл причину*`). The marker (`-- ` by default) is the line
+# *prefix*; the two fields are split on the first ` - ` (a lone hyphen padded
+# with spaces). A line with no ` - ` after the marker is the legacy
+# single-field form — summary only, no name.
+#
+#   _extract_summary       → the Summary field (text after the first ` - `,
+#                            or the whole remainder when single-field). Spoken
+#                            on Stop and re-spoken by the Remind click.
+#   _extract_marker_name   → the Name field (text before the first ` - `, or
+#                            "" when single-field). Spoken with the summary on
+#                            an awaiting (PermissionRequest) prompt.
+#
+# Both look only at the LAST non-blank line of the assistant's latest reply
+# (the closing line is the marker), strip leading/trailing markdown emphasis
+# (`*`/`_`), then test the prefix literally (`index==1`, no regex,
+# Unicode-safe). Empty marker, missing transcript, missing jq, or a last line
+# that isn't a marker line all yield "" — a silent, non-fatal fallback.
 _extract_summary() {
     local transcript="$1" marker="$2"
     [ -n "$marker" ] && [ -n "$transcript" ] && [ -f "$transcript" ] || return
     /usr/bin/jq -r 'select(.type=="assistant")
                     | .message.content[]?
                     | select(.type=="text") | .text' "$transcript" 2>/dev/null \
-        | /usr/bin/awk -v m="$marker" \
+        | /usr/bin/awk -v m="$marker" -v d=" - " \
             'NF { last = $0 }
              END {
                  sub(/^[*_]+/, "", last)        # strip leading markdown italic/bold (*, _, **, ***)
                  sub(/[*_]+$/, "", last)        # strip trailing markers
-                 if (index(last, m) == 1) print substr(last, length(m) + 1)
+                 if (index(last, m) == 1) {
+                     rest = substr(last, length(m) + 1)
+                     p = index(rest, d)         # first " - " splits Name | Summary
+                     if (p > 0) rest = substr(rest, p + length(d))  # drop the Name field
+                     print rest
+                 }
              }' \
         | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+# Echo the Name and Summary of the latest *completed* marker turn as two lines
+# (NAME then SUMMARY), or nothing when no turn carried a marker. Unlike
+# _extract_summary (which inspects only the very last line of the whole reply
+# stream), this scans per turn — each turn's closing non-blank line — and keeps
+# the last one that is a marker line. That matters for notify-wait.sh: at a
+# PermissionRequest the current turn is mid-flight and hasn't emitted its
+# closing marker yet, so the useful name+summary live on the previous completed
+# turn. A single-field turn yields an empty NAME. Same prefix/emphasis rules as
+# _extract_summary.
+_marker_fields_latest() {
+    local transcript="$1" marker="$2"
+    [ -n "$marker" ] && [ -n "$transcript" ] && [ -f "$transcript" ] || return
+    /usr/bin/jq -rc '
+        select(.type=="assistant")
+        | [ .message.content[]? | select(.type=="text") | .text ]
+        | join("\n") | split("\n")
+        | map(select(test("\\S"))) | last // empty
+    ' "$transcript" 2>/dev/null \
+    | /usr/bin/awk -v m="$marker" -v d=" - " '
+        { line = $0
+          sub(/^[*_]+/, "", line)
+          sub(/[*_]+$/, "", line)
+          if (index(line, m) == 1) {
+              rest = substr(line, length(m) + 1)
+              p = index(rest, d)
+              if (p > 0) { nm = substr(rest, 1, p - 1); sm = substr(rest, p + length(d)) }
+              else       { nm = "";                     sm = rest }
+              sub(/^[[:space:]]+/, "", nm); sub(/[[:space:]]+$/, "", nm)
+              sub(/^[[:space:]]+/, "", sm); sub(/[[:space:]]+$/, "", sm)
+              last_nm = nm; last_sm = sm; have = 1
+          } }
+        END { if (have) { print last_nm; print last_sm } }'
 }
 
 # Echo the FIRST and LAST spoken-summary of a session as two lines (in that
@@ -197,12 +245,14 @@ _summary_endpoints() {
         | join("\n") | split("\n")
         | map(select(test("\\S"))) | last // empty
     ' "$transcript" 2>/dev/null \
-    | /usr/bin/awk -v m="$marker" '
+    | /usr/bin/awk -v m="$marker" -v d=" - " '
         { line = $0
           sub(/^[*_]+/, "", line)        # strip leading markdown italic/bold
           sub(/[*_]+$/, "", line)        # strip trailing markers
           if (index(line, m) == 1) {
               s = substr(line, length(m) + 1)
+              p = index(s, d)            # drop the Name field → speak the summary
+              if (p > 0) s = substr(s, p + length(d))
               sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s)
               if (!fs) { first = s; fs = 1 }
               last = s

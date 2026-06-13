@@ -3,6 +3,12 @@
 * Status: **Implemented in 1.1.2**
 * Date: 2026-06-10
 
+> **Superseded marker shape (see [spec 0007](./0007-session-title.md)):** the
+> marker line is now **two-field** — `*-- Name - Summary*`, the name and
+> summary split on the first `" - "`. On `Stop` the hook speaks the **summary**
+> field (the part after the divider), not the whole line. A single-field line
+> (`*-- Summary*`, no divider) keeps the original behaviour described below.
+
 ## Why
 
 On `Stop` the notification hook speaks a random `notify_phrases` entry

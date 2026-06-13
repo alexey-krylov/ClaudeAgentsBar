@@ -637,15 +637,8 @@ def _read_jsonl_tail(path: Path) -> bytes:
 def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     """Extract title and cwd from a session transcript.
 
-    We prefer the AI-generated ``ai-title`` event (the same value the VSCode
-    sidebar displays). It's emitted right after the first turn, so capping
-    the scan at :data:`core.JSONL_TITLE_SCAN_BYTES` finds it in essentially
-    all real-world transcripts while keeping the per-tick cost bounded
-    regardless of how much base64 attachment data later events drag in.
-    When a bloated first turn (e.g. pasted images) does push that first
-    event past the window, we recover the title from the tail instead of
-    falling through to the volatile user-prompt sources — see
-    :func:`_latest_tail_ai_title`.
+    Title priority: session_title (parsed from response marker) → ai-title
+    (Claude Code event) → latest user message → raw_title (first message).
 
     The ``cwd`` returned here is the session's *initial* cwd; callers should
     prefer :attr:`HookSnapshot.cwd` when available, since sessions can change
@@ -689,7 +682,9 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
         # which visibly flap as tool output pushes the latest prompt out of
         # the tail window.
         ai_title = _latest_tail_ai_title(jsonl_path)
+    session_title = _latest_session_title_from_response(jsonl_path)
     return TranscriptMeta(
+        session_title=session_title.strip(),
         ai_title=ai_title.strip(),
         raw_title=raw_title,
         cwd=cwd,
@@ -729,6 +724,97 @@ def _latest_tail_ai_title(jsonl_path: Path) -> str:
         if title is not None and title.strip():
             last = title
     return last
+
+
+#: Divider between the session name and the spoken summary inside a marker
+#: line: a lone hyphen padded with spaces (``-- Name - Summary``). Distinct
+#: from ``notify_summary_marker`` (the line *prefix*, ``"-- "`` by default),
+#: which detects the line; this splits its two fields. Mirrored byte-for-byte
+#: by the hooks (``hooks/_notify-common.sh``) so the menu name, the spoken
+#: Stop summary, and the awaiting name+summary all parse identically.
+_MARKER_FIELD_DIVIDER = " - "
+
+
+def _parse_marker_line(line: str, marker: str) -> tuple[str, str] | None:
+    """Split one summary-marker line into ``(name, summary)``.
+
+    ``marker`` is ``notify_summary_marker`` (the line prefix). Leading and
+    trailing markdown emphasis (``*``/``_`` runs) is stripped first, so
+    ``*-- …*``, ``_-- …_`` and a bare ``-- …`` all parse. The line must then
+    start with the marker; the remainder is split once on the first
+    :data:`_MARKER_FIELD_DIVIDER` into the session name and the summary. A
+    remainder without that divider is the legacy single-field form — summary
+    only, empty name. Returns ``None`` when ``line`` isn't a marker line.
+    """
+    if not marker:
+        return None
+    stripped = line.strip().strip("*_").strip()
+    if not stripped.startswith(marker):
+        return None
+    rest = stripped[len(marker):].strip()
+    name, divider, summary = rest.partition(_MARKER_FIELD_DIVIDER)
+    if not divider:
+        return "", rest
+    return name.strip(), summary.strip()
+
+
+def _session_name_from_reply(text: str, marker: str) -> str:
+    """Session name from a reply's *closing* marker line, or ``""``.
+
+    Only the last non-blank line is inspected — the authoring convention is
+    "the closing line is the marker" — so an earlier ``-- ``-ish line (a list
+    item, a code fence) can't false-match. Single-field replies (no name
+    field) yield ``""`` so the menu title falls through to ``ai_title``.
+    """
+    line = ""
+    for candidate in text.splitlines():
+        if candidate.strip():
+            line = candidate
+    parsed = _parse_marker_line(line, marker)
+    return parsed[0] if parsed else ""
+
+
+def _latest_session_title_from_response(jsonl_path: Path) -> str:
+    """Session name parsed from the latest assistant reply's marker line.
+
+    Gated on ``notify_summary_marker``: when the marker is disabled (``null``
+    / ``""``) the menu never pays the per-tick parse and this returns ``""``,
+    so the title falls through to ``ai_title``. Otherwise it scans the
+    already-cached JSONL tail (no extra disk read; a cheap byte prefilter
+    skips non-assistant lines before ``json.loads``) and keeps the *last*
+    reply that carried a name, so the title tracks the current turn rather
+    than a stale earlier one.
+    """
+    marker = core.CONFIG.notify_summary_marker
+    if not marker:
+        return ""
+    data = _read_jsonl_tail(jsonl_path)
+    if not data:
+        return ""
+    name = ""
+    for raw in data.splitlines():
+        if b'"type":"assistant"' not in raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if event.get("type") != "assistant":
+            continue
+        content = event.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+        texts = [
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        if not texts:
+            continue
+        candidate = _session_name_from_reply("\n".join(texts), marker)
+        if candidate:
+            name = candidate
+    return name
 
 
 def current_git_branch(cwd: str) -> str:

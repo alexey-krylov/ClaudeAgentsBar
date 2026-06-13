@@ -18,6 +18,14 @@ into `~/.claude/agent-state.tsv` on every session event. The plugin
 reads JSONL transcripts under `~/.claude/projects/*/*.jsonl` for
 titles + `cwd` and joins them with the TSV at render time.
 
+**Session titles** are sourced in priority order:
+1. **`session_title`** — parsed from the last Claude response. The marker line is two-field: `*-- Name - Summary*` — the `notify_summary_marker` prefix (`-- `), then the name, a `" - "` divider (a lone hyphen padded with spaces, split on the **first** occurrence), then the summary. The menu uses the **name**; prefix and divider are split byte-for-byte the same way in `claude_agents_bar/sidecars.py` and `hooks/_notify-common.sh`. Claude agents write this following the global CLAUDE.md instructions.
+2. **`ai_title`** — Claude Code's auto-generated summary of the conversation
+3. **`last_user_message`** — latest user prompt (for fresh sessions)
+4. **`raw_title`** — initial session title (fallback)
+
+The same marker feeds the spoken notifications: **Stop** speaks the summary alone, an **awaiting** permission prompt speaks the session name + summary (`hooks/notify-stop.sh` / `hooks/notify-wait.sh`). A single-field line (`*-- Summary*`, no `" - "`) has no name, so the menu falls through to `ai_title` and only the summary is spoken — backward-compatible with spec 0005.
+
 Stateless: no daemon, no IPC. Each tick rebuilds the menu from disk.
 
 ## Installing on the user's machine
@@ -118,6 +126,23 @@ Verify before reporting "done":
 /usr/bin/python3 claude-agents.5s.py | head -3   # well-formed output
 open "swiftbar://refreshallplugins"              # live refresh
 ```
+
+## Development workflow — always use worktree
+
+**Always use `isolation: worktree` for any disk-touching changes** (Python, Bash, configs).
+
+The SwiftBar plugin is a symlink to the original repo, so worktree edits don't execute in the bar. Worktree is required for:
+- Development isolation (doesn't corrupt original state during iteration)
+- Safety (changes are visible in `git diff` before commit)
+- Parallelism (worktree can be deleted without risk to the original)
+
+After worktree development, **always copy changes back to the original repo for live testing**:
+1. Copy changed files to the original repo (`cp /tmp/wt.xxx/claude-agents.5s.py ./claude-agents.5s.py`)
+2. Run live tests (CLI, open the menu in SwiftBar, verify the hook)
+3. Confirm behavior matches expectations
+4. After verification, commit from the original repo
+
+This guarantees the tested state matches the code that will be committed.
 
 ## Where to look
 

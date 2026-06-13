@@ -60,6 +60,8 @@ one-line `editor_url_scheme` change). Above 80 % context usage the
 row gets an inline `⚠ {pct}%` warning (red past 90 %), so a glance
 tells you which sessions are close to auto-compact.
 
+**Session titles** — sourced by priority: session name from Claude's response marker (format: `*-- Session name - Summary*`), then Claude's auto-generated summary, then the first user message, then initial session name as fallback. The same marker drives the spoken notifications — see [docs/configuration.md § Spoken summary](./docs/configuration.md#spoken-summary). Claude agents are instructed to end each reply with this line; you set that up once in your CLAUDE.md.
+
 **Submenu per row** — *Mark as read*, *Forget*, *Delete…*, *Reveal
 in Finder*, plus git branch, the model running the session
 (`claude-opus-4-7` / `claude-sonnet-4-6` / …) and context %.

@@ -70,6 +70,12 @@ SOUND_RAW=$(_cfg_string_or_null "notify_sound_wait" "Funk")
 SOUND_PATH=$(_resolve_sound "$SOUND_RAW")
 VOICE=$(_cfg_string             "notify_voice"      "")
 
+# Spoken summary marker (spec 0005). Shared with notify-stop.sh / the Remind
+# action: the assistant's `*-- Name - Summary*` closing line. Here we read both
+# fields to name the blocked session aloud (phrase → name → summary). Empty /
+# null disables, falling back to the phrase alone.
+MARKER=$(_cfg_string_or_null    "notify_summary_marker" "-- ")
+
 # Quiet-hours gate (spec 0002).
 _compute_quiet_state
 
@@ -88,6 +94,19 @@ CWD=$(/usr/bin/jq -r '.cwd // empty'        <<<"$INPUT" 2>/dev/null)
 SESSION_URL=""
 [ -n "$SID" ] && SESSION_URL="${SCHEME}anthropic.claude-code/open?session=${SID}"
 
+# Locate the transcript for the name/summary lookup. PermissionRequest payloads
+# usually carry transcript_path; if absent or stale, glob by session id under
+# ~/.claude/projects/<slug>/<sid>.jsonl (same fallback as remind-session.sh).
+TRANSCRIPT=$(/usr/bin/jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null)
+if { [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; } && [ -n "$SID" ]; then
+    case "$SID" in
+        "" | *[!A-Za-z0-9_-]* ) : ;;   # ignore ids outside the safe glob alphabet
+        *) for __f in "$HOME"/.claude/projects/*/"$SID".jsonl; do
+               [ -f "$__f" ] && { TRANSCRIPT="$__f"; break; }
+           done ;;
+    esac
+fi
+
 # ── Pick a random phrase ─────────────────────────────────────────────────────
 # Bash 3.2 (system /bin/bash on macOS) lacks mapfile, so we use a while loop.
 _emit_phrases() {
@@ -105,15 +124,40 @@ fi
 
 PHRASE="${PHRASES[$RANDOM % ${#PHRASES[@]}]}"
 
+# ── Name + summary of the latest completed marker turn ───────────────────────
+# Two-field marker line `*-- Name - Summary*`. At a permission prompt the
+# current turn hasn't closed with its marker yet, so these resolve to the
+# previous completed turn — enough to say which session is blocked and what it
+# was doing. Marker off / no marker turn → both empty → phrase only.
+NAME=""
+SUMMARY=""
+if [ -n "$MARKER" ] && [ -n "${TRANSCRIPT:-}" ] && [ -f "$TRANSCRIPT" ]; then
+    { IFS= read -r NAME; IFS= read -r SUMMARY; } < <(_marker_fields_latest "$TRANSCRIPT" "$MARKER")
+fi
+
+# Speech reads the awaiting phrase, then the name, then the summary ("I'm
+# blocked. Чиню баг. нашёл причину"). Banner shows name (+ summary) when known.
+SAY_TEXT="$PHRASE"
+[ -n "$NAME" ]    && SAY_TEXT="$SAY_TEXT. $NAME"
+[ -n "$SUMMARY" ] && SAY_TEXT="$SAY_TEXT. $SUMMARY"
+BANNER_MSG="$PHRASE"
+if [ -n "$NAME" ] && [ -n "$SUMMARY" ]; then
+    BANNER_MSG="$NAME — $SUMMARY"
+elif [ -n "$NAME" ]; then
+    BANNER_MSG="$NAME"
+elif [ -n "$SUMMARY" ]; then
+    BANNER_MSG="$SUMMARY"
+fi
+
 # ── Sound + speech (fire-and-forget, never block the hook) ───────────────────
 if [ "$SUPPRESS_SOUND" = "false" ] && [ -n "$SOUND_PATH" ]; then
     afplay "$SOUND_PATH" >/dev/null 2>&1 &
 fi
 if [ "$SUPPRESS_VOICE" = "false" ] && [ "$VOICE" != "off" ]; then
     if [ -n "$VOICE" ]; then
-        (sleep 1 && say -v "$VOICE" "$PHRASE") >/dev/null 2>&1 &
+        (sleep 1 && say -v "$VOICE" "$SAY_TEXT") >/dev/null 2>&1 &
     else
-        (sleep 1 && say "$PHRASE") >/dev/null 2>&1 &
+        (sleep 1 && say "$SAY_TEXT") >/dev/null 2>&1 &
     fi
 fi
 disown 2>/dev/null || true
@@ -127,7 +171,7 @@ disown 2>/dev/null || true
 # missing) it falls back to a plain -open.
 if [ "$SUPPRESS_BANNER" = "false" ]; then
     ICON="${HOME}/.claude/hooks/assets/claude-icon.png"
-    NOTIFIER_ARGS=(-title "Claude awaiting input" -subtitle "Claude Code" -message "$PHRASE")
+    NOTIFIER_ARGS=(-title "Claude awaiting input" -subtitle "Claude Code" -message "$BANNER_MSG")
     [ -f "$ICON" ]         && NOTIFIER_ARGS+=(-contentImage "$ICON")
     if [ -n "$SESSION_URL" ]; then
         EDITOR_APP=$(_editor_app_for_scheme "$SCHEME")

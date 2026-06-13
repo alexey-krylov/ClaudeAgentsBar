@@ -9,6 +9,24 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ### Added
 
+- **Session titles from the response marker.** The summary line your
+  assistant ends each reply with is now **two-field** —
+  `*-- Name - Summary*` (the `notify_summary_marker` prefix, then a `" - "`
+  divider). The menu shows the **name** as the session title — a meaningful,
+  context-aware label (e.g. your own Russian phrasing) in place of Claude
+  Code's auto-generated English `ai-title`. The parse runs at render time but
+  is gated on `notify_summary_marker` and skips non-assistant lines with a
+  byte prefilter, so a disabled marker costs nothing on the tick. A
+  single-field line (`*-- Summary*`, no `" - "`) has no name and falls
+  through to the auto-title — existing setups keep working. See
+  [spec 0007](./docs/specs/0007-session-title.md).
+- **Awaiting notifications now name the session.** A `PermissionRequest`
+  (permission prompt) used to speak only a random "your turn" phrase. It now
+  also reads the blocked session's **name** and **summary** (phrase → name →
+  summary), and the banner shows `name — summary`, so you can tell by ear
+  which of several sessions needs you and what it was doing. Pulled from the
+  last completed marker turn (the in-flight turn hasn't closed with its marker
+  yet); no marker / marker disabled falls back to the phrase alone.
 - **Remind (re-speak the last summary).** Every session row's submenu now
   leads with a *Remind* item (speaker icon) that speaks aloud, via `say`,
   that session's last spoken-summary line — the text after
@@ -47,6 +65,13 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   on the branch *text* — SF Symbols in a submenu render monochrome, so the
   icon can't carry it.) Branch-line priority is collision > worktree > plain.
   All three are localised across every shipped locale.
+
+### Changed
+
+- **Stop speech reads the summary field only.** With the two-field marker, the
+  `Stop` notification (and the *Remind* action) speak the **summary** — the
+  text after the `" - "` divider — not the whole line, so the session name
+  isn't read aloud as part of the summary.
 
 ### Fixed
 

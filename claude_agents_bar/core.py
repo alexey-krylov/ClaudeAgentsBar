@@ -1049,6 +1049,7 @@ class SubagentSnapshot:
 class TranscriptMeta:
     """Subset of a JSONL transcript needed to render a menu row."""
 
+    session_title: str = ""
     ai_title: str = ""
     raw_title: str = ""
     cwd: str = ""
@@ -1059,14 +1060,14 @@ class TranscriptMeta:
     def display_title(self) -> str:
         """Title to show in the UI.
 
-        Priority order: AI-generated summary → latest user prompt
-        (so a fresh session shows what the user just asked rather
-        than a stale opening line) → first user prompt (works on
-        truncated transcripts where the tail doesn't carry a parseable
-        user event yet).
+        Priority order: session title (from response marker) → AI-generated
+        summary → latest user prompt (so a fresh session shows what the
+        user just asked rather than a stale opening line) → first user
+        prompt (works on truncated transcripts where the tail doesn't
+        carry a parseable user event yet).
         """
         return _shorten(
-            self.ai_title or self.last_user_message or self.raw_title
+            self.session_title or self.ai_title or self.last_user_message or self.raw_title
         )
 
 

@@ -510,6 +510,123 @@ class TestDisplayTitleFallback(unittest.TestCase):
         )
         self.assertEqual(meta.display_title, "First user message")
 
+    def test_session_title_wins_over_ai_title(self):
+        # The Russian session name parsed from the response marker takes
+        # precedence over Claude Code's English ai-title.
+        meta = plugin.TranscriptMeta(
+            session_title="Чиню баг",
+            ai_title="Fixing the bug",
+            last_user_message="latest",
+            raw_title="first",
+        )
+        self.assertEqual(meta.display_title, "Чиню баг")
+
+
+class TestSessionTitleMarker(unittest.TestCase):
+    """Parse the two-field summary marker ``*-- Name - Summary*`` for the menu
+    title. The name is the text before the first ``" - "``; a single-field line
+    yields an empty name, so the title falls through to ``ai_title``."""
+
+    def setUp(self):
+        from claude_agents_bar import sidecars
+        self.s = sidecars
+
+    def test_parse_two_fields(self):
+        self.assertEqual(
+            self.s._parse_marker_line("*-- Чиню баг - нашёл причину*", "-- "),
+            ("Чиню баг", "нашёл причину"),
+        )
+
+    def test_split_on_first_divider_only(self):
+        # The summary may itself contain ` - `; only the first divider splits
+        # off the name.
+        self.assertEqual(
+            self.s._parse_marker_line("-- Имя - a - b - c", "-- "),
+            ("Имя", "a - b - c"),
+        )
+
+    def test_single_field_yields_empty_name(self):
+        self.assertEqual(
+            self.s._parse_marker_line("*-- just a summary*", "-- "),
+            ("", "just a summary"),
+        )
+
+    def test_non_marker_line_is_none(self):
+        self.assertIsNone(self.s._parse_marker_line("plain text", "-- "))
+
+    def test_emphasis_wrappers_stripped(self):
+        for line in ("*-- N - S*", "_-- N - S_", "**-- N - S**", "-- N - S"):
+            self.assertEqual(self.s._parse_marker_line(line, "-- "), ("N", "S"), line)
+
+    def test_empty_marker_disables(self):
+        self.assertIsNone(self.s._parse_marker_line("-- N - S", ""))
+
+    def test_name_from_reply_uses_closing_line(self):
+        # Only the last non-blank line is the marker; an earlier ``- ``-ish
+        # list item can't false-match.
+        text = "разбираюсь\n- пункт списка\n\n*-- Реальное имя - summary*"
+        self.assertEqual(
+            self.s._session_name_from_reply(text, "-- "), "Реальное имя"
+        )
+
+    def test_name_from_reply_without_marker_is_empty(self):
+        self.assertEqual(self.s._session_name_from_reply("no marker", "-- "), "")
+
+
+class TestReadTranscriptMetaSessionTitle(unittest.TestCase):
+    """``read_transcript_meta`` lifts the latest reply's session name into
+    ``session_title`` and gates the parse on ``notify_summary_marker``."""
+
+    def _write(self, body: str) -> Path:
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return path
+
+    _PREAMBLE = (
+        '{"type":"user","cwd":"/p","entrypoint":"cli",'
+        '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+        '{"type":"ai-title","aiTitle":"English Topic"}\n'
+    )
+
+    def test_latest_marker_name_wins(self):
+        body = self._PREAMBLE + (
+            '{"type":"assistant","message":{"content":'
+            '[{"type":"text","text":"a\\n\\n*-- Старое имя - old*"}]}}\n'
+            '{"type":"assistant","message":{"content":'
+            '[{"type":"text","text":"b\\n\\n*-- Новое имя - new*"}]}}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.session_title, "Новое имя")
+        self.assertEqual(meta.display_title, "Новое имя")
+
+    def test_single_field_falls_through_to_ai_title(self):
+        body = self._PREAMBLE + (
+            '{"type":"assistant","message":{"content":'
+            '[{"type":"text","text":"*-- summary only*"}]}}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.session_title, "")
+        self.assertEqual(meta.display_title, "English Topic")
+
+    def test_marker_disabled_skips_parse(self):
+        from dataclasses import replace
+        body = self._PREAMBLE + (
+            '{"type":"assistant","message":{"content":'
+            '[{"type":"text","text":"*-- Имя - s*"}]}}\n'
+        )
+        path = self._write(body)
+        original = plugin.CONFIG
+        plugin.core.CONFIG = replace(plugin.CONFIG, notify_summary_marker="")
+        try:
+            meta = plugin.read_transcript_meta(path)
+        finally:
+            plugin.core.CONFIG = original
+        self.assertEqual(meta.session_title, "")
+        self.assertEqual(meta.display_title, "English Topic")
+
 
 # --------------------------------------------------------------------------- #
 # State classification                                                         #

@@ -39,6 +39,11 @@ The plugin is **stateless** — every 5 s it rebuilds the entire menu from
 six sources:
 
 1. The JSONL transcripts Claude Code already writes (titles, cwd).
+   - **Session title sourcing** (priority order):
+     - `session_title` — the **name** field of the last response's two-field marker line `*-- Name - Summary*` (prefix = `notify_summary_marker`, default `-- `; name/summary split on the first `" - "`). The parse runs at render time but is gated on `notify_summary_marker` and skips non-assistant lines with a byte prefilter, so a disabled marker costs nothing. The prefix + divider are split identically in `sidecars._parse_marker_line` and `hooks/_notify-common.sh`, so the menu name, the spoken Stop summary, and the awaiting name+summary all agree. Claude agents follow the global CLAUDE.md instruction to write this marker in every response.
+     - `ai_title` — Claude Code's auto-generated conversation summary (event type `ai-title`). A single-field marker (`*-- Summary*`, no name) falls through to this.
+     - `last_user_message` — latest user prompt (for fresh sessions).
+     - `raw_title` — initial session title or first message (fallback).
 2. `agent-state.tsv` that `agent-state.sh` maintains (parent state, last
    event). One row per session.
 3. `agent-state.subagents.tsv` — also written by `agent-state.sh`, but for
