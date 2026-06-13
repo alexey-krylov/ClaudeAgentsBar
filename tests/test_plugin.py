@@ -3453,12 +3453,12 @@ class TestWorktreeRowMarker(unittest.TestCase):
     def test_colliding_worktree_shows_red_marker_only(self):
         row = self._render_row(is_worktree=True, cwd_collision=True)
         self.assertIn(f"{plugin.core._ANSI_WAITING}ⓦ{plugin.core._ANSI_RESET}", row)
-        # The red ⓦ absorbs the collision signal — the fork is suppressed.
-        self.assertNotIn("⑂", row)
+        # The red ⓦ absorbs the collision signal — the branch glyph is suppressed.
+        self.assertNotIn("⎇", row)
 
-    def test_non_worktree_collision_shows_fork(self):
+    def test_non_worktree_collision_shows_branch_glyph(self):
         row = self._render_row(is_worktree=False, cwd_collision=True)
-        self.assertIn(f"{plugin.core._ANSI_WAITING}⑂{plugin.core._ANSI_RESET}", row)
+        self.assertIn(f"{plugin.core._ANSI_WAITING}⎇{plugin.core._ANSI_RESET}", row)
         self.assertNotIn("ⓦ", row)
 
 

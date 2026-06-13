@@ -601,26 +601,26 @@ def _print_session_row(session: Session) -> None:
         )
     warning_segment = f"{warning} · " if warning else ""
     waiting_segment = "❓ · " if session.hook_state == "waiting" else ""
-    # Two active sessions sharing a folder: a red fork glyph (U+2442, the
-    # closest unicode match to the submenu's branch SF Symbol) between the
-    # title and the duration. ``⚠`` is already taken by the context-usage
-    # warning, so this fork is the collision marker and echoes the red
+    # Two active sessions sharing a folder: a red branch glyph (U+2387 ⎇ —
+    # the same branch icon the notification banner uses, spec 0009) between
+    # the title and the duration. ``⚠`` is already taken by the context-usage
+    # warning, so this branch glyph is the collision marker and echoes the red
     # branch name in the submenu.
     # Worktree marker — a circled "w" (U+24E6) echoing the green branch line
     # in the submenu, so a glance at the row says "this session's edits are
     # isolated in a git worktree" without opening the submenu. Green normally;
     # when the worktree is *also* a cwd collision (two sessions sharing the
     # same worktree checkout) the isolation is compromised, so the marker
-    # turns red and *absorbs* the collision signal — the separate fork glyph
+    # turns red and *absorbs* the collision signal — the separate branch glyph
     # below is suppressed so the row carries one red marker, not two.
     worktree_segment = ""
     if session.is_worktree:
         worktree_color = _ANSI_WAITING if session.cwd_collision else _ANSI_FRESH_BAR
         worktree_segment = f"{worktree_color}ⓦ{_ANSI_RESET} · "
-    # Collision fork — only for a non-worktree collision; a colliding worktree
+    # Collision marker — only for a non-worktree collision; a colliding worktree
     # is already flagged by the red ⓦ above.
     collision_segment = (
-        f"{_ANSI_WAITING}⑂{_ANSI_RESET} · "
+        f"{_ANSI_WAITING}⎇{_ANSI_RESET} · "
         if session.cwd_collision and not session.is_worktree
         else ""
     )

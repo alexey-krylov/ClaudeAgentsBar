@@ -76,14 +76,15 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 - **Three new row indicators.** A waiting row's right-hand label now reads
   *waiting {duration}* (e.g. *waiting 6m*) instead of a bare red duration, so a
   blocked session names its state. A **cwd collision** — two or more active
-  sessions sharing the same `cwd` — is flagged two ways: a red `⑂` fork glyph
-  on the main row between the title and the duration, and the submenu branch
-  name turned red with an "another session is working in this folder" tooltip.
+  sessions sharing the same `cwd` — is flagged two ways: a red `⎇` branch glyph
+  on the main row between the title and the duration (the same branch icon the
+  notification banner uses, spec 0009), and the submenu branch name turned red
+  with an "another session is working in this folder" tooltip.
   A session whose checkout is a git **worktree** gets a green `ⓦ` marker on
-  the main row (right after the collision fork, before the duration) *and* its
+  the main row (right after the collision glyph, before the duration) *and* its
   submenu branch name turned green, both signalling "changes isolated under
   worktree". The inline `ⓦ` turns red when the worktree is *also* a collision
-  (two sessions sharing one worktree checkout) and the fork is then dropped, so
+  (two sessions sharing one worktree checkout) and the branch glyph is then dropped, so
   the row shows the single red `ⓦ` rather than two red markers. (Submenu
   colour rides on the branch *text* — SF Symbols in a submenu
   render monochrome, so the icon can't carry it.) Branch-line priority is
