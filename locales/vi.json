@@ -31,7 +31,7 @@
   "age.hours_minutes": "{h}h {m}p",
 
   "label.blocked": "đang chờ {duration}",
-  "tooltip.cwd_collision": "Một phiên khác đang làm việc trong thư mục này",
+  "tooltip.cwd_collision": "Một agent khác đang làm việc trong thư mục này!",
   "tooltip.worktree": "Thay đổi của agent được cô lập trong worktree",
 
   "dialog.delete.title": "Xóa phiên Claude Code này?",

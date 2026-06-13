@@ -31,7 +31,7 @@
   "age.hours_minutes": "{h} 小时 {m} 分",
 
   "label.blocked": "等待 {duration}",
-  "tooltip.cwd_collision": "另一个会话正在此文件夹中工作",
+  "tooltip.cwd_collision": "另一个代理正在此文件夹中工作！",
   "tooltip.worktree": "代理改动已隔离在 worktree 中",
 
   "dialog.delete.title": "删除此 Claude Code 会话？",

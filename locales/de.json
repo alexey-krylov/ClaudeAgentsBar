@@ -31,7 +31,7 @@
   "age.hours_minutes": "{h}h {m}m",
 
   "label.blocked": "wartet {duration}",
-  "tooltip.cwd_collision": "Eine andere Sitzung arbeitet in diesem Ordner",
+  "tooltip.cwd_collision": "Ein anderer Agent arbeitet in diesem Ordner!",
   "tooltip.worktree": "Agent-Änderungen im Worktree isoliert",
 
   "dialog.delete.title": "Diese Claude-Code-Sitzung löschen?",

@@ -31,7 +31,7 @@
   "age.hours_minutes": "{h}ч {m}м",
 
   "label.blocked": "ждёт {duration}",
-  "tooltip.cwd_collision": "Другая сессия работает в этой же папке",
+  "tooltip.cwd_collision": "Другой агент работает в этой же папке!",
   "tooltip.worktree": "Изменения агента изолированы в worktree",
 
   "dialog.delete.title": "Удалить эту сессию Claude Code?",
