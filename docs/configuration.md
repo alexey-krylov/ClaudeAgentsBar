@@ -125,29 +125,44 @@ or plain numbers: [ADR-0010](./adr/0010-compact-menubar-ansi-bullets.md).
 
 ## Notifications
 
-Two Claude Code events trigger an audible nudge:
+ClaudeAgentsBar speaks up in three situations — a session **finishing**,
+a session **blocked** on a permission prompt, and a finished session left
+**unread** too long. Each plays a chime, speaks a line via macOS `say`,
+and shows a clickable `terminal-notifier` banner whose three lines are
+laid out the same way (spec 0009). Clicking a banner deep-links straight
+to that session in your editor — no hunting through the menu bar.
 
-| Event | When | Sound | Phrase source | Suppressible? |
-|---|---|---|---|---|
-| `Stop` | A session finishes its turn | `Hero.aiff` | `notify_phrases` | `notify_on_stop: false` |
-| `PermissionRequest` | Claude is blocked on a tool-approval dialog | `Funk.aiff` | `notify_wait_phrases` | `notify_on_wait: false` |
+| | **Stop** (done) | **Awaiting** (blocked) | **Idle** (unread) |
+|---|---|---|---|
+| **Trigger** | `Stop` hook — session finished | `PermissionRequest` hook — tool-approval prompt | plugin tick — green & unread past the interval |
+| **Banner line 1** | session `ai-title` | `❓ <phrase>` | `⚠️ <phrase>` |
+| **Banner line 2** | `<project> — <icon> <branch>` | ← same | ← same |
+| **Banner line 3** | summary (else phrase) | `name — summary` | `name — summary` |
+| **Spoken (`say`)** | phrase → summary | phrase → name → summary | phrase → name → summary |
+| **Chime** | `Hero` (`notify_sound_stop`) | `Funk` (`notify_sound_wait`) | `Submarine` (`notify_sound_idle`) |
+| **Phrases** | `notify_phrases` | `notify_wait_phrases` | `notify_idle_phrases` |
+| **Off switch** | `notify_on_stop: false` | `notify_on_wait: false` | `notify_idle_interval_min: 0` |
 
-For each event the plugin (1) plays the chime, (2) speaks a random
-phrase from the matching list via macOS `say`, and (3) shows a
-`terminal-notifier` banner. Clicking the permission banner deep-links
-straight back to the waiting session in your editor — no need to
-hunt through the menu bar.
+Reading across the rows:
 
-**Banner layout** (spec 0009). The banner's three lines each carry
-something: **line 1** is the session's `ai-title` on `Stop`, or the
-random phrase prefixed with a type emoji on the other two surfaces
-(❓ awaiting, ⚠️ idle — the banner is plain text, so a coloured emoji
-is how the type reads at a glance); **line 2** is
-`<project> — <icon> <branch>` of the session (just `<project>` outside a
-repo), read from the session's working dir so it matches the row's
-submenu — `<icon>` is `ⓦ` for a worktree or `⎇` for an ordinary branch;
-**line 3** is the marker `name — summary` (empty when there's no marker).
-The emoji is banner-only — `say` never speaks it.
+- **Line 2** is the session's `<project> — <icon> <branch>` (just
+  `<project>` outside a repo), read from its working dir so it matches the
+  row's submenu — `<icon>` is `ⓦ` for a worktree, `⎇` for an ordinary
+  branch (the same glyphs the menu row uses inline).
+- The line-1 type **emoji** (❓ / ⚠️) is plain-text colour — there's no
+  rich text in a macOS banner — and is **banner-only**: `say` never
+  speaks it.
+- `name` / `summary` come from your `*-- Name - Summary*` marker (see
+  *Spoken summary* below); line 3 is empty when a turn carried no marker.
+- **Spoken `say`** stitches the parts with a short pause between them so
+  they don't run together as one breath ("Done. … Migrated the auth
+  module").
+
+Stop alone has a `notify_threshold_sec` (30 s) floor so quick one-liners
+stay silent; awaiting and idle have none. Idle isn't a Claude Code event —
+it rides the plugin tick on a doubling schedule (20 → 40 → … min); its
+mechanics are under *Idle reminders* below. All three obey `quiet_hours`
+and the *Banner only* mode (`notify_audio`).
 
 **Why two knobs, not one.** Stop notifications are most useful for
 long turns and noisy for quick one-liners — that's what
@@ -285,13 +300,14 @@ the menu and the hooks strip surrounding markdown emphasis (`*…*`, `_…_`,
 **last** line of a reply is considered, so a `-- `/`- ` that appears
 mid-reply is ignored.
 
-The two fields feed three places:
+The two fields feed four places:
 
 | Where | Field used |
 |---|---|
 | **Menu title** | the **name** — shown in place of Claude Code's auto-generated English title. |
 | **Stop** (session finished) | the **summary** — `say` reads the random phrase **then** the summary ("Done. Migrated the auth module"); the banner shows the summary alone. |
 | **Awaiting** (permission prompt) | the **name + summary** — `say` reads the awaiting phrase, then the name, then the summary, so you can tell by ear which session is blocked and what it was doing; the banner shows `name — summary`. At a prompt the current turn hasn't closed with its marker yet, so these come from the last completed turn. |
+| **Idle** (unread reminder) | the **name + summary** — same as awaiting (phrase → name → summary spoken; banner line 3 `name — summary`), re-announcing a finished session you haven't read. |
 
 **Backward compatible:** a single-field line (`*-- just a summary*`, no
 `" - "`) still works — there's no name, so the menu falls through to the

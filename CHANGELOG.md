@@ -84,9 +84,9 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   the main row (right after the collision glyph, before the duration) *and* its
   submenu branch name turned green, both signalling "changes isolated under
   worktree". The inline `ⓦ` turns red when the worktree is *also* a collision
-  (two sessions sharing one worktree checkout) and the branch glyph is then dropped, so
-  the row shows the single red `ⓦ` rather than two red markers. (Submenu
-  colour rides on the branch *text* — SF Symbols in a submenu
+  (two sessions sharing one worktree checkout) and the branch glyph is then
+  dropped, so the row shows the single red `ⓦ` rather than two red markers.
+  (Submenu colour rides on the branch *text* — SF Symbols in a submenu
   render monochrome, so the icon can't carry it.) Branch-line priority is
   collision > worktree > plain. All three are localised across every shipped
   locale.
@@ -97,6 +97,11 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   `Stop` notification (and the *Remind* action) speak the **summary** — the
   text after the `" - "` divider — not the whole line, so the session name
   isn't read aloud as part of the summary.
+- **Spoken segments now pause between parts.** When `say` reads more than one
+  part (phrase, name, summary) it inserts a short silence between them — a
+  `[[slnc]]` command, 100 ms — so they land as separate beats instead of one
+  run-on breath ("Done. … Migrated the auth module"). A hook constant in
+  `_notify-common.sh`, not a config knob.
 - **Notification hooks share one emit path.** The chime + speech + banner
   tail and the random-phrase picker — previously copy-pasted between
   `notify-stop.sh` and `notify-wait.sh` — are now `_emit_notification` /
