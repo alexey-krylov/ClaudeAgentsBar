@@ -490,6 +490,13 @@ _pick_phrase() {
     echo "${phrases[$RANDOM % ${#phrases[@]}]}"
 }
 
+# ── Spoken-segment separator ─────────────────────────────────────────────────
+# Joins the spoken segments (phrase → name → summary) for say(1). The period
+# gives a sentence break; `[[slnc N]]` is a say embedded command inserting N ms
+# of silence, so the segments don't run together as one breath. Tune the number
+# here — deliberately a hook constant, not a config knob.
+_SAY_SEP=". [[slnc 600]] "
+
 # ── Notification emit (chime + speech + banner) ──────────────────────────────
 # The shared tail of every notify hook: play the chime, speak the phrase,
 # and pop the clickable terminal-notifier banner. Reads the channel state

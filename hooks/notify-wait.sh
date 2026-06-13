@@ -125,8 +125,8 @@ fi
 # Speech reads the awaiting phrase, then the name, then the summary ("I'm
 # blocked. Чиню баг. нашёл причину"). Banner shows name (+ summary) when known.
 SAY_TEXT="$PHRASE"
-[ -n "$NAME" ]    && SAY_TEXT="$SAY_TEXT. $NAME"
-[ -n "$SUMMARY" ] && SAY_TEXT="$SAY_TEXT. $SUMMARY"
+[ -n "$NAME" ]    && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$NAME"
+[ -n "$SUMMARY" ] && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$SUMMARY"
 BANNER_MSG="$PHRASE"
 if [ -n "$NAME" ] && [ -n "$SUMMARY" ]; then
     BANNER_MSG="$NAME — $SUMMARY"

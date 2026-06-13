@@ -160,7 +160,7 @@ SUMMARY=$(_extract_summary "${TRANSCRIPT:-}" "$MARKER")
 # reads as a natural sentence ("Done. Migrated the auth module"). The banner
 # shows just the summary when present, else the phrase.
 SAY_TEXT="$PHRASE"
-[ -n "$SUMMARY" ] && SAY_TEXT="$PHRASE. $SUMMARY"
+[ -n "$SUMMARY" ] && SAY_TEXT="$PHRASE${_SAY_SEP}$SUMMARY"
 BANNER_MSG="$PHRASE"
 [ -n "$SUMMARY" ] && BANNER_MSG="$SUMMARY"
 
