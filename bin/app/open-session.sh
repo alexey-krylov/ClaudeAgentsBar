@@ -41,41 +41,19 @@ if [ -z "$SID" ] || [ -z "$URL" ]; then
     exit 1
 fi
 
-CLICKS_FILE="${HOME}/.claude/agent-state.clicks"
-LOCK_DIR="${CLICKS_FILE}.lock.d"
-TS="$(date +%s)"
-LINE="${SID}	${TS}"
+# Record the click *before* opening — the plugin reads it to move the
+# session 🟢 FRESH → 🔵 ACKNOWLEDGED on the next tick and to restart the
+# stale timer. Done first so a slow open can't delay the colour change.
+# The ack write lives in hooks/record-click.sh — a single source of truth
+# shared with the notification-banner click path — and is invoked via
+# `/bin/bash` so it doesn't depend on an executable bit.
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
+/bin/bash "${SCRIPT_DIR}/../../hooks/record-click.sh" "$SID"
 
-mkdir -p "$(dirname "$CLICKS_FILE")"
-touch "$CLICKS_FILE"
-
-# Mutex via mkdir, matching the scheme used by hooks/agent-state.sh.
-# Atomic on every POSIX filesystem and no util-linux dependency.
-acquire_lock() {
-    local attempts=0
-    until mkdir "$LOCK_DIR" 2>/dev/null; do
-        attempts=$((attempts + 1))
-        if [ "$attempts" -gt 40 ]; then
-            # Stuck holder — steal the lock so the row click doesn't hang.
-            rmdir "$LOCK_DIR" 2>/dev/null || true
-        fi
-        sleep 0.05
-    done
-}
-release_lock() {
-    rmdir "$LOCK_DIR" 2>/dev/null || true
-}
-trap release_lock EXIT
-acquire_lock
-
-# Replace this session's row, or append if absent, atomically.
-TMP="${CLICKS_FILE}.$$"
-/usr/bin/awk -v sid="$SID" -v new="$LINE" '
-    BEGIN              { FS = OFS = "\t"; written = 0 }
-    $1 == sid          { if (!written) { print new; written = 1 } ; next }
-                       { print }
-    END                { if (!written) print new }
-' "$CLICKS_FILE" > "$TMP" && mv "$TMP" "$CLICKS_FILE"
+# Tell raise-and-open.sh the ack is already written, so it doesn't re-record
+# when we delegate to it below. The banner click path has no such guard and
+# records the ack itself (that path doesn't pass through here).
+export CAB_CLICK_RECORDED=1
 
 # Open the session. We deliberately do this *after* recording the click —
 # if the click write blocks (it shouldn't, but disk weirdness happens),
@@ -90,7 +68,6 @@ TMP="${CLICKS_FILE}.$$"
 # immediately — the helper's window-settle wait must not block SwiftBar.
 # The helper lives in hooks/ (sibling of bin/app/ at the repo root) and is
 # invoked via `/bin/bash` so it doesn't depend on an executable bit.
-SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
 RAISE_HELPER="${SCRIPT_DIR}/../../hooks/raise-and-open.sh"
 if [ -n "$CWD" ] && [ -n "$APP" ] && [ -d "$CWD" ] && [ -d "$APP" ] && [ -f "$RAISE_HELPER" ]; then
     /bin/bash "$RAISE_HELPER" "$URL" "$CWD" "$APP" "$SID" "$SETTLE" >/dev/null 2>&1 &

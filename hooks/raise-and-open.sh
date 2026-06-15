@@ -148,6 +148,17 @@ _raise_window() {
     return 0
 }
 
+# Record the click (ack) so the plugin clears the session's 🟢 FRESH state
+# on its next tick — the banner-click path reaches the editor through here,
+# and without this the session would stay green until fresh_sec elapsed even
+# though the user already opened it. The menu-row path records the ack via
+# open-session.sh and sets CAB_CLICK_RECORDED so we skip the duplicate write
+# when it delegates here. Best-effort: a failed ack must not block the open.
+if [ -n "$SID" ] && [ -z "${CAB_CLICK_RECORDED:-}" ]; then
+    _HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+    /bin/bash "${_HELPER_DIR}/record-click.sh" "$SID" >/dev/null 2>&1 || true
+fi
+
 if _raise_window; then
     # Wait (≈2 s cap) for that .app to be frontmost before handing over the
     # deeplink — the extension reads the focused window at delivery time, so

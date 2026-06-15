@@ -5,6 +5,22 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.2.1 — 2026-06-15
+
+### Fixed
+
+- **Clicking a completion banner now clears the session's 🟢 unread state.**
+  Opening a finished session by clicking its notification banner resumed it
+  in the editor but left the menu row green (🟢 FRESH) until `fresh_sec`
+  elapsed — only a menu-row click recorded the acknowledgement. The banner
+  click path bypassed the ack write entirely (a direct deeplink open in
+  single-window mode, `raise-and-open.sh` without an ack write in
+  multi-workspace mode). The ack write is now a single shared helper
+  (`hooks/record-click.sh`) that both paths go through, so a banner click
+  promotes the session 🟢 → 🔵 on the next tick just like a row click. This
+  was a latent bug present since clickable banners were introduced, not a
+  recent regression.
+
 ## 1.2.0 — 2026-06-13
 
 ### Added

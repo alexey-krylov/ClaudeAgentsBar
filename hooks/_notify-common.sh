@@ -601,14 +601,21 @@ _emit_notification() {
     [ -n "$subtitle" ] && notifier_args+=(-subtitle "$subtitle")
     [ -f "$icon" ] && notifier_args+=(-contentImage "$icon")
     if [ -n "$session_url" ]; then
-        local editor_app
+        # Route the click through raise-and-open.sh (via -execute) instead of
+        # a bare -open, so it records the click (ack) before resuming the
+        # session — the same as the menu-row path. Without this the session
+        # stays 🟢 FRESH until fresh_sec elapses even though the user already
+        # opened it from the banner. With multi_workspace_mode on and a known
+        # cwd + window-raising .app, pass them too so the click lands in the
+        # matching window; otherwise pass blanks and the helper just acks +
+        # opens (single-window: no raise, matching the prior -open behaviour).
+        local rc_cwd="" rc_app="" editor_app
         editor_app=$(_editor_app_for_scheme "$SCHEME")
         if [ "$MULTI_WS" = "true" ] && [ -n "$cwd" ] && [ -n "$editor_app" ] \
                 && [ -d "$cwd" ] && [ -d "$editor_app" ]; then
-            notifier_args+=(-execute "$(_raise_open_cmd "$session_url" "$cwd" "$editor_app" "$sid" "$SETTLE")")
-        else
-            notifier_args+=(-open "$session_url")
+            rc_cwd="$cwd"; rc_app="$editor_app"
         fi
+        notifier_args+=(-execute "$(_raise_open_cmd "$session_url" "$rc_cwd" "$rc_app" "$sid" "$SETTLE")")
     fi
     if command -v terminal-notifier >/dev/null 2>&1; then
         terminal-notifier "${notifier_args[@]}" >/dev/null 2>&1 &

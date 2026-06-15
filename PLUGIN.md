@@ -51,8 +51,10 @@ six sources:
    One row per `(parent_sid, agent_id)`. Drives the `🤖×N` badge and the
    parent state rollup so a row stays 🟡 while subagents are in flight,
    instead of drifting through 🟢 / 🔵 mid-Task.
-4. `agent-state.clicks` that `open-session.sh` writes (which idle sessions
-   the user has opened from the menu — drives 🟢 FRESH → 🔵 ACKNOWLEDGED).
+4. `agent-state.clicks` that `hooks/record-click.sh` writes — the single ack
+   writer shared by both resume paths (`open-session.sh` for a menu-row click,
+   `raise-and-open.sh` for a notification-banner click). Records which idle
+   sessions the user has opened — drives 🟢 FRESH → 🔵 ACKNOWLEDGED.
 5. `agent-state.dismiss`, a single-timestamp cutoff set by *Forget all
    sessions* under Tools.
 6. `agent-state.forget`, a `{sid → forget_ts}` map written by the per-row

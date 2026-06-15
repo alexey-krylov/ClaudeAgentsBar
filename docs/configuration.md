@@ -130,7 +130,10 @@ a session **blocked** on a permission prompt, and a finished session left
 **unread** too long. Each plays a chime, speaks a line via macOS `say`,
 and shows a clickable `terminal-notifier` banner whose three lines are
 laid out the same way (spec 0009). Clicking a banner deep-links straight
-to that session in your editor — no hunting through the menu bar.
+to that session in your editor — no hunting through the menu bar — and
+**marks it read**, exactly like clicking the menu row: the session leaves
+the 🟢 green group on the next tick (and, for an idle reminder, the
+reminder schedule ends).
 
 | | **Stop** (done) | **Awaiting** (blocked) | **Idle** (unread) |
 |---|---|---|---|
@@ -233,8 +236,9 @@ reminders (20 and 40 min; 80 > 60 is past the green window). Raise
 `fresh_minutes` to allow more, or shorten `notify_idle_interval_min` to
 fit more in.
 
-**Stopping reminders.** Clicking the session (or *Tools → Acknowledge
-all*) marks it read — it leaves the green group and the schedule ends.
+**Stopping reminders.** Clicking the session — its menu row *or* its
+reminder banner — (or *Tools → Acknowledge all*) marks it read: it leaves
+the green group and the schedule ends.
 A new turn that finishes again restarts the schedule from the first
 reminder.
 
@@ -600,7 +604,7 @@ and its hook/action scripts:
 |---|---|---|
 | `agent-state.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per session: latest hook state + cwd. |
 | `agent-state.subagents.tsv` | `hooks/agent-state.sh`, plugin (gc) | One row per live subagent (`Task` spawn), keyed on `(parent_sid, agent_id)`. Drives the 🤖×N badge and keeps the parent row 🟡 while subagents are in flight. |
-| `agent-state.clicks` | `bin/open-session.sh`, `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
+| `agent-state.clicks` | `hooks/record-click.sh` (shared writer, via `bin/open-session.sh` row click and `hooks/raise-and-open.sh` banner click), `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
 | `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
 | `agent-state.forget` | `bin/forget-session.sh`, plugin (gc) | `{session_id: forget_ts}` — per-row cutoff. Scoped variant of `agent-state.dismiss`. |
 | `agent-state.quiet-until` | `bin/quiet-pause.sh`, `bin/quiet-resume.sh` | Single naive ISO-8601 local timestamp — ad-hoc quiet-hours pause deadline. Absent / past / unparseable = not paused. |
