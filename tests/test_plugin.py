@@ -3723,13 +3723,14 @@ class TestIdleRemindersReconcile(unittest.TestCase):
             plugin.read_idle_reminders(), {"a": (self.now - self.interval - 10, 1)}
         )
 
-    def test_catch_up_fires_each_missed_threshold(self):
+    def test_catch_up_collapses_to_single_fire(self):
         # A long gap between ticks (e.g. machine asleep) crosses several
-        # thresholds at once — all owed reminders fire. 2500s past 1200s
-        # crosses 1200 (2^0) and 2400 (2^1); 4800 (2^2) is still ahead.
+        # thresholds at once. 2500s past 1200s crosses 1200 (2^0) and 2400
+        # (2^1); 4800 (2^2) is still ahead. The counter jumps straight to the
+        # current level (2) but only ONE reminder fires — no back-to-back burst.
         self._set_interval(self.interval)
         fired = self._run([self._fresh("a", 2500)])
-        self.assertEqual(fired, ["a", "a"])
+        self.assertEqual(fired, ["a"])
         self.assertEqual(plugin.read_idle_reminders(), {"a": (self.now - 2500, 2)})
 
     def test_left_fresh_session_pruned_from_sidecar(self):

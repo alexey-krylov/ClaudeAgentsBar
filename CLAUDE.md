@@ -60,6 +60,12 @@ to re-run.
 1. Verify `jq`, `python3`, and SwiftBar.app are present.
 2. Symlink `claude-agents.5s.py` into the SwiftBar plugins directory.
 3. Symlink `hooks/agent-state.sh` into `~/.claude/hooks/`.
+
+   Under Homebrew these symlinks are anchored at the stable `opt` prefix
+   (`$HOMEBREW_PREFIX/opt/claude-agents-bar`), **not** the versioned Cellar
+   keg, so they survive `brew upgrade` without a re-run — see
+   [ADR-0017](./docs/adr/0017-symlink-homebrew-opt-not-cellar.md).
+
 4. Back up `~/.claude/settings.json` (`.bak.YYYYMMDD-HHMMSS`) and merge
    the hook registrations from `settings-hooks.json` into it. Existing
    user hooks are preserved.

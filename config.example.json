@@ -90,6 +90,12 @@
   "// notify_voice.4": "Run 'say -v ?' in Terminal to list installed voices. Shared by both Stop and PermissionRequest events. Default: null.",
   "notify_voice": null,
 
+  "// notify_say_gap_sec": "Speech serialization (spec 0010). Only one say(1) speaks at a time — a shared lock keeps concurrent notifications (a finishing session + an idle nudge, plus the Remind click) from talking over each other. This is the pause held AFTER each spoken notification before the next one may start, in seconds (fractions ok). 0 keeps the serialization but no extra pause. Default: 1.",
+  "notify_say_gap_sec": 1,
+
+  "// notify_say_stale_sec": "Speech serialization (spec 0010). A spoken notification that has waited for the speech lock longer than this many seconds is DROPPED unspoken — a stale 'check me' lagging a minute behind reality is noise. Default: 30.",
+  "notify_say_stale_sec": 30,
+
   "// notify_summary_marker": "Spoken (and banner) summary on Stop. Behaviour:",
   "// notify_summary_marker.1": "  • look at the LAST non-blank line of the assistant's reply; strip any markdown italic/bold wrappers (*, _, **, ***); if it then STARTS WITH this prefix, the text after it is the summary",
   "// notify_summary_marker.2": "  • say(1) reads the random phrase THEN the summary ('Done. <summary>'); the notification banner shows the summary ALONE",

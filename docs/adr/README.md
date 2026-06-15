@@ -29,6 +29,7 @@ prior one.
 | [0014](./0014-no-vscode-hidden-sessions-sync.md) | Don't sync with VSCode's hiddenSessionIds | Accepted |
 | [0015](./0015-python-as-plugin-language.md) | Python as the plugin language | Accepted |
 | [0016](./0016-multi-workspace-window-focus.md) | Multi-workspace window focus via open-document, not the deeplink alone | Accepted |
+| [0017](./0017-symlink-homebrew-opt-not-cellar.md) | Anchor Homebrew symlinks at `opt`, not the versioned Cellar keg | Accepted |
 
 ## Workflow
 

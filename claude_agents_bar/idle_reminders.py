@@ -69,9 +69,11 @@ def reconcile(sessions: Iterable[Session], now: int) -> None:
     out of the rebuilt map, so the write prunes them — no separate GC pass.
 
     A new ``stop_ts`` for a session (it finished a fresh turn) resets its
-    counter, restarting the schedule. The while-loop fires every threshold
-    crossed since the last tick, which matters only if the machine was
-    asleep across one — normally a single reminder comes due at a time.
+    counter, restarting the schedule. When several thresholds have been
+    crossed since the last tick — e.g. the machine slept across them — the
+    counter jumps straight to the current level but only **one** reminder is
+    sent, so a catch-up is a single nudge, not a back-to-back burst of
+    banners + speech.
     """
     interval = core.CONFIG.notify_idle_interval_sec
     if interval <= 0:
@@ -93,9 +95,18 @@ def reconcile(sessions: Iterable[Session], now: int) -> None:
         fired = prev[1] if prev is not None and prev[0] == stop_ts else 0
 
         elapsed = now - stop_ts
-        while elapsed >= interval * (2 ** fired):
+        # How many doubling thresholds the elapsed time has crossed.
+        target = fired
+        while elapsed >= interval * (2 ** target):
+            target += 1
+
+        # Collapse a multi-threshold catch-up — e.g. the machine slept across
+        # several intervals — into a SINGLE reminder: advance the counter to
+        # the current level but spawn at most one notify per tick, so the user
+        # gets one nudge, not a back-to-back burst of banners + speech.
+        if target > fired:
             _fire(session)
-            fired += 1
+            fired = target
 
         if fired >= 1:
             updated[session.id] = (stop_ts, fired)

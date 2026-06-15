@@ -551,6 +551,70 @@ _banner_subtitle() {
     printf '%s — %s %s' "$project" "$icon" "$branch"
 }
 
+# ── Speech serialization lock (spec 0010) ────────────────────────────────────
+# say(1) overlap is the problem: every notify hook and the Remind click spawn
+# their own backgrounded `say`, so two events landing in the same second talk
+# over each other and become unintelligible. There's no daemon to serialize
+# through (stateless project, no IPC), so the cross-process mutex is an atomic
+# `mkdir` at a fixed sidecar dir — macOS ships no flock(1). Only speech is
+# serialized; the chime (afplay) and banner still fire in parallel as before.
+#
+#   _say_lock_acquire  Spin on mkdir until we own the lock. Returns 0 when held
+#                      — the caller then speaks and MUST call _say_lock_release.
+#                      Returns 1 when this utterance has waited longer than
+#                      notify_say_stale_sec (default 30) — the caller drops it
+#                      unspoken, because a stale spoken notification is noise.
+#   _say_lock_release  Hold the lock for notify_say_gap_sec (default 1) — the
+#                      inter-utterance pause, since the next waiter can't mkdir
+#                      until we rmdir — then release.
+#
+# Staleness of the *holder* (crash recovery): the lock dir stores the holder's
+# PID. A waiter steals it (rm -rf + retry) when that PID is gone. `$$` inside a
+# `( ) &` subshell is the PARENT's pid (bash 3.2 quirk, and there's no BASHPID),
+# so the holder records its real pid via `sh -c 'echo $PPID'` — the forked sh's
+# parent IS the speaking subshell. _SAY_LOCK_CEILING is a backstop for the rare
+# case the dead holder's PID got reused by an unrelated live process: a lock dir
+# older than the ceiling is stolen regardless.
+_SAY_LOCK_DIR="${HOME}/.claude/agent-state.say.lock"
+_SAY_LOCK_CEILING=120
+
+_say_lock_acquire() {
+    local stale stale_int
+    stale=$(_cfg_number "notify_say_stale_sec" "30")
+    case "$stale" in ''|*[!0-9.]*) stale=30 ;; esac
+    stale_int=${stale%.*}; [ -n "$stale_int" ] || stale_int=0
+    SECONDS=0
+    while ! mkdir "$_SAY_LOCK_DIR" 2>/dev/null; do
+        # Steal an orphaned lock — holder PID gone, or dir older than the
+        # crash backstop. An empty/unwritten pid file means someone just
+        # grabbed it (race window before the pid write); don't steal that.
+        local pid mtime now
+        pid=$(cat "$_SAY_LOCK_DIR/pid" 2>/dev/null)
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -rf "$_SAY_LOCK_DIR" 2>/dev/null
+            continue
+        fi
+        mtime=$(stat -f %m "$_SAY_LOCK_DIR" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        if [ "$mtime" -gt 0 ] && [ $((now - mtime)) -ge "$_SAY_LOCK_CEILING" ]; then
+            rm -rf "$_SAY_LOCK_DIR" 2>/dev/null
+            continue
+        fi
+        # Drop this utterance once we've waited past the staleness budget.
+        [ "$SECONDS" -ge "$stale_int" ] && return 1
+        sleep 0.2
+    done
+    printf '%s' "$(sh -c 'echo $PPID')" > "$_SAY_LOCK_DIR/pid" 2>/dev/null || true
+    return 0
+}
+
+_say_lock_release() {
+    local gap
+    gap=$(_cfg_number "notify_say_gap_sec" "1")
+    sleep "$gap" 2>/dev/null || sleep 1
+    rmdir "$_SAY_LOCK_DIR" 2>/dev/null || rm -rf "$_SAY_LOCK_DIR" 2>/dev/null
+}
+
 # ── Notification emit (chime + speech + banner) ──────────────────────────────
 # The shared tail of every notify hook: play the chime, speak the phrase,
 # and pop the clickable terminal-notifier banner. Reads the channel state
@@ -576,11 +640,20 @@ _emit_notification() {
         afplay "$SOUND_PATH" >/dev/null 2>&1 &
     fi
     if [ "$SUPPRESS_VOICE" = "false" ] && [ "$VOICE" != "off" ]; then
-        if [ -n "$VOICE" ]; then
-            (sleep 1 && say -v "$VOICE" "$say_text") >/dev/null 2>&1 &
-        else
-            (sleep 1 && say "$say_text") >/dev/null 2>&1 &
-        fi
+        # The 1 s lead lets the chime play before the voice starts; it stays
+        # OUTSIDE the lock (per-notification, not a queued cost). Then serialize
+        # through the speech lock so concurrent notifications don't talk over
+        # each other; a too-long wait drops this utterance unspoken (spec 0010).
+        (
+            sleep 1
+            _say_lock_acquire || exit 0
+            if [ -n "$VOICE" ]; then
+                say -v "$VOICE" "$say_text"
+            else
+                say "$say_text"
+            fi
+            _say_lock_release
+        ) >/dev/null 2>&1 &
     fi
     disown 2>/dev/null || true
 

@@ -122,13 +122,19 @@ _say() {  # speak one phrase with the configured voice (system default if off/un
 
 # Fire-and-forget, never block the click. A short pause separates consecutive
 # phrases ("was → now"); no leading chime, so nothing before the first.
+# The whole was→now read is held under one speech-lock acquisition (spec 0010)
+# so a concurrent notification can't wedge between the two phrases, and so it
+# doesn't talk over an in-flight Stop/idle announcement. A too-long wait drops
+# the reminder unspoken — same staleness budget as the hooks.
 (
+    _say_lock_acquire || exit 0
     __i=0
     for __p in "${PHRASES[@]}"; do
         [ "$__i" -gt 0 ] && sleep 0.4
         _say "$__p"
         __i=$((__i + 1))
     done
+    _say_lock_release
 ) >/dev/null 2>&1 &
 disown 2>/dev/null || true
 

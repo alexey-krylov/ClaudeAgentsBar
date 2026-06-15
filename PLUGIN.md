@@ -353,6 +353,19 @@ mirroring `sidecars.current_git_branch`; `<icon>` is `ⓦ` for a worktree
 or `⎇` for an ordinary branch), line 3 is the marker `name — summary`.
 The emoji is banner-only — it's never in the `say` text.
 
+The `say` step is serialized across processes by `_say_lock_acquire` /
+`_say_lock_release` (an atomic `mkdir` mutex at
+`~/.claude/agent-state.say.lock` — macOS has no `flock`), so concurrent
+notifications (a finishing Stop + an idle nudge, plus the *Remind* click,
+which shares the same lock) never talk over each other. `_say_lock_release`
+holds the lock for `notify_say_gap_sec` before releasing, which is the
+inter-utterance pause; an utterance that waits past `notify_say_stale_sec`
+is dropped unspoken. Only speech is locked — the chime and banner still
+fire in parallel. The holder records its real pid via `sh -c 'echo $PPID'`
+(`$$` in a `( ) &` subshell is the parent's, and bash 3.2 has no
+`BASHPID`) so a waiter can steal a dead holder's lock — see
+[spec 0010](./docs/specs/0010-speech-lock.md).
+
 A third script, `hooks/notify-idle.sh`, is **not** a Claude Code hook —
 it isn't registered in `settings-hooks.json` and reads its session id +
 cwd from positional arguments, not a hook payload. It's fired by the

@@ -51,6 +51,8 @@ restart needed.
 | `notify_sound_stop` | `"Hero"` | Chime played on `Stop`. Bare name (`"Hero"`, `"Glass"`, `"Funk"`, …) resolves under `/System/Library/Sounds/`. Absolute or `~`-paths are used as-is. `null` suppresses the chime — banner and voice still fire. Missing files log a warning to SwiftBar's log and fall back to no chime for that event. |
 | `notify_sound_wait` | `"Funk"` | Chime played on `PermissionRequest`. Same value shapes as `notify_sound_stop`. Default `"Funk"` is shorter and softer than `Hero` — *needs your attention* vs *task complete*. |
 | `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
+| `notify_say_gap_sec` | `1` | Speech serialization (only one `say(1)` speaks at a time — see *Speech serialization* below). The pause held **after** each spoken notification before the next may start, in seconds (fractions ok). `0` keeps the serialization but adds no pause. |
+| `notify_say_stale_sec` | `30` | Speech serialization. A spoken notification that has waited for the speech lock longer than this many seconds is **dropped unspoken** — a stale announcement lagging behind reality is noise. See *Speech serialization* below. |
 | `notify_summary_marker` | `"-- "` | Prefix of the assistant's italic closing line `*-- Name - Summary*` (name and summary split on the first `" - "`). Drives the **Stop** speech/banner (the summary), the **awaiting** speech/banner (name + summary), and — only when `use_session_titles_for_menubar` is on — the **menu title** (the name). `null` / `""` disables it everywhere. Matched literally (no regex), last line only. See *Spoken summary* below. |
 | `use_session_titles_for_menubar` | `false` | Whether the menu row title uses the response-marker **name** (`*-- Name - Summary*`). `false` (default): the row shows Claude Code's own `ai-title` — the same English label **VSCode displays**, so the menu stays consistent with the editor. `true`: the marker name takes priority over `ai-title`, surfacing your own wording (e.g. Russian) in the menu. Independent of this knob, the marker is **always** parsed for the spoken notifications (the awaiting hook reads name + summary in Bash) — so the primary reason to write the marker, *voice*, works either way. When off, the per-tick title parse is skipped entirely. See *Spoken summary* below. |
 | `remind_recap_after_min` | `null` | Controls the *Remind* submenu action. When the time since a session's last output (its transcript mtime) is **≥** this many minutes, a Remind click speaks the session's **opening** summary first, then its **latest** one — so you recall what a cold session was about before where it is now. While you're still in the flow (less time elapsed) it speaks only the latest. `null` / absent (default): always latest only. `0`: always recap. A session with a single summary speaks it once either way. See *Spoken summary* below. |
@@ -344,6 +346,35 @@ speaks a short "configure Claude to end replies with a summary line" hint
 rather than staying silent. Unlike the automatic Stop speech, an explicit
 *Remind* click speaks even under *Banner only* or `notify_voice: "off"` —
 those mute only the automatic notification, not a deliberate click.
+
+### Speech serialization
+
+Several sessions can want to speak at once — one finishes (Stop) just as
+the plugin fires an idle nudge for another, or you click *Remind* while a
+notification is mid-sentence. Each spoken notification runs in its own
+background `say(1)`, so without coordination they talk over each other and
+you can't tell which session is which.
+
+A shared lock fixes that: **only one `say` speaks at a time.** The others
+queue. After each utterance there's a configurable pause —
+[`notify_say_gap_sec`](#configuration) (default `1` s) — before the next
+one starts, so they don't run together as one breath. Set it to `0` to
+drop the pause but keep the one-at-a-time ordering.
+
+To stop the queue from reading you a backlog of stale announcements, a
+notification that has waited for the lock longer than
+[`notify_say_stale_sec`](#configuration) (default `30` s) is **dropped
+unspoken** — a "check me" that's a minute behind reality is just noise.
+Raise it if you'd rather hear everything eventually; lower it to favour
+freshness.
+
+The lock covers **speech only**. The chime and the banner still fire
+immediately and in parallel — short chimes overlapping isn't a problem,
+and the banners are visual. Quiet hours, *Banner only*, and
+`notify_voice: "off"` still suppress speech as before; the lock only
+orders what does get spoken. It's a crash-safe file lock under
+`~/.claude/` — if a speaking process dies, the next one detects the stale
+lock and proceeds, so speech never wedges permanently.
 
 ### Setting up Claude to produce the summary line
 

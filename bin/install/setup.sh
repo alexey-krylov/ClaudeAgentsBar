@@ -24,6 +24,30 @@ set -euo pipefail
 # This script lives in <repo>/bin/install/. The repo root is two levels up.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_DIR="$(cd "$HERE/../.." && pwd -P)"
+
+# Homebrew: re-anchor at the stable `opt` prefix, not the versioned Cellar
+# keg (ADR-0017). `claude-agents-bar setup` is reached through the symlink
+# chain $HOMEBREW_PREFIX/bin → Cellar/<version>/…; the dispatcher resolves it
+# with `cd -P`, so REPO_DIR here is the *versioned* keg path. Symlinking the
+# plugin/hooks at it would dangle after the next `brew upgrade`, which deletes
+# the old keg — the "stops working after an upgrade" bug. The `opt` prefix
+# ($HOMEBREW_PREFIX/opt/claude-agents-bar) is a symlink Homebrew repoints to
+# the current version on every upgrade, so anchoring there lets the install
+# survive upgrades with no re-run of setup. Outside Homebrew (git clone) the
+# case doesn't match and REPO_DIR is left as-is.
+case "$REPO_DIR" in
+    */Cellar/claude-agents-bar/*/libexec)
+        _opt="$(brew --prefix claude-agents-bar 2>/dev/null || true)"
+        if [ -z "$_opt" ]; then
+            # brew not on PATH — derive the opt path from the Cellar layout.
+            _opt="${REPO_DIR%%/Cellar/claude-agents-bar/*}/opt/claude-agents-bar"
+        fi
+        if [ -f "${_opt}/libexec/claude-agents.5s.py" ]; then
+            REPO_DIR="${_opt}/libexec"
+        fi
+        ;;
+esac
+
 PLUGIN_SRC="${REPO_DIR}/claude-agents.5s.py"
 HOOK_SRC="${REPO_DIR}/hooks/agent-state.sh"
 NOTIFY_HOOK_SRC="${REPO_DIR}/hooks/notify-stop.sh"

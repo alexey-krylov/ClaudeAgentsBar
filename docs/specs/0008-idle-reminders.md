@@ -129,7 +129,8 @@ a finished session's last turn carries its closing marker.
   fires past the first threshold and records `(stop_ts, 1)`; no fire
   before; non-FRESH ignored; no re-fire within the same window; second
   reminder at the doubled threshold; a new `stop_ts` resets the counter;
-  catch-up fires each missed threshold after a tick gap; a session that
+  a multi-threshold catch-up after a tick gap collapses to a single fire
+  while the counter jumps to the current level; a session that
   left FRESH is pruned from the sidecar.
 * `bash -n` on `_notify-common.sh` + all three notify scripts; full
   `unittest` suite green.

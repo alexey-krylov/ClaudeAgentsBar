@@ -5,6 +5,47 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.2.2 — 2026-06-15
+
+### Fixed
+
+- **A Homebrew install no longer breaks on `brew upgrade`.** `setup`
+  symlinked the SwiftBar plugin and the Claude Code hooks at the
+  *versioned* Cellar keg path (`…/Cellar/claude-agents-bar/<version>/…`).
+  The next `brew upgrade` deletes the old keg, so those symlinks dangled —
+  the plugin vanished from the menu bar and hooks stopped firing until
+  `setup` was re-run. `setup` now re-anchors at the stable `opt` prefix
+  (`$HOMEBREW_PREFIX/opt/claude-agents-bar`, which Homebrew repoints to the
+  current version on every upgrade), so a Homebrew install survives
+  upgrades with no re-run. Run `claude-agents-bar setup` once after
+  upgrading to this version to convert existing symlinks; git-clone installs
+  are unaffected. See [ADR-0017](./docs/adr/0017-symlink-homebrew-opt-not-cellar.md).
+
+- **Spoken notifications no longer talk over each other.** Every notify hook
+  (Stop, awaiting, idle) and the *Remind* click spawned its own background
+  `say(1)`, so two events landing in the same moment — a session finishing
+  while an idle nudge fired for another — spoke simultaneously and became
+  unintelligible. Speech is now serialized through a shared cross-process
+  lock (`_say_lock_acquire` / `_say_lock_release` in `hooks/_notify-common.sh`,
+  an atomic `mkdir` mutex under `~/.claude/` since macOS has no `flock`): only
+  one `say` speaks at a time, with a configurable pause between utterances
+  (**`notify_say_gap_sec`**, default 1 s). A notification that waits for the
+  lock longer than **`notify_say_stale_sec`** (default 30 s) is dropped
+  unspoken, so a backlog of stale announcements doesn't queue up. Only speech
+  is locked — the chime and banner still fire in parallel. The lock is
+  crash-safe: a dead holder's lock is stolen by the next waiter. See
+  [spec 0010](./docs/specs/0010-speech-lock.md).
+
+- **A catch-up after sleep no longer double-fires the idle reminder.** When the
+  machine slept across several escalation thresholds, `idle_reminders.reconcile`
+  fired one `notify-idle.sh` per missed threshold in a single tick — so waking
+  up could greet you with two back-to-back banners + chimes (and, before the
+  speech lock above, two overlapping voices) for the same session. The catch-up
+  now collapses to a **single** reminder: the escalation counter jumps straight
+  to the current level but only one notification fires per tick. Normal
+  one-at-a-time scheduling is unchanged. See
+  [spec 0008](./docs/specs/0008-idle-reminders.md).
+
 ## 1.2.1 — 2026-06-15
 
 ### Fixed
