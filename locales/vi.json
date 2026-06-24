@@ -10,6 +10,7 @@
   "menu.ack_all": "Đánh dấu tất cả đã đọc",
   "menu.forget_all": "Quên tất cả phiên",
   "menu.stats_today": "Thống kê hôm nay…",
+  "menu.usage": "Phiên: {sess}% · {until} · Tuần: {wk}%/{target}%",
   "menu.suggest": "Đề xuất cải tiến…",
   "menu.multi_workspace": "Chế độ đa không gian làm việc",
   "menu.config": "Cấu hình…",

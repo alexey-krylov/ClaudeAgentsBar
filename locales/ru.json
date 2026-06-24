@@ -10,6 +10,7 @@
   "menu.ack_all": "Отметить всё прочитанным",
   "menu.forget_all": "Забыть все сессии",
   "menu.stats_today": "Статистика за сегодня…",
+  "menu.usage": "Сессия: {sess}% · {until} · Неделя: {wk}%/{target}%",
   "menu.suggest": "Предложить улучшение…",
   "menu.multi_workspace": "Параллельные рабочие пространства",
   "menu.config": "Конфигурация…",

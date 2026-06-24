@@ -29,7 +29,16 @@ import sys
 import time
 from dataclasses import replace
 
-from . import actions, core, doctor, idle_reminders, keep_awake, render, sidecars
+from . import (
+    actions,
+    core,
+    doctor,
+    idle_reminders,
+    keep_awake,
+    render,
+    sidecars,
+    usage_alerts,
+)
 
 # --- Re-exports from .core -------------------------------------------------- #
 from .core import (
@@ -115,7 +124,10 @@ from .sidecars import (
     read_quiet_until,
     read_sidecar,
     read_transcript_meta,
+    read_usage,
+    read_usage_alerts,
     write_idle_reminders,
+    write_usage_alerts,
 )
 
 # --- Re-exports from .render ----------------------------------------------- #
@@ -230,6 +242,13 @@ def main() -> int:
             idle_reminders.reconcile(sessions, now)
         except Exception as exc:
             core._warn(f"idle_reminders: reconcile failed: {exc}")
+        # Subscription usage alerts ride the same tick. Account-wide, so no
+        # session list needed — just the usage snapshot the statusLine sensor
+        # wrote. Same crash-isolation. See :mod:`usage_alerts`.
+        try:
+            usage_alerts.reconcile(now)
+        except Exception as exc:
+            core._warn(f"usage_alerts: reconcile failed: {exc}")
     except Exception as exc:
         # Catch-all so SwiftBar never sees a Python traceback in the menu.
         print("⚠️ | color=red")

@@ -10,6 +10,7 @@
   "menu.ack_all": "全部确认",
   "menu.forget_all": "忘记所有会话",
   "menu.stats_today": "今日统计…",
+  "menu.usage": "会话：{sess}% · {until} · 本周：{wk}%/{target}%",
   "menu.suggest": "建议改进…",
   "menu.multi_workspace": "多工作区模式",
   "menu.config": "配置…",

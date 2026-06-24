@@ -2,7 +2,7 @@
   "_meta": {
     "locale": "en",
     "name": "English",
-    "note": "Source-of-truth locale. Every other file falls back here for missing keys. Placeholders use Python str.format syntax — keep {n}, {h}, {m}, {title}, {sid}, {duration}, {exc}, {transcript_label}, {transcript_path}, {artifacts_section} identical across locales."
+    "note": "Source-of-truth locale. Every other file falls back here for missing keys. Placeholders use Python str.format syntax — keep {n}, {h}, {m}, {title}, {sid}, {duration}, {exc}, {transcript_label}, {transcript_path}, {artifacts_section}, {sess}, {until}, {wk}, {target} identical across locales."
   },
 
   "menu.refresh": "Refresh",
@@ -10,6 +10,7 @@
   "menu.ack_all": "Acknowledge all",
   "menu.forget_all": "Forget all sessions",
   "menu.stats_today": "Stats today…",
+  "menu.usage": "Session: {sess}% · {until} · Week: {wk}%/{target}%",
   "menu.suggest": "Suggest improvement…",
   "menu.multi_workspace": "Multi-workspace mode",
   "menu.config": "Configuration…",

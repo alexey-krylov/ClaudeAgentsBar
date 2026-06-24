@@ -10,6 +10,7 @@
   "menu.ack_all": "Conferma tutto",
   "menu.forget_all": "Dimentica tutte le sessioni",
   "menu.stats_today": "Statistiche di oggi…",
+  "menu.usage": "Sessione: {sess}% · {until} · Settimana: {wk}%/{target}%",
   "menu.suggest": "Suggerisci miglioramento…",
   "menu.multi_workspace": "Modalità multi-workspace",
   "menu.config": "Configurazione…",

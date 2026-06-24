@@ -377,6 +377,12 @@ def _idle_reminders_lock(timeout_sec: float = 2.0):
     return _mkdir_lock(core._IDLE_REMINDERS_LOCK_DIR, timeout_sec)
 
 
+def _usage_alerts_lock(timeout_sec: float = 2.0):
+    """Mutex on ``agent-state.usage-alerts``. Only the plugin tick writes it,
+    but overlapping ticks could race, so the rewrite is serialised."""
+    return _mkdir_lock(core._USAGE_ALERTS_LOCK_DIR, timeout_sec)
+
+
 # --------------------------------------------------------------------------- #
 # Sidecar GC                                                                   #
 # --------------------------------------------------------------------------- #
@@ -594,6 +600,101 @@ def write_idle_reminders(state: dict[str, tuple[int, int]]) -> None:
             tmp.replace(core.IDLE_REMINDERS_PATH)
         except OSError as exc:
             _warn(f"idle-reminders write failed: {exc}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def read_usage() -> core.Usage | None:
+    """Load the subscription usage snapshot written by ``usage-sensor.sh``.
+
+    Five-column TSV
+    (``record_ts\tfive_used\tfive_resets_at\tseven_used\tseven_target``),
+    one row. Returns ``None`` when the file is absent (API-key auth, or the
+    sensor isn't wired up), unreadable, malformed, or carries a non-numeric
+    field — same fail-open stance as the other readers: a missing or broken
+    snapshot just hides the usage line and skips the alerts, never crashes
+    the menu. ``five_resets_at`` is validated numeric but kept as the raw
+    string (it doubles as the usage-alert window key).
+    """
+    if not core.USAGE_PATH.exists():
+        return None
+    try:
+        raw = core.USAGE_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    parts = raw.strip().split("\t")
+    if len(parts) < 5:
+        return None
+    try:
+        record_ts = int(parts[0])
+        five_used = int(parts[1])
+        int(parts[2])  # validate five_resets_at is numeric; keep the string
+        seven_used = int(parts[3])
+        float(parts[4])  # validate seven_target is numeric; keep the string
+    except ValueError:
+        return None
+    return core.Usage(
+        record_ts=record_ts,
+        five_used=five_used,
+        five_resets_at=parts[2],
+        seven_used=seven_used,
+        seven_target=parts[4],
+    )
+
+
+def read_usage_alerts() -> tuple[str, int] | None:
+    """Load the usage-alert progress as ``(window_key, max_threshold_fired)``.
+
+    Single-row two-column TSV (``five_resets_at\tmax_threshold_fired``).
+    Returns ``None`` when absent / unreadable / malformed — meaning no
+    threshold has fired for any window yet. ``window_key`` is the 5-hour
+    window's ``resets_at`` string; :func:`usage_alerts.reconcile` resets the
+    progress when it no longer matches the current snapshot's window.
+    """
+    if not core.USAGE_ALERTS_PATH.exists():
+        return None
+    try:
+        raw = core.USAGE_ALERTS_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    parts = raw.strip().split("\t")
+    if len(parts) < 2 or not parts[0]:
+        return None
+    try:
+        max_fired = int(parts[1])
+    except ValueError:
+        return None
+    return (parts[0], max_fired)
+
+
+def write_usage_alerts(state: tuple[str, int] | None) -> None:
+    """Atomically replace the usage-alert progress sidecar with ``state``.
+
+    ``state`` is ``(window_key, max_threshold_fired)`` or ``None`` to clear
+    it (removes the file, like an empty :func:`write_idle_reminders`). Full
+    rewrite under :func:`_usage_alerts_lock` via tmp + ``replace``.
+    Best-effort: any OSError is logged and swallowed so a write failure never
+    takes the menu down.
+    """
+    if state is None:
+        try:
+            core.USAGE_ALERTS_PATH.unlink()
+        except OSError:
+            pass
+        return
+    window_key, max_fired = state
+    with _usage_alerts_lock():
+        tmp = core.USAGE_ALERTS_PATH.with_suffix(
+            core.USAGE_ALERTS_PATH.suffix + f".{os.getpid()}.tmp"
+        )
+        try:
+            core.USAGE_ALERTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(f"{window_key}\t{max_fired}\n", encoding="utf-8")
+            tmp.replace(core.USAGE_ALERTS_PATH)
+        except OSError as exc:
+            _warn(f"usage-alerts write failed: {exc}")
             try:
                 tmp.unlink()
             except OSError:

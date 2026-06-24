@@ -1483,6 +1483,18 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"notify_audio": "false"})
         self.assertIs(config.notify_audio, True)
 
+    def test_notify_on_usage_default(self):
+        self.assertIs(plugin.Config().notify_on_usage, True)
+
+    def test_notify_on_usage_accepts_bool(self):
+        config = plugin.Config._from_mapping({"notify_on_usage": False})
+        self.assertIs(config.notify_on_usage, False)
+
+    def test_notify_on_usage_rejects_non_bool(self):
+        # Same guard as notify_audio: a truthy string must not flip the flag.
+        config = plugin.Config._from_mapping({"notify_on_usage": "false"})
+        self.assertIs(config.notify_on_usage, True)
+
     def test_notify_summary_marker_default(self):
         self.assertEqual(plugin.Config().notify_summary_marker, "-- ")
 
@@ -3741,6 +3753,254 @@ class TestIdleRemindersReconcile(unittest.TestCase):
         fired = self._run([])  # no FRESH sessions this tick
         self.assertEqual(fired, [])
         self.assertEqual(plugin.read_idle_reminders(), {})
+
+
+class TestUsageSidecars(unittest.TestCase):
+    """Read/write round-trips for the usage snapshot and the alert progress
+    sidecars (spec 0011), plus the fail-open parsing stance."""
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        usage = self._tmpdir / "agent-state.usage"
+        alerts = self._tmpdir / "agent-state.usage-alerts"
+        self._orig_usage = plugin.core.USAGE_PATH
+        self._orig_alerts = plugin.core.USAGE_ALERTS_PATH
+        self._orig_alerts_lock = plugin.core._USAGE_ALERTS_LOCK_DIR
+        plugin.core.USAGE_PATH = usage
+        plugin.core.USAGE_ALERTS_PATH = alerts
+        plugin.core._USAGE_ALERTS_LOCK_DIR = alerts.with_suffix(
+            alerts.suffix + ".lock.d"
+        )
+        self.usage = usage
+        self.alerts = alerts
+
+    def tearDown(self):
+        import shutil
+        plugin.core.USAGE_PATH = self._orig_usage
+        plugin.core.USAGE_ALERTS_PATH = self._orig_alerts
+        plugin.core._USAGE_ALERTS_LOCK_DIR = self._orig_alerts_lock
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    # --- read_usage ---------------------------------------------------------
+
+    def test_read_usage_absent_is_none(self):
+        self.assertIsNone(plugin.read_usage())
+
+    def test_read_usage_valid_row(self):
+        self.usage.write_text("1700\t63\t9999999999\t7\t69.5\n", encoding="utf-8")
+        u = plugin.read_usage()
+        self.assertEqual(u.record_ts, 1700)
+        self.assertEqual(u.five_used, 63)
+        self.assertEqual(u.five_resets_at, "9999999999")
+        self.assertEqual(u.seven_used, 7)
+        self.assertEqual(u.seven_target, "69.5")
+
+    def test_read_usage_too_few_columns_is_none(self):
+        self.usage.write_text("1700\t63\t9999999999\t7\n", encoding="utf-8")
+        self.assertIsNone(plugin.read_usage())
+
+    def test_read_usage_non_numeric_is_none(self):
+        self.usage.write_text("1700\tNaNpercent\t9999999999\t7\t69.5\n", encoding="utf-8")
+        self.assertIsNone(plugin.read_usage())
+
+    def test_read_usage_non_numeric_resets_is_none(self):
+        self.usage.write_text("1700\t63\tlater\t7\t69.5\n", encoding="utf-8")
+        self.assertIsNone(plugin.read_usage())
+
+    def test_read_usage_empty_file_is_none(self):
+        self.usage.write_text("", encoding="utf-8")
+        self.assertIsNone(plugin.read_usage())
+
+    # --- read/write_usage_alerts -------------------------------------------
+
+    def test_usage_alerts_round_trip(self):
+        plugin.write_usage_alerts(("9999999999", 80))
+        self.assertEqual(plugin.read_usage_alerts(), ("9999999999", 80))
+
+    def test_write_usage_alerts_none_removes_file(self):
+        plugin.write_usage_alerts(("9999999999", 50))
+        self.assertTrue(self.alerts.exists())
+        plugin.write_usage_alerts(None)
+        self.assertFalse(self.alerts.exists())
+
+    def test_read_usage_alerts_absent_is_none(self):
+        self.assertIsNone(plugin.read_usage_alerts())
+
+    def test_read_usage_alerts_corrupt_is_none(self):
+        self.alerts.write_text("onlyonecolumn\n", encoding="utf-8")
+        self.assertIsNone(plugin.read_usage_alerts())
+
+    def test_read_usage_alerts_non_numeric_is_none(self):
+        self.alerts.write_text("9999999999\tlots\n", encoding="utf-8")
+        self.assertIsNone(plugin.read_usage_alerts())
+
+
+class TestUsageAlertsReconcile(unittest.TestCase):
+    """The per-tick threshold logic in :func:`usage_alerts.reconcile`.
+
+    ``_fire`` (which spawns the bash notifier) is patched out; ``read_usage``
+    is patched to inject a snapshot. The alerts sidecar and the live
+    ``CONFIG`` flag are redirected per-test.
+    """
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        alerts = self._tmpdir / "agent-state.usage-alerts"
+        self._orig_alerts = plugin.core.USAGE_ALERTS_PATH
+        self._orig_alerts_lock = plugin.core._USAGE_ALERTS_LOCK_DIR
+        self._orig_config = plugin.core.CONFIG
+        plugin.core.USAGE_ALERTS_PATH = alerts
+        plugin.core._USAGE_ALERTS_LOCK_DIR = alerts.with_suffix(
+            alerts.suffix + ".lock.d"
+        )
+        self.alerts = alerts
+        self.now = 1_700_000_000
+        # a window that hasn't expired yet
+        self.window = str(self.now + 3600)
+
+    def tearDown(self):
+        import shutil
+        plugin.core.USAGE_ALERTS_PATH = self._orig_alerts
+        plugin.core._USAGE_ALERTS_LOCK_DIR = self._orig_alerts_lock
+        plugin.core.CONFIG = self._orig_config
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _set_on(self, on=True):
+        plugin.core.CONFIG = plugin.Config(notify_on_usage=on)
+
+    def _usage(self, five_used, resets_at=None):
+        return plugin.core.Usage(
+            record_ts=self.now,
+            five_used=five_used,
+            five_resets_at=resets_at or self.window,
+            seven_used=7,
+            seven_target="69.5",
+        )
+
+    def _run(self, usage):
+        fired = []
+        with patch.object(
+            plugin.usage_alerts, "_fire",
+            side_effect=lambda pct, kind: fired.append((pct, kind)),
+        ), patch.object(plugin.sidecars, "read_usage", return_value=usage):
+            plugin.usage_alerts.reconcile(self.now)
+        return fired
+
+    def test_feature_off_does_nothing(self):
+        self._set_on(False)
+        fired = self._run(self._usage(72))
+        self.assertEqual(fired, [])
+        self.assertFalse(self.alerts.exists())
+
+    def test_no_snapshot_does_nothing(self):
+        self._set_on(True)
+        fired = self._run(None)
+        self.assertEqual(fired, [])
+
+    def test_expired_window_does_nothing(self):
+        self._set_on(True)
+        # resets_at already in the past → stale snapshot, no alert
+        fired = self._run(self._usage(72, resets_at=str(self.now - 10)))
+        self.assertEqual(fired, [])
+
+    def test_fires_first_threshold_with_actual_pct(self):
+        self._set_on(True)
+        fired = self._run(self._usage(52))
+        self.assertEqual(fired, [(52, "A")])
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 50))
+
+    def test_below_first_threshold_no_fire(self):
+        self._set_on(True)
+        fired = self._run(self._usage(49))
+        self.assertEqual(fired, [])
+
+    def test_boundary_fifty_fires(self):
+        self._set_on(True)
+        fired = self._run(self._usage(50))
+        self.assertEqual(fired, [(50, "A")])
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 50))
+
+    def test_no_refire_same_window(self):
+        self._set_on(True)
+        plugin.write_usage_alerts((self.window, 50))
+        fired = self._run(self._usage(55))
+        self.assertEqual(fired, [])
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 50))
+
+    def test_collapse_multi_threshold_single_fire(self):
+        # 48% → 72% between ticks crosses 50/60/70 at once: ONE banner at the
+        # actual 72%, counter jumps straight to 70 — not three banners.
+        self._set_on(True)
+        fired = self._run(self._usage(72))
+        self.assertEqual(fired, [(72, "A")])
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 70))
+
+    def test_critical_fires_kind_b(self):
+        self._set_on(True)
+        plugin.write_usage_alerts((self.window, 90))
+        fired = self._run(self._usage(96))
+        self.assertEqual(fired, [(96, "B")])
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 95))
+
+    def test_new_window_resets_progress(self):
+        # Previous window was at 90; a new resets_at means the window rolled
+        # over, so the counter resets and a low pct fires nothing but records
+        # the fresh window.
+        self._set_on(True)
+        plugin.write_usage_alerts(("1111111111", 90))
+        fired = self._run(self._usage(20))
+        self.assertEqual(fired, [])
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 0))
+
+
+class TestUsageRenderLine(unittest.TestCase):
+    """The grey Tools usage line (:func:`render._print_usage_line`)."""
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        self.usage = self._tmpdir / "agent-state.usage"
+        self._orig_usage = plugin.core.USAGE_PATH
+        plugin.core.USAGE_PATH = self.usage
+
+    def tearDown(self):
+        import shutil
+        plugin.core.USAGE_PATH = self._orig_usage
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _capture(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            plugin.render._print_usage_line()
+        return buf.getvalue()
+
+    def test_no_snapshot_prints_nothing(self):
+        self.assertEqual(self._capture(), "")
+
+    def test_expired_window_prints_nothing(self):
+        # resets_at in the past → stale, hidden
+        self.usage.write_text(
+            f"{int(time.time())}\t63\t{int(time.time()) - 10}\t7\t69.5\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self._capture(), "")
+
+    def test_snapshot_prints_grey_line(self):
+        future = int(time.time()) + 10080  # ~2h48m
+        self.usage.write_text(
+            f"{int(time.time())}\t63\t{future}\t7\t69.5\n", encoding="utf-8"
+        )
+        out = self._capture()
+        # grey, inactive, indented Tools line carrying the substituted values
+        self.assertTrue(out.startswith("--"))
+        self.assertIn("color=#999999", out)
+        self.assertIn("63", out)   # session %
+        self.assertIn("7", out)    # weekly %
+        self.assertIn("69.5", out)  # weekly target
+        # the visual separator must NOT be a bare pipe (would break SwiftBar)
+        label = out.split(" | ", 1)[0]
+        self.assertNotIn(" | ", label)
 
 
 if __name__ == "__main__":

@@ -73,6 +73,35 @@ _IDLE_REMINDERS_LOCK_DIR = IDLE_REMINDERS_PATH.with_suffix(
     IDLE_REMINDERS_PATH.suffix + ".lock.d"
 )
 
+#: Subscription usage snapshot (spec 0011), written by the bundled
+#: statusLine wrapper ``hooks/usage-sensor.sh``. ``rate_limits`` is only
+#: exposed on the statusLine stdin Claude Code passes — never in the
+#: transcript JSONL nor a hook payload — so a statusLine sensor is the
+#: only place it can be captured. The data is account-wide (not
+#: per-session), hence a single row, five tab-separated columns:
+#: ``record_ts\tfive_used\tfive_resets_at\tseven_used\tseven_target``.
+#: ``record_ts`` / ``*_resets_at`` are unix epoch seconds; the three
+#: ``used``/``target`` values are integer percentages. Read each tick by
+#: :func:`claude_agents_bar.sidecars.read_usage`; no lock — the sensor is
+#: the sole writer and replaces the file atomically.
+USAGE_PATH = HOME / ".claude" / "agent-state.usage"
+
+#: ``five_resets_at\tmax_threshold_fired`` sidecar for the usage-alert
+#: escalation (spec 0011). The plugin tick fires a one-shot notification
+#: when ``five_used`` first crosses 50/60/70/80/90/95 % and records the
+#: highest threshold already announced, keyed by the window's
+#: ``resets_at`` — a newer ``resets_at`` (the 5-hour window rolled over)
+#: resets the progress so a fresh window alerts from 50 % again. Written
+#: by :func:`claude_agents_bar.usage_alerts.reconcile`.
+USAGE_ALERTS_PATH = HOME / ".claude" / "agent-state.usage-alerts"
+
+#: Mutex on :data:`USAGE_ALERTS_PATH`. Like the idle-reminders sidecar the
+#: plugin tick is the sole writer, but overlapping ticks could race, so the
+#: rewrite takes the same ``mkdir``-based lock.
+_USAGE_ALERTS_LOCK_DIR = USAGE_ALERTS_PATH.with_suffix(
+    USAGE_ALERTS_PATH.suffix + ".lock.d"
+)
+
 #: Ad-hoc quiet-hours pause sidecar maintained by ``bin/app/quiet-pause.sh``
 #: and ``bin/app/quiet-resume.sh``. Holds a single naive ISO-8601 local
 #: timestamp (``"2026-05-26T23:00:00"``); a value in the future means
@@ -437,6 +466,14 @@ class Config:
         :data:`NOTIFY_AUDIO_MODE_PATH` takes precedence, so the config
         knob is just the first-launch default. Does not touch the banner —
         that's always shown (quiet hours aside).
+    ``notify_on_usage``
+        On/off for the subscription usage alerts (spec 0011). ``True``
+        (default): the plugin tick fires a one-shot notification when the
+        5-hour window's used-% first crosses 50/60/70/80/90 %, plus a
+        distinct critical alert at 95 %. ``False``: no usage alerts. Gates
+        only the alerts — the static usage line in *Tools* still shows
+        whenever ``hooks/usage-sensor.sh`` has written a snapshot. Honors
+        quiet hours / *Banner only* exactly like the other notify hooks.
     ``keep_awake``
         First-launch default for the keep-awake reconcile loop:
         ``"off"`` (default), ``"auto"`` (caffeinate while any session
@@ -556,6 +593,15 @@ class Config:
     #: ``notify_sound_idle`` directly from the config, like the other
     #: notify hooks).
     notify_idle_interval_sec: int = 20 * 60
+    #: On/off switch for the subscription usage alerts (spec 0011). When on
+    #: (default), the plugin tick fires a one-shot notification each time the
+    #: 5-hour window's ``used_percentage`` first crosses 50/60/70/80/90 %
+    #: (and a distinct critical alert at 95 %), reading the snapshot
+    #: ``hooks/usage-sensor.sh`` wrote. Like ``notify_on_stop`` /
+    #: ``notify_on_wait`` this is a plain bool — the knob *is* the switch.
+    #: It gates only the alerts; the static usage line in the Tools submenu
+    #: shows whenever a snapshot exists, regardless of this flag.
+    notify_on_usage: bool = True
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -677,6 +723,10 @@ class Config:
             coerced["multi_workspace_mode"] = data["multi_workspace_mode"]
         if "notify_audio" in data and isinstance(data["notify_audio"], bool):
             coerced["notify_audio"] = data["notify_audio"]
+        if "notify_on_usage" in data and isinstance(
+            data["notify_on_usage"], bool
+        ):
+            coerced["notify_on_usage"] = data["notify_on_usage"]
 
         # Nullable string with strict format — take() would either eat the
         # explicit ``null`` (treating it as "fall back to default") or trip
@@ -1116,6 +1166,26 @@ class SubagentSnapshot:
         hook event said ``working``.
         """
         return self.state in SUBAGENT_LIVE_STATES
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Account-wide subscription usage snapshot (spec 0011).
+
+    Captured from the statusLine ``rate_limits`` payload by
+    ``hooks/usage-sensor.sh`` and read back from :data:`core.USAGE_PATH`.
+    ``five_resets_at`` is kept as the raw epoch *string* — it doubles as the
+    window key the usage-alert escalation rolls over on — while the
+    percentages and ``record_ts`` are integers. All values are validated
+    numeric in :func:`sidecars.read_usage`; a missing snapshot (API-key auth,
+    or no sensor wired up) reads back as ``None`` rather than a ``Usage``.
+    """
+
+    record_ts: int = 0
+    five_used: int = 0
+    five_resets_at: str = ""
+    seven_used: int = 0
+    seven_target: str = ""
 
 
 @dataclass(frozen=True)

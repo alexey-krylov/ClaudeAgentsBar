@@ -11,6 +11,7 @@
   "menu.ack_all": "全部標示為已讀",
   "menu.forget_all": "忘記所有工作階段",
   "menu.stats_today": "今日統計…",
+  "menu.usage": "工作階段：{sess}% · {until} · 本週：{wk}%/{target}%",
   "menu.suggest": "建議改善…",
   "menu.multi_workspace": "多工作區模式",
   "menu.config": "設定…",

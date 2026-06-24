@@ -24,6 +24,8 @@ PLUGIN_DST="${SWIFTBAR_PLUGINS_DIR}/claude-agents.5s.py"
 HOOK_DST="${HOME}/.claude/hooks/agent-state.sh"
 NOTIFY_HOOK_DST="${HOME}/.claude/hooks/notify-stop.sh"
 NOTIFY_WAIT_HOOK_DST="${HOME}/.claude/hooks/notify-wait.sh"
+SENSOR_DST="${HOME}/.claude/hooks/usage-sensor.sh"
+STATUSLINE_ORIG_FILE="${HOME}/.claude/agent-state.statusline.orig"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
@@ -67,6 +69,11 @@ if [ -L "$NOTIFY_WAIT_HOOK_DST" ]; then
 else
     say "not present: $NOTIFY_WAIT_HOOK_DST"
 fi
+if [ -L "$SENSOR_DST" ]; then
+    rm "$SENSOR_DST" && say "removed $SENSOR_DST"
+else
+    say "not present: $SENSOR_DST"
+fi
 
 
 step "4. Strip our hook entries from settings.json"
@@ -89,6 +96,30 @@ if [ -f "$SETTINGS" ]; then
         | .hooks |= with_entries(select((.value | length) > 0))
     ' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
     say "cleaned"
+
+    # Restore the original statusLine (spec 0011). setup.sh saved whatever the
+    # user had before we wrapped it. Only touch a statusLine that's still ours
+    # (chains usage-sensor.sh); a non-empty saved original is put back, an empty
+    # one means there was no statusLine, so we drop the key entirely.
+    CUR_STATUSLINE=$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || echo "")
+    case "$CUR_STATUSLINE" in
+        *usage-sensor.sh*)
+            if [ -f "$STATUSLINE_ORIG_FILE" ] && [ -s "$STATUSLINE_ORIG_FILE" ]; then
+                ORIG_STATUSLINE=$(cat "$STATUSLINE_ORIG_FILE")
+                /usr/bin/jq --arg c "$ORIG_STATUSLINE" '.statusLine.command = $c' \
+                    "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+                say "restored original statusLine"
+            else
+                /usr/bin/jq 'del(.statusLine)' \
+                    "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+                say "removed sensor statusLine (no original to restore)"
+            fi
+            rm -f "$STATUSLINE_ORIG_FILE"
+            ;;
+        *)
+            say "statusLine not ours — leaving as is"
+            ;;
+    esac
 fi
 
 
@@ -109,3 +140,5 @@ echo "  ~/.claude/agent-state.quiet-until"
 echo "  ~/.claude/agent-state.quiet-bypass-until"
 echo "  ~/.claude/agent-state.keep-awake.mode"
 echo "  ~/.claude/agent-state.caffeinate"
+echo "  ~/.claude/agent-state.usage"
+echo "  ~/.claude/agent-state.usage-alerts"

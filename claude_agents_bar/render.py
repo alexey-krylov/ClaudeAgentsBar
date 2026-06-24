@@ -982,6 +982,53 @@ def _swiftbar_quote(value: str) -> str:
     return '"' + value.replace('"', "'") + '"'
 
 
+def _format_until(seconds: int) -> str:
+    """Compact "time remaining" for the usage line — ``2h48m`` / ``42m`` / ``1d4h``.
+
+    Mirrors the format of the source statusLine script (units, no spaces, no
+    locale words) so it reads the same in any language; ``<1m`` for a window
+    about to reset, empty when already past.
+    """
+    if seconds <= 0:
+        return ""
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    if days > 0:
+        return f"{days}d{hours}h"
+    if hours > 0:
+        return f"{hours}h{minutes}m"
+    if minutes > 0:
+        return f"{minutes}m"
+    return "<1m"
+
+
+def _print_usage_line() -> None:
+    """One grey, inactive Tools line with the subscription usage snapshot.
+
+    ``Session: {used}% | {remaining-until-reset} | Week: {used}%/{target}%``,
+    sourced from the ``agent-state.usage`` sidecar the statusLine sensor wrote
+    (spec 0011). Shown whenever a snapshot exists and the 5-hour window hasn't
+    expired — independent of ``notify_on_usage`` (that gates only the alerts).
+    Absent / stale snapshot → nothing printed (graceful: API-key auth or no
+    sensor just has no usage line).
+    """
+    usage = sidecars.read_usage()
+    if usage is None:
+        return
+    now = int(time.time())
+    try:
+        resets_at = int(usage.five_resets_at)
+    except ValueError:
+        return
+    if now >= resets_at:
+        return  # window expired; snapshot is stale, don't show it
+    print(
+        f"--{_t('menu.usage', sess=usage.five_used, until=_format_until(resets_at - now), wk=usage.seven_used, target=usage.seven_target)} | "
+        "font=Menlo color=#999999 sfimage=gauge.with.dots.needle.50percent"
+    )
+
+
 def _print_footer(sessions: list[Session] | None = None) -> None:
     """System actions at the bottom of the menu — manual refresh + Tools submenu.
 
@@ -1016,6 +1063,7 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
         "terminal=false refresh=false "
         "sfimage=chart.bar.fill sfcolor=systemPurple"
     )
+    _print_usage_line()
 
     print("-----")
     _print_notifications_block(bin_dir)

@@ -10,6 +10,7 @@
   "menu.ack_all": "Tout marquer comme lu",
   "menu.forget_all": "Oublier toutes les sessions",
   "menu.stats_today": "Statistiques du jour…",
+  "menu.usage": "Session : {sess}% · {until} · Semaine : {wk}%/{target}%",
   "menu.suggest": "Suggérer une amélioration…",
   "menu.multi_workspace": "Mode multi-espace de travail",
   "menu.config": "Configuration…",

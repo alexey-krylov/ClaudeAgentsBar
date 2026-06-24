@@ -52,6 +52,10 @@ PLUGIN_SRC="${REPO_DIR}/claude-agents.5s.py"
 HOOK_SRC="${REPO_DIR}/hooks/agent-state.sh"
 NOTIFY_HOOK_SRC="${REPO_DIR}/hooks/notify-stop.sh"
 NOTIFY_WAIT_HOOK_SRC="${REPO_DIR}/hooks/notify-wait.sh"
+# Usage sensor (spec 0011): a statusLine wrapper, so unlike the notify hooks
+# it is wired into .statusLine (not .hooks). notify-usage.sh is NOT symlinked —
+# the plugin invokes it from its own hooks dir via /bin/bash, like notify-idle.sh.
+SENSOR_SRC="${REPO_DIR}/hooks/usage-sensor.sh"
 HOOK_PATCH="${REPO_DIR}/hooks/settings-hooks.json"
 
 # Resolve the SwiftBar plugins folder. Override with SWIFTBAR_PLUGINS_DIR=...
@@ -80,6 +84,8 @@ HOOKS_DIR="${HOME}/.claude/hooks"
 HOOK_DST="${HOOKS_DIR}/agent-state.sh"
 NOTIFY_HOOK_DST="${HOOKS_DIR}/notify-stop.sh"
 NOTIFY_WAIT_HOOK_DST="${HOOKS_DIR}/notify-wait.sh"
+SENSOR_DST="${HOOKS_DIR}/usage-sensor.sh"
+STATUSLINE_ORIG_FILE="${HOME}/.claude/agent-state.statusline.orig"
 SETTINGS="${HOME}/.claude/settings.json"
 SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
@@ -135,6 +141,12 @@ if [ -L "$NOTIFY_WAIT_HOOK_DST" ] || [ -e "$NOTIFY_WAIT_HOOK_DST" ]; then
 fi
 ln -s "$NOTIFY_WAIT_HOOK_SRC" "$NOTIFY_WAIT_HOOK_DST"
 say "linked: $NOTIFY_WAIT_HOOK_DST -> $NOTIFY_WAIT_HOOK_SRC"
+if [ -L "$SENSOR_DST" ] || [ -e "$SENSOR_DST" ]; then
+    say "existing entry at $SENSOR_DST — replacing"
+    rm -f "$SENSOR_DST"
+fi
+ln -s "$SENSOR_SRC" "$SENSOR_DST"
+say "linked: $SENSOR_DST -> $SENSOR_SRC"
 
 
 step "5. Merge hook registrations into $SETTINGS"
@@ -180,6 +192,35 @@ say "backup written: $SETTINGS_BACKUP"
     )
 ' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
 say "merged"
+
+
+step "5b. Wire usage sensor into statusLine (chain)"
+# rate_limits are only on the statusLine stdin (spec 0011 / ADR-0018), so the
+# sensor has to BE the statusLine command. We wrap whatever the user already
+# had: the sensor writes the usage snapshot, then chains to the original
+# command (passed as its argument) so the user's status line still renders.
+# The original is saved to a sidecar for a clean teardown. Idempotent — a
+# command already wrapping usage-sensor.sh is left untouched.
+CUR_STATUSLINE=$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || echo "")
+case "$CUR_STATUSLINE" in
+    *usage-sensor.sh*)
+        say "statusLine already chains usage-sensor.sh — leaving as is"
+        ;;
+    *)
+        printf '%s' "$CUR_STATUSLINE" > "$STATUSLINE_ORIG_FILE"
+        if [ -n "$CUR_STATUSLINE" ]; then
+            NEW_STATUSLINE="bash \"$SENSOR_DST\" \"$CUR_STATUSLINE\""
+            say "wrapping existing statusLine (saved original for teardown)"
+        else
+            NEW_STATUSLINE="bash \"$SENSOR_DST\""
+            say "no existing statusLine — installing sensor only (blank status line)"
+        fi
+        /usr/bin/jq --arg cmd "$NEW_STATUSLINE" \
+            '.statusLine = ((.statusLine // {}) + {type: "command", command: $cmd})' \
+            "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        say "statusLine wired"
+        ;;
+esac
 
 
 step "6. Notification icon"

@@ -5,6 +5,34 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## Unreleased
+
+### Added
+
+- **Subscription usage alerts + a live usage line.** ClaudeAgentsBar now
+  tracks the Claude.ai subscription's rolling 5-hour usage window. You get a
+  one-shot notification (chime + spoken phrase + banner) when it first crosses
+  50/60/70/80/90 % — *"Session limit at N%"* — and a distinct final alert at
+  95 %. Each threshold fires once per window; a fresh window alerts from 50 %
+  again, and a jump across several thresholds collapses to a single banner.
+  A grey, always-on line under *Tools → Stats today* shows the live usage —
+  `Session: 63% · 2h48m · Week: 7%/69.5%`. Off via `notify_on_usage: false`;
+  the alerts honor quiet hours and *Banner only* like every other
+  notification.
+
+  The data (`rate_limits`) is exposed by Claude Code **only** on the
+  `statusLine` stdin, so `setup` wires a bundled sensor
+  (`hooks/usage-sensor.sh`) in as your `statusLine` that captures it and then
+  **chains** to whatever `statusLine` command you already had — your status
+  line still renders, and `teardown` restores your original. On API-key auth
+  there are no `rate_limits`, so the feature is silently inert. The weekly
+  pacing target (`/69.5%`) is a personal office-hours model computed in the
+  sensor — edit `WK_CUM` / `WEEK_TZ` / `WEEK_RESET_HOUR` at the top of
+  `hooks/usage-sensor.sh` to match your schedule. New knobs: `notify_on_usage`,
+  `notify_usage_phrase_threshold`, `notify_usage_phrase_critical`,
+  `notify_sound_usage`. See [spec 0011](./docs/specs/0011-usage-alerts.md) and
+  [ADR-0018](./docs/adr/0018-usage-sensor-statusline-chain.md).
+
 ## 1.2.2 — 2026-06-15
 
 ### Fixed

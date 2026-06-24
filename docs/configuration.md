@@ -59,6 +59,10 @@ restart needed.
 | `notify_idle_interval_min` | `20` | Idle-session reminders. A finished session that sits 🟢 **green** (unread — you haven't clicked it) past this many minutes gets re-announced on the plugin tick (chime + spoken phrase + banner, like an awaiting prompt). Each subsequent reminder **doubles** the wait: 20, 40, 80, … minutes after the session finished. The number of reminders is bounded by how long the row stays green — `fresh_minutes` (default 60), after which it auto-fades to 🔵 and reminders stop — so the default 20-min start gives two reminders (20 and 40 min); raise `fresh_minutes` for more. Clicking the session (or *Tools → Acknowledge all*) ends the schedule. `0` / `null` turns the feature off. Respects `quiet_hours` and the *Banner only* audio mode. See *Idle reminders* below. |
 | `notify_idle_phrases` | `["Don't forget me", "Still unread", "Pending review", "Your turn"]` | Phrases spoken aloud and shown in the banner for an idle-session reminder. One is chosen at random per reminder. |
 | `notify_sound_idle` | `"Submarine"` | Chime played on an idle-session reminder. Same value shapes as `notify_sound_stop`. Default `"Submarine"` is a soft ping, distinct from `Hero` (done) and `Funk` (awaiting). |
+| `notify_on_usage` | `true` | Subscription usage alerts (spec 0011). One-shot notification when the Claude.ai 5-hour usage window first crosses 50/60/70/80/90 % (a *"you've hit N%"* banner), plus a distinct critical alert at 95 %. Needs the usage sensor wired into your `statusLine` (`claude-agents-bar setup` does this) and a Claude.ai subscription — on API-key auth there are no `rate_limits`, so it's silently inert. Honors `quiet_hours` and *Banner only* like the other notifications. The always-on usage line under *Tools → Stats today* shows regardless of this flag. See *Subscription usage* below. |
+| `notify_usage_phrase_threshold` | `"Session limit at {pct}%"` | Template for the 50–90 % alert; `{pct}` → current percentage. |
+| `notify_usage_phrase_critical` | `"Session limit almost exhausted — only a refresh restores it"` | Template for the final 95 % alert (no substitution). |
+| `notify_sound_usage` | `"Glass"` | Chime played on a usage alert. Same value shapes as `notify_sound_stop`. Default `"Glass"` is distinct from `Hero`/`Funk`/`Submarine`. |
 | `quiet_hours` | `"23:00-08:00"` | Scheduled silence window in 24h local time, `"HH:MM-HH:MM"`. `start > end` wraps midnight (e.g. `"23:00-09:00"` covers the night). `null` disables. Malformed values fall back to the default with a warning. The window is half-open: 09:00 sharp is no longer quiet. |
 | `quiet_hours_silences` | `["sound", "voice"]` | Channels suppressed during quiet hours. Subset of `["sound", "voice", "banner"]`. Default mutes audio (chime + voice) but the banner still appears so you don't miss the event. Add `"banner"` to go fully silent; list only `"voice"` to keep the chime. Unknown entries are dropped at load with a warning. |
 | `notify_audio` | `true` | Master switch for notification audio (chime **and** spoken `say`), independent of quiet hours. `true` (default): notifications sound off per `notify_sound_*` / `notify_voice`. `false`: banner only — no chime, no speech (the banner still appears). Toggled live from *Tools → Notifications* (*Banner and voice* / *Banner only*); once you pick one there, that sidecar choice overrides this knob, so it's only the first-launch default. |
@@ -250,6 +254,48 @@ The feature is on by default at 20 minutes.
 Quiet hours and the *Banner only* audio mode apply exactly as they do to
 the other notifications. Progress is tracked in the
 `~/.claude/agent-state.idle-reminders` sidecar.
+
+## Subscription usage
+
+Tracks the Claude.ai subscription's rolling **5-hour usage window** (and
+the 7-day window) — both as escalating alerts and a static Tools line.
+Full design in [spec 0011](specs/0011-usage-alerts.md) and
+[ADR-0018](adr/0018-usage-sensor-statusline-chain.md).
+
+**Where the data comes from.** Claude Code exposes `rate_limits` *only* on
+the `statusLine` command's stdin — not in transcripts or hook payloads. So
+`setup` wires a bundled sensor (`hooks/usage-sensor.sh`) in as your
+`statusLine`; it captures the usage into a sidecar and then **chains** to
+whatever `statusLine` command you already had (your status line still
+renders). `teardown` restores your original. On API-key auth there are no
+`rate_limits`, so the feature is silently inert.
+
+**Alerts.** When the 5-hour window's used-% first crosses
+50/60/70/80/90 %, you get a one-shot banner + chime + spoken phrase
+(*"Session limit at N%"*); at 95 % a distinct final alert (*"almost
+exhausted — only a refresh restores it"*). Each threshold fires once per
+window; when the window resets, the next one alerts from 50 % again. A jump
+across several thresholds between ticks collapses to a single banner at the
+current percentage. Percentages are floored, matching Claude Code's own
+USAGE view. Off via `notify_on_usage: false`.
+
+**The Tools line.** Under *Tools → Stats today* a grey, inactive line shows
+the live usage:
+
+```
+Session: 63% · 2h48m · Week: 7%/69.5%
+```
+
+`63%` is the 5-hour used-%, `2h48m` the time until it resets, `7%` the
+weekly used-%, and `69.5%` a **weekly pacing target**. That target isn't in
+`rate_limits` — it's a personal office-hours model computed inside the
+sensor. To match your own schedule, edit `WK_CUM` / `WEEK_TZ` /
+`WEEK_RESET_HOUR` at the top of `hooks/usage-sensor.sh`. The line shows
+whenever a snapshot exists, independent of `notify_on_usage`.
+
+Quiet hours and *Banner only* apply to the alerts exactly as for the other
+notifications. Progress is tracked in the `~/.claude/agent-state.usage` and
+`~/.claude/agent-state.usage-alerts` sidecars.
 
 ## Custom audio
 

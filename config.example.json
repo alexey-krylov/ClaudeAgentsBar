@@ -118,6 +118,20 @@
   "// notify_sound_idle": "Chime played on an idle-session reminder — same value shapes as notify_sound_stop (bare name / absolute path / ~-path / null to mute). Default: 'Submarine' (a soft ping, distinct from Hero=done and Funk=awaiting).",
   "notify_sound_idle": "Submarine",
 
+  "// notify_on_usage": "Subscription usage alerts (spec 0011). When true (default), the plugin tick fires a one-shot notification each time the Claude.ai 5-hour usage window first crosses 50/60/70/80/90 % (a 'you've hit N%' banner), plus a distinct critical alert at 95 %. Requires the usage sensor wired into your statusLine (claude-agents-bar setup does this) and a Claude.ai subscription — on API-key auth there are no rate_limits, so the feature is silently inert. Honors quiet_hours and the Banner-only audio mode just like the other notifications. The always-on usage line under Tools → Stats today shows regardless of this flag. Set to false to turn the alerts off.",
+  "notify_on_usage": true,
+
+  "// notify_usage_phrase_threshold": "Template for the 50/60/70/80/90 % usage alert. '{pct}' is replaced with the current percentage. Default: 'Session limit at {pct}%'.",
+  "notify_usage_phrase_threshold": "Session limit at {pct}%",
+
+  "// notify_usage_phrase_critical": "Template for the final 95 % usage alert (no {pct} substitution). Default: 'Session limit almost exhausted — only a refresh restores it'.",
+  "notify_usage_phrase_critical": "Session limit almost exhausted — only a refresh restores it",
+
+  "// notify_sound_usage": "Chime played on a usage alert — same value shapes as notify_sound_stop (bare name / absolute path / ~-path / null to mute). Default: 'Glass' (distinct from Hero=done, Funk=awaiting, Submarine=idle).",
+  "notify_sound_usage": "Glass",
+
+  "// weekly_pacing_note": "The weekly target % in the Tools usage line ('Week: 7%/69.5%') is computed by hooks/usage-sensor.sh from a personal office-hours pacing model. To match your own schedule, edit WK_CUM / WEEK_TZ / WEEK_RESET_HOUR at the top of that script — see docs/configuration.md § Subscription usage.",
+
   "// quiet_hours": "Scheduled silence window (24h local, 'HH:MM-HH:MM'). start>end wraps midnight. Default '23:00-08:00' — set to null to disable.",
   "quiet_hours": "23:00-08:00",
 
