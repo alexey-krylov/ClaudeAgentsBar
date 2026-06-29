@@ -382,32 +382,36 @@ happens off the tick). Progress is tracked in `agent-state.idle-reminders`
 green window (`fresh_sec`) because `reconcile` only ever considers
 `RenderGroup.FRESH` sessions.
 
-### The usage sensor — a new data source via `statusLine`
+### The usage monitor — a hidden background `claude` session
 
-Subscription usage (spec 0011) needed a source the plugin couldn't reach:
-the Claude.ai `rate_limits` are exposed by Claude Code **only** on the
-`statusLine` command's stdin — not in transcripts, not in hook payloads.
-So `hooks/usage-sensor.sh` is wired in as the user's `statusLine` (by
-`setup`): it parses `rate_limits.five_hour` / `seven_day`, atomically
-writes the one-row `agent-state.usage` snapshot
-(`record_ts  five_used  five_resets_at  seven_used  seven_target`), then
-**chains** to the user's original `statusLine` command (saved in
-`agent-state.statusline.orig`, restored by `teardown`) so their status line
-still renders. This is the same hook→sidecar→tick shape as ADR-0003, with
-the statusLine as the writer — see
+Subscription usage (spec 0011) needs `rate_limits`, which Claude Code exposes
+**only** on a `statusLine` stdin **and only inside a real interactive TUI** —
+`claude -p` / headless / the VSCode extension never invoke it (verified). So
+`claude_agents_bar/usage_monitor.py` holds a **hidden background `claude`
+session** in a detached `screen` (no window, but a real TTY), and the bundled
+`hooks/usage-sensor.sh` — wired in as *that session's* `statusLine` by `setup` —
+parses `rate_limits` and writes the one-row `agent-state.usage` snapshot
+(`record_ts  five_used  five_resets_at  seven_used  seven_resets_at`), chaining
+any pre-existing user statusLine. See
 [ADR-0018](./docs/adr/0018-usage-sensor-statusline-chain.md).
 
-The data is **account-wide** (not per-session), so the snapshot is a single
-row. `claude_agents_bar/usage_alerts.reconcile(now)` runs each tick (right
-after the idle reconcile): it reads the snapshot and fires
-`hooks/notify-usage.sh` (another non-registered, plugin-fired notifier, like
-`notify-idle.sh`) when `five_used` first crosses 50/60/70/80/90 % / 95 %,
-recording progress in `agent-state.usage-alerts`
-(`five_resets_at  max_threshold_fired`, keyed by the window so a rollover
-resets it). Both `reconcile` and the grey Tools usage line
-(`render._print_usage_line`) gate on `now < five_resets_at` to skip a stale
-snapshot. The weekly pacing target shown in the Tools line is computed by
-the sensor (a `WK_CUM` lookup), not the plugin.
+`usage_monitor.reconcile(now)` rides the tick exactly like `keep_awake` (no
+launchd): off → kill the session; on → spawn it when absent and **recycle** it
+(kill + fresh spawn) every `usage_ping_interval_sec` (a fresh session's first
+response is what refreshes `used_percentage` server-side; stuff-pinging a live
+TUI proved unreliable). Tracked by the unique `screen` name, not a PID.
+The master `usage_monitor` switch (config + `agent-state.usage-monitor.mode`
+sidecar + *Tools* toggle, via `core.usage_monitor_enabled()`) gates the session,
+the line, and the alerts together.
+
+The data is **account-wide** (one row). `usage_alerts.reconcile(now)` reads the
+snapshot and fires `hooks/notify-usage.sh` (a non-registered, plugin-fired
+notifier like `notify-idle.sh`) when `five_used` first crosses 50/60/70/80/90 %
+/ 95 %, tracking progress in `agent-state.usage-alerts`. The passive usage line
+(`render._print_usage_line`, a ``--`` sub-item under *Statistics*, colour-coded
+yellow ≥60 / red ≥85, mirroring Claude Code's USAGE view) and the alerts both
+gate on the master switch plus `now < five_resets_at` and a `record_ts`
+staleness check, so a dead session hides the line rather than freezing it.
 
 [cc-hooks]: https://code.claude.com/docs/en/hooks.md
 

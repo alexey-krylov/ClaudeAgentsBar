@@ -79,9 +79,9 @@ _IDLE_REMINDERS_LOCK_DIR = IDLE_REMINDERS_PATH.with_suffix(
 #: transcript JSONL nor a hook payload — so a statusLine sensor is the
 #: only place it can be captured. The data is account-wide (not
 #: per-session), hence a single row, five tab-separated columns:
-#: ``record_ts\tfive_used\tfive_resets_at\tseven_used\tseven_target``.
-#: ``record_ts`` / ``*_resets_at`` are unix epoch seconds; the three
-#: ``used``/``target`` values are integer percentages. Read each tick by
+#: ``record_ts\tfive_used\tfive_resets_at\tseven_used\tseven_resets_at``.
+#: ``record_ts`` / ``*_resets_at`` are unix epoch seconds; the two ``used``
+#: values are integer percentages. Read each tick by
 #: :func:`claude_agents_bar.sidecars.read_usage`; no lock — the sensor is
 #: the sole writer and replaces the file atomically.
 USAGE_PATH = HOME / ".claude" / "agent-state.usage"
@@ -101,6 +101,24 @@ USAGE_ALERTS_PATH = HOME / ".claude" / "agent-state.usage-alerts"
 _USAGE_ALERTS_LOCK_DIR = USAGE_ALERTS_PATH.with_suffix(
     USAGE_ALERTS_PATH.suffix + ".lock.d"
 )
+
+#: Runtime on/off for the usage monitor (spec 0011), written by the
+#: *Tools → Usage monitor* toggle. Takes precedence over the
+#: :attr:`Config.usage_monitor` config default, same pattern as
+#: :data:`KEEP_AWAKE_MODE_PATH`. One line, ``on`` or ``off``.
+USAGE_MONITOR_MODE_PATH = HOME / ".claude" / "agent-state.usage-monitor.mode"
+
+#: Last-ping timestamp (unix epoch) for the usage-monitor background session.
+#: :func:`claude_agents_bar.usage_monitor.reconcile` sends a cheap keep-alive
+#: prompt to the detached ``claude`` session only every
+#: ``usage_ping_interval_sec``; this records when it last did so. One line.
+USAGE_MONITOR_PING_PATH = HOME / ".claude" / "agent-state.usage-monitor.ping"
+
+#: Trusted working directory the background ``claude`` session runs in. It must
+#: be a folder Claude Code already trusts (recorded in ``~/.claude.json``,
+#: written by ``setup``) — otherwise the trust prompt blocks the TUI and the
+#: status line never fires. Kept empty; the session just needs a CWD.
+USAGE_MONITOR_DIR = HOME / ".claude" / "cab-usage-monitor"
 
 #: Ad-hoc quiet-hours pause sidecar maintained by ``bin/app/quiet-pause.sh``
 #: and ``bin/app/quiet-resume.sh``. Holds a single naive ISO-8601 local
@@ -280,6 +298,10 @@ _QUIET_HOURS_RE = re.compile(
     r"^(2[0-3]|[01][0-9]):([0-5][0-9])-(2[0-3]|[01][0-9]):([0-5][0-9])$"
 )
 
+#: Safe charset for a model id that gets interpolated into the background
+#: ``screen … claude --model <id>`` shell command (no metacharacters).
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
 #: Allowed members of :attr:`Config.quiet_hours_silences`. Anything else is
 #: dropped at config-load time with a warning — the spec deliberately lists
 #: only these three channels so the menu / hook gating stays simple.
@@ -290,6 +312,16 @@ _QUIET_SILENCE_CHANNELS = frozenset({"sound", "voice", "banner"})
 #: with a warning — keep_awake controls a process lifecycle, so we'd
 #: rather refuse than guess.
 _KEEP_AWAKE_MODES = frozenset({"off", "auto", "always"})
+
+#: Allowed values for :attr:`Config.usage_monitor` plus the sidecar at
+#: :data:`USAGE_MONITOR_MODE_PATH`. Binary on/off — the monitor either runs a
+#: background ``claude`` session or it doesn't.
+_USAGE_MONITOR_MODES = frozenset({"off", "on"})
+
+#: Name of the detached ``screen`` session holding the background ``claude``
+#: TUI. Tracked by name (not PID) — the name is unique, so there's no PID-reuse
+#: ambiguity. See :mod:`claude_agents_bar.usage_monitor`.
+_USAGE_MONITOR_SCREEN = "cab-usage-mon"
 
 #: States that ``hooks/agent-state.sh`` may write to the **parent** sidecar.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
@@ -586,22 +618,44 @@ class Config:
     #: the fresh window (a click, or the ``fresh_sec`` auto-promotion), so
     #: the number of reminders is naturally bounded by how long green
     #: lasts. Derived from ``notify_idle_interval_min`` in the JSON
-    #: (default 20 min → 1200 s, so the feature is on out of the box). An
+    #: (default 30 min → 1800 s, so the feature is on out of the box). An
     #: explicit ``0`` / ``null`` / negative disables it. Read only on the
     #: Python tick; the reminder banner/chime itself is fired by
     #: ``hooks/notify-idle.sh`` (which reads ``notify_idle_phrases`` /
     #: ``notify_sound_idle`` directly from the config, like the other
     #: notify hooks).
-    notify_idle_interval_sec: int = 20 * 60
+    notify_idle_interval_sec: int = 30 * 60
     #: On/off switch for the subscription usage alerts (spec 0011). When on
     #: (default), the plugin tick fires a one-shot notification each time the
     #: 5-hour window's ``used_percentage`` first crosses 50/60/70/80/90 %
     #: (and a distinct critical alert at 95 %), reading the snapshot
     #: ``hooks/usage-sensor.sh`` wrote. Like ``notify_on_stop`` /
     #: ``notify_on_wait`` this is a plain bool — the knob *is* the switch.
-    #: It gates only the alerts; the static usage line in the Tools submenu
-    #: shows whenever a snapshot exists, regardless of this flag.
+    #: Acts as a **sub-flag** of :attr:`usage_monitor`: alerts only fire when
+    #: the monitor is on *and* this is true.
     notify_on_usage: bool = True
+    #: Master switch for the whole subscription-usage feature (spec 0011):
+    #: the background ``claude`` session that sources ``rate_limits``, the
+    #: Tools usage line, and the threshold alerts. ``"on"`` (default — works out
+    #: of the box, no setup; ``setup`` trusts the session's work folder so it
+    #: comes up clean) or ``"off"``. The *Tools → Usage monitor* toggle writes
+    #: :data:`USAGE_MONITOR_MODE_PATH` which overrides this. When off, the
+    #: monitor process is stopped, the usage line disappears, and alerts are
+    #: silenced. It runs a background ``claude`` and spends a little quota on
+    #: keep-alive pings — flip it off if you'd rather not. See
+    #: :mod:`claude_agents_bar.usage_monitor`.
+    usage_monitor: str = "on"
+    #: Seconds between keep-alive pings to the background ``claude`` session.
+    #: ``refreshInterval`` keeps ``record_ts`` fresh, but the server only
+    #: refreshes ``used_percentage`` in response to an actual request — so the
+    #: monitor periodically sends a cheap prompt to pull current usage (which
+    #: reflects *all* account activity, including VSCode work). Derived from
+    #: ``usage_ping_interval_min`` (default 10 min). Floored at 5 min — cycling
+    #: more often just burns quota for no real gain on a 5-hour window.
+    usage_ping_interval_sec: int = 10 * 60
+    #: Model the background ``claude`` session runs under (so pings are cheap).
+    #: Default Haiku. Overridable in case the model id changes.
+    usage_ping_model: str = "claude-haiku-4-5-20251001"
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -727,6 +781,43 @@ class Config:
             data["notify_on_usage"], bool
         ):
             coerced["notify_on_usage"] = data["notify_on_usage"]
+
+        # Usage-monitor master switch (spec 0011) — a mode string like
+        # keep_awake (it controls a process lifecycle, so refuse rather than
+        # guess on a bad value).
+        if "usage_monitor" in data:
+            raw_um = data["usage_monitor"]
+            if isinstance(raw_um, str) and raw_um in _USAGE_MONITOR_MODES:
+                coerced["usage_monitor"] = raw_um
+            else:
+                _warn(
+                    f"config: ignoring invalid usage_monitor={raw_um!r}; "
+                    f"allowed: {sorted(_USAGE_MONITOR_MODES)}"
+                )
+
+        # Ping interval in minutes → seconds. Floored at 5 min: pinging a
+        # 5-hour window more often just burns quota. Sub-5 / non-number drops
+        # to the default with a warning.
+        def _require_ping_interval(m: float) -> float:
+            if m < 5:
+                raise ValueError("must be at least 5 minutes")
+            return m
+
+        take(
+            "usage_ping_interval_min",
+            "usage_ping_interval_sec",
+            float,
+            lambda m: int(_require_ping_interval(m) * 60),
+        )
+
+        # Ping model id — goes into the background `screen … claude --model`
+        # command, so restrict to a safe charset (no shell metacharacters).
+        def _require_model_id(s: str) -> str:
+            if not _MODEL_ID_RE.match(s):
+                raise ValueError("must match [A-Za-z0-9._-]+")
+            return s
+
+        take("usage_ping_model", "usage_ping_model", str, _require_model_id)
 
         # Nullable string with strict format — take() would either eat the
         # explicit ``null`` (treating it as "fall back to default") or trip
@@ -883,6 +974,52 @@ def write_multi_workspace_mode(on: bool) -> int:
         )
     except OSError as exc:
         _warn(f"multi_workspace: write failed: {exc}")
+        return 1
+    return 0
+
+
+def usage_monitor_mode() -> str:
+    """Current usage-monitor mode (``"on"``/``"off"``).
+
+    Sidecar (:data:`USAGE_MONITOR_MODE_PATH`) takes precedence over
+    :attr:`Config.usage_monitor` — once the user flips the *Tools → Usage
+    monitor* toggle that's the runtime truth; the config knob is only the
+    first-launch default. Same pattern as :func:`multi_workspace_enabled`.
+    """
+    try:
+        raw = USAGE_MONITOR_MODE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        raw = ""
+    if raw in _USAGE_MONITOR_MODES:
+        return raw
+    return CONFIG.usage_monitor
+
+
+def usage_monitor_enabled() -> bool:
+    """Whether the usage monitor (background session + line + alerts) is on.
+
+    Single gate reused by :mod:`render` (the usage line) and
+    :mod:`usage_alerts` (the threshold notifications): both go dark when the
+    monitor is off.
+    """
+    return usage_monitor_mode() == "on"
+
+
+def write_usage_monitor_mode(mode: str) -> int:
+    """Persist the usage-monitor toggle to the sidecar; 0 on success.
+
+    Written by the *Tools → Usage monitor* checkbox via
+    ``bin/app/usage-monitor-set.sh`` → ``--usage-monitor on|off``. Refuses an
+    unrecognised mode (it controls a process lifecycle).
+    """
+    if mode not in _USAGE_MONITOR_MODES:
+        _warn(f"usage_monitor: refusing invalid mode {mode!r}")
+        return 1
+    try:
+        USAGE_MONITOR_MODE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        USAGE_MONITOR_MODE_PATH.write_text(mode + "\n", encoding="utf-8")
+    except OSError as exc:
+        _warn(f"usage_monitor: write failed: {exc}")
         return 1
     return 0
 
@@ -1185,7 +1322,7 @@ class Usage:
     five_used: int = 0
     five_resets_at: str = ""
     seven_used: int = 0
-    seven_target: str = ""
+    seven_resets_at: str = ""
 
 
 @dataclass(frozen=True)

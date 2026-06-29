@@ -222,6 +222,52 @@ case "$CUR_STATUSLINE" in
         ;;
 esac
 
+# refreshInterval (seconds) keeps the background session's status line — and
+# thus the usage snapshot's record_ts — ticking on a timer. 8s is comfortably
+# inside the 5-10s band. Set unconditionally when our sensor owns the
+# statusLine (covers the idempotent re-run path above).
+case "$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)" in
+    *usage-sensor.sh*)
+        /usr/bin/jq '.statusLine.refreshInterval = 8' \
+            "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        say "statusLine refreshInterval set to 8s"
+        ;;
+esac
+
+
+step "5c. Usage-monitor trusted workdir (spec 0011)"
+# The background claude session (Statistics → Usage monitor) needs a CWD Claude
+# Code already trusts, or the folder-trust prompt blocks its TUI and the status
+# line never fires. It must ALSO clear past the first-run onboarding / upsell
+# prompts — on v2.1.181+ a fresh interactive session blocks on "Try the new
+# fullscreen renderer?" and never reaches the ready TUI, so the sensor stays
+# silent. Claude Code gates that upsell on ~/.claude.json keys, so we pre-seed
+# them: fullscreenUpsellSeenCount past its show-threshold (without lowering an
+# existing higher value) and hasCompletedOnboarding. The ~/.claude.json format
+# is undocumented — we only add additively, with a backup, and skip gracefully
+# if the file is absent. Side effect: you also stop seeing the fullscreen-
+# renderer upsell in your own interactive sessions (a wash). There is no
+# supported flag/env to suppress these prompts — see ADR-0018.
+USAGE_MON_DIR="${HOME}/.claude/cab-usage-monitor"
+mkdir -p "$USAGE_MON_DIR"
+CLAUDE_JSON="${HOME}/.claude.json"
+if [ -f "$CLAUDE_JSON" ]; then
+    cp "$CLAUDE_JSON" "${CLAUDE_JSON}.bak.$(date +%Y%m%d-%H%M%S)"
+    if /usr/bin/jq --arg p "$USAGE_MON_DIR" \
+        '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})
+         | .fullscreenUpsellSeenCount = ([(.fullscreenUpsellSeenCount // 0), 99] | max)
+         | .hasCompletedOnboarding = true' \
+        "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" 2>/dev/null; then
+        mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
+        say "trusted $USAGE_MON_DIR + silenced onboarding prompts in ~/.claude.json"
+    else
+        rm -f "${CLAUDE_JSON}.tmp"
+        say "WARN: couldn't update ~/.claude.json — usage monitor may hit a trust/onboarding prompt"
+    fi
+else
+    say "no ~/.claude.json yet — usage monitor will need a one-time trust on first run"
+fi
+
 
 step "6. Notification icon"
 ASSETS_DIR="${HOOKS_DIR}/assets"

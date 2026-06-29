@@ -610,13 +610,14 @@ def read_usage() -> core.Usage | None:
     """Load the subscription usage snapshot written by ``usage-sensor.sh``.
 
     Five-column TSV
-    (``record_ts\tfive_used\tfive_resets_at\tseven_used\tseven_target``),
+    (``record_ts\tfive_used\tfive_resets_at\tseven_used\tseven_resets_at``),
     one row. Returns ``None`` when the file is absent (API-key auth, or the
     sensor isn't wired up), unreadable, malformed, or carries a non-numeric
     field — same fail-open stance as the other readers: a missing or broken
     snapshot just hides the usage line and skips the alerts, never crashes
-    the menu. ``five_resets_at`` is validated numeric but kept as the raw
-    string (it doubles as the usage-alert window key).
+    the menu. ``five_resets_at`` / ``seven_resets_at`` are validated numeric
+    but kept as raw strings (``five_resets_at`` doubles as the usage-alert
+    window key).
     """
     if not core.USAGE_PATH.exists():
         return None
@@ -632,7 +633,7 @@ def read_usage() -> core.Usage | None:
         five_used = int(parts[1])
         int(parts[2])  # validate five_resets_at is numeric; keep the string
         seven_used = int(parts[3])
-        float(parts[4])  # validate seven_target is numeric; keep the string
+        int(parts[4])  # validate seven_resets_at is numeric; keep the string
     except ValueError:
         return None
     return core.Usage(
@@ -640,7 +641,7 @@ def read_usage() -> core.Usage | None:
         five_used=five_used,
         five_resets_at=parts[2],
         seven_used=seven_used,
-        seven_target=parts[4],
+        seven_resets_at=parts[4],
     )
 
 

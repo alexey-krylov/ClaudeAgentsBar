@@ -33,13 +33,14 @@ say()  { printf '  %s\n' "$*"; }
 step() { printf '\n→ %s\n' "$*"; }
 
 
-step "1. Stop any caffeinate we own"
-# spec 0003 — if keep_awake=auto/always is enabled, the plugin has a
-# detached caffeinate process holding awake. Kill it before we strip
-# the symlink, otherwise the menu's only off-switch goes away and the
-# user has to hunt the PID by hand.
+step "1. Stop background processes we own"
+# spec 0003 — kill any caffeinate holding the machine awake. spec 0011 — quit
+# the background claude usage-monitor session. Both before we strip the
+# symlink, so the menu's off-switches don't vanish out from under the user.
 if [ -f "${REPO_DIR}/claude-agents.5s.py" ]; then
     /usr/bin/python3 "${REPO_DIR}/claude-agents.5s.py" --keep-awake-shutdown \
+        2>/dev/null || true
+    /usr/bin/python3 "${REPO_DIR}/claude-agents.5s.py" --usage-monitor-shutdown \
         2>/dev/null || true
 fi
 say "ok"
@@ -106,7 +107,9 @@ if [ -f "$SETTINGS" ]; then
         *usage-sensor.sh*)
             if [ -f "$STATUSLINE_ORIG_FILE" ] && [ -s "$STATUSLINE_ORIG_FILE" ]; then
                 ORIG_STATUSLINE=$(cat "$STATUSLINE_ORIG_FILE")
-                /usr/bin/jq --arg c "$ORIG_STATUSLINE" '.statusLine.command = $c' \
+                # Restore the original command and drop our refreshInterval.
+                /usr/bin/jq --arg c "$ORIG_STATUSLINE" \
+                    '.statusLine.command = $c | del(.statusLine.refreshInterval)' \
                     "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
                 say "restored original statusLine"
             else
@@ -142,3 +145,7 @@ echo "  ~/.claude/agent-state.keep-awake.mode"
 echo "  ~/.claude/agent-state.caffeinate"
 echo "  ~/.claude/agent-state.usage"
 echo "  ~/.claude/agent-state.usage-alerts"
+echo "  ~/.claude/agent-state.usage-monitor.mode"
+echo "  ~/.claude/agent-state.usage-monitor.ping"
+echo "  ~/.claude/cab-usage-monitor/        (usage-monitor workdir)"
+echo "  ~/.claude.json projects entry for cab-usage-monitor (trust flag — left in place)"

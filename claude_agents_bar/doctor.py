@@ -1,6 +1,6 @@
 """CLI diagnostics — what ``claude-agents-bar doctor`` runs.
 
-Six independent checks the user (or a Homebrew formula test, or CI) can
+Seven independent checks the user (or a Homebrew formula test, or CI) can
 read in plain text. Each returns ``(status, message)`` where status is
 ``"ok"`` / ``"warn"`` / ``"err"``. ``_run_doctor`` formats the lot,
 prints a greppable line per check, and exits non-zero only when something
@@ -179,6 +179,72 @@ def _doctor_check_terminal_notifier() -> tuple[str, str]:
     )
 
 
+def _onboarding_preseeded() -> bool:
+    """Did ``setup`` silence Claude Code's first-run prompts in ~/.claude.json?
+
+    ``setup`` lifts ``fullscreenUpsellSeenCount`` past the show-threshold (3 on
+    observed versions) and sets ``hasCompletedOnboarding``. Without that the
+    background TUI can hang on the "fullscreen renderer?" upsell. Fail-soft: an
+    absent / unreadable file reads as "not seeded".
+    """
+    try:
+        data = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return (
+        isinstance(data.get("fullscreenUpsellSeenCount"), int)
+        and data["fullscreenUpsellSeenCount"] >= 3
+        and data.get("hasCompletedOnboarding") is True
+    )
+
+
+def _doctor_check_usage_monitor(now: int) -> tuple[str, str]:
+    """Is the usage monitor healthy — and if not, is it the onboarding hang?
+
+    The telltale of "problem A" (the background session stuck on a first-run
+    prompt) is: the ``screen`` session is alive but no fresh usage snapshot ever
+    lands. We read that state and, when the onboarding keys aren't seeded, point
+    straight at the fix (`setup`). Read-only: we only look, never spawn/kill.
+    """
+    if not core.usage_monitor_enabled():
+        return "ok", "off (enable via Statistics → Usage monitor)"
+
+    from . import sidecars, usage_monitor  # lazy: keeps the render path clean
+
+    sessions = usage_monitor._live_sessions()
+    if not sessions:
+        return "warn", (
+            "background session down — the plugin respawns it on the next tick; "
+            "re-check in a few seconds"
+        )
+    if len(sessions) > 1:
+        return "warn", (
+            f"{len(sessions)} duplicate background sessions — the plugin "
+            "collapses these to one on the next tick"
+        )
+
+    usage = sidecars.read_usage()
+    interval = core.CONFIG.usage_ping_interval_sec
+    if usage is not None and now - usage.record_ts <= 2 * interval:
+        return "ok", f"live (session {usage.five_used}% used)"
+
+    # Daemon up but no fresh data — the onboarding-hang signature.
+    if not _onboarding_preseeded():
+        return "err", (
+            "background session is up but no usage data is arriving — it is "
+            "most likely stuck on Claude Code's first-run prompt (e.g. \"Try the "
+            "new fullscreen renderer?\"). Fix: claude-agents-bar setup "
+            "(pre-seeds the ~/.claude.json keys that suppress it)"
+        )
+    return "warn", (
+        "background session is up but no fresh usage data — onboarding keys are "
+        "seeded, so check `screen -r cab-usage-mon` for a new blocking prompt, "
+        "or whether you're on API-key auth (rate_limits need a Claude.ai plan)"
+    )
+
+
 def _run_doctor() -> int:
     """Run the in-plugin doctor checks. Returns non-zero only on hard errors."""
     now = int(time.time())
@@ -189,6 +255,7 @@ def _run_doctor() -> int:
         ("perms/", _doctor_check_sidecar_permissions()),
         ("editor/", _doctor_check_editor_app()),
         ("notify/", _doctor_check_terminal_notifier()),
+        ("usage/", _doctor_check_usage_monitor(now)),
     )
     any_err = False
     label_width = max(len(name) for name, _ in checks)

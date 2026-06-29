@@ -1,88 +1,115 @@
-# 0018. Capture subscription usage via a statusLine sensor that chains the user's command
+# 0018. Source subscription usage from a hidden background `claude` session
 
 * Status: Accepted
-* Date: 2026-06-24
+* Date: 2026-06-29
 
 ## Context
 
-We want to surface the Claude.ai subscription's rolling usage — the 5-hour
-window's `used_percentage` / `resets_at` and the 7-day window — both as a
-static line in the Tools submenu and as escalating threshold alerts
-(spec 0011).
+We want the Claude.ai subscription's live usage — the rolling 5-hour window's
+`used_percentage` / `resets_at` and the 7-day window — in the menu, both as a
+line and as escalating alerts (spec 0011).
 
-The problem is the data source. Claude Code exposes these limits in the
-`rate_limits` field **only on the stdin it passes to the statusLine command**.
-They are not in any hook payload, and not in the transcript JSONL the plugin
-already reads (verified by grepping ~200 transcripts: `rate_limit` appears only
-as text inside code samples, never as a structural key). So the stateless,
-hook-driven, tick-rendering plugin (ADR-0002, ADR-0003) has nowhere to read
-`rate_limits` from on its own.
+The data lives in a `rate_limits` field that Claude Code exposes in exactly one
+place: **the JSON it pipes to a `statusLine` command's stdin**, and only for
+Claude.ai subscription auth after the first API response. It is **not** in the
+transcript JSONL (verified by grepping ~200 transcripts — `rate_limit` appears
+only inside code samples), nor in any hook payload, nor any local file or API.
 
-Three options were considered:
+Worse, empirically verified: the status line only runs inside a **real
+interactive TUI**. `claude -p`, piped input, and the VSCode/Cursor extension
+**never invoke it** — the extension renders its own `/usage` panel from
+in-memory data it doesn't persist. The project's target user works in VSCode,
+so a statusLine sensor alone (the obvious approach, and what the first cut of
+this ADR proposed) writes its sidecar *never* in that environment.
 
-1. **Read it from the transcript** — impossible; the field isn't there.
-2. **A new Claude Code hook** — no hook event carries `rate_limits` either.
-3. **A statusLine sensor** — the statusLine command is the one place Claude
-   Code hands us `rate_limits`. A bundled wrapper can read it and persist it to
-   a sidecar, exactly mirroring the hook→sidecar→tick flow of ADR-0003, just
-   with the statusLine as the writer instead of a hook.
+Options considered:
 
-Option 3 is the only one that can work. The complication: `settings.json` holds
-a single `statusLine.command`, and a user may already have their own status
-line script there.
+1. **statusLine sensor only** — works in a terminal session, dead in VSCode.
+2. **Estimate from transcript JSONL** — the figures are dominated by
+   `cache_read` tokens (96 % of volume in testing) whose rate-limit weighting
+   Anthropic doesn't publish; the estimate drifts by multiples. Rejected:
+   inaccurate is worse than absent for "how close am I to the limit".
+3. **A usage/rate-limit API** — only exists for Console *API-key* org usage
+   (Admin key), not Claude.ai subscription windows.
+4. **Hold a real interactive `claude` session open ourselves**, so the status
+   line genuinely fires, and read `rate_limits` off it. The only path to
+   accurate live data outside a terminal.
 
 ## Decision
 
-Ship `hooks/usage-sensor.sh`, a statusLine wrapper. On each invocation it:
+Run a **hidden background `claude` session** and read its status line.
 
-1. Reads the JSON payload on stdin, parses `rate_limits.five_hour` /
-   `seven_day`, and atomically writes a one-row snapshot to
-   `~/.claude/agent-state.usage`
-   (`record_ts  five_used  five_resets_at  seven_used  seven_target`). When the
-   payload carries no `rate_limits` (API-key auth), it writes nothing.
-2. **Chains** to the user's original statusLine command, passed as its first
-   argument: `printf '%s' "$input" | eval "$ORIG"`. The original's stdout is
-   proxied straight through, so the user's status line still renders unchanged.
-   With no original, the status line is simply blank.
-
-`setup.sh` reads the existing `.statusLine.command`, saves it to
-`~/.claude/agent-state.statusline.orig`, and rewrites `.statusLine.command` to
-`bash "<sensor>" "<original>"`. It is idempotent — a command already wrapping
-`usage-sensor.sh` is left untouched. `teardown.sh` restores the saved original
-(or deletes the key if there was none) and removes the sidecars.
-
-The plugin reads `agent-state.usage` on its tick: `render` prints the Tools
-line, and `usage_alerts.reconcile` fires the threshold notifications. The data
-is **account-wide**, not per-session, so the sidecar is a single row and
-last-writer-wins among several concurrent sessions is harmless.
-
-The **weekly pacing target** (`used%/target%`) is not in `rate_limits`; it is a
-personal office-hours model. The sensor computes it (a `WK_CUM` lookup by
-weekday in `WEEK_TZ` relative to `WEEK_RESET_HOUR`, ported from the user's
-statusLine) and writes the finished number, so the Python side carries no
-timezone/date logic.
+- `hooks/usage-sensor.sh` is wired in as that session's `statusLine` command
+  (by `setup`). It parses `rate_limits` off stdin and atomically writes
+  `agent-state.usage`; it also chains to any
+  pre-existing user `statusLine` (saved for teardown) so a terminal user's own
+  status line still renders.
+- **The sensor writes the sidecar only for the daemon's own session.** The
+  `statusLine` command is registered globally, so *every* interactive session
+  fires it — and an old session reopened via resume carries a stale cached
+  `rate_limits` that would clobber the daemon's live snapshot and make the menu
+  flap. The sensor gates on the payload's `cwd` being the trusted monitor folder
+  (`~/.claude/cab-usage-monitor`); any other session just chains through.
+- The session runs in a **detached `screen`** (`screen -dmS cab-usage-mon …
+  claude --model <haiku>`): a genuine TTY, so the status line fires, but **no
+  window**. It runs in a trusted folder (`~/.claude/cab-usage-monitor`, marked
+  trusted in `~/.claude.json` by `setup`) so no folder-trust prompt blocks it.
+- **First-run prompts must be silenced.** A blocking prompt at startup stops the
+  session ever reaching the ready TUI, so the status line never fires (observed
+  on v2.1.181: the *"Try the new fullscreen renderer?"* upsell). There is no
+  supported flag/env to suppress these (`--safe-mode` doesn't; `--bare` /
+  `CLAUDE_CODE_SIMPLE` disables the status line we depend on), so `setup`
+  pre-seeds the undocumented `~/.claude.json` keys that gate them —
+  `fullscreenUpsellSeenCount` past its show-threshold (never lowering a higher
+  existing value) and `hasCompletedOnboarding`.
+- `setup` sets `statusLine.refreshInterval` so the line ticks on a timer.
+- `claude_agents_bar/usage_monitor.reconcile` runs on the plugin's 5-second
+  tick — the same lifecycle pattern as `keep_awake` (no launchd; the project
+  has none): if the master switch is on it spawns the session when absent, and
+  **recycles** it (kill + fresh spawn) every `usage_ping_interval_min`. A
+  long-lived session's `rate_limits` go stale — the server only refreshes
+  `used_percentage` on a *new* API response, and stuff-pinging a live TUI proved
+  unreliable (it eventually stops accepting input and the numbers freeze) — so
+  cycling the session forces a new first response with current usage;
+  `refreshInterval` alone only re-renders the same numbers. The session is
+  tracked by its unique screen name, not a PID. `reconcile` lists sessions by
+  their PID-qualified `<pid>.cab-usage-mon` token (so kills are unambiguous) and
+  **collapses duplicates** — a spawn race can briefly produce two, each a real
+  Haiku process burning quota, so seeing more than one triggers kill-all +
+  single respawn.
+- A single master switch `usage_monitor` (config + sidecar override + *Tools*
+  toggle) gates the background session, the usage line, and the alerts together.
+  **On by default** — zero-config (`setup` trusts the work folder); flip it off
+  to stop the background session and its recycles.
 
 ## Consequences
 
-* The plugin gains subscription-usage awareness without a daemon and without
-  changing its stateless tick model — the sensor is just another sidecar
-  writer, like the hooks.
-* `setup`/`teardown` now touch `.statusLine` in `settings.json`, a surface they
-  did not touch before. Both back up the file and the teardown is a clean
-  round-trip via the saved original (verified: wrap → idempotent re-run →
-  restore returns the byte-identical original).
-* **`eval` on the saved original.** Claude Code stores `.statusLine.command`
-  as a shell string and runs it through a shell, so the sensor preserves parity
-  by `eval`-ing it. A pathological original containing an unescaped `"` could
-  break the wrapping; this is accepted (status line commands are simple paths
-  in practice) and recoverable via the timestamped settings backup.
-* **Freshness.** The statusLine only runs while Claude Code is active, so the
-  snapshot can go stale after Claude Code is idle. Both the render line and the
-  alerts gate on `now < five_resets_at` (the window's own expiry) and skip a
-  stale snapshot rather than show or alert on it.
-* **API-key auth / no statusLine** degrade silently: no `rate_limits` → no
-  snapshot → no usage line and no alerts; the chain still renders the user's
-  status line.
-* Terminology: throughout, **"session"** in this feature means the 5-hour
-  subscription usage window — not a Claude Code chat session and not the
-  context window. The spec and locale strings keep that meaning.
+* Accurate live usage in the menu in VSCode (and anywhere), because we no
+  longer depend on the user happening to have an interactive terminal open —
+  we hold one ourselves, invisibly.
+* **Cost:** the background session is a real `claude` process (visible in `ps` /
+  Activity Monitor, just window-less) and each recycle's first response spends a
+  little Haiku quota. Hence a 10-minute default recycle interval (5-minute
+  floor) and a single switch that kills all of it (on by default for
+  zero-config, but one click off). The monitor's own requests nudge the very
+  number it reports — accepted; on a
+  5-hour window the effect is negligible.
+* `setup`/`teardown` now touch `statusLine` and `~/.claude.json` (the trust
+  entry plus the two onboarding-suppression keys) — both back up first and merge
+  additively. The `~/.claude.json` format is undocumented and could change
+  between Claude Code versions; we only add `projects[path].hasTrustDialogAccepted`,
+  `fullscreenUpsellSeenCount`, and `hasCompletedOnboarding`, with a backup, and
+  degrade to a one-time prompt if the file is absent.
+* **This stays brittle.** The background session is a real interactive TUI, and
+  a future Claude Code version can introduce a *new* blocking first-run prompt
+  the pre-seed doesn't cover — the session would hang and the line would go
+  empty. There is no "non-interactive interactive" mode to lean on; the only
+  remedy is to silence each known prompt and document the diagnosis (attach with
+  `screen -r cab-usage-mon`, answer, `Ctrl-A d`). See
+  [troubleshooting](../troubleshooting.md).
+* Dependence on `screen` (ships with macOS) and on `claude` CLI flags / the
+  status line continuing to carry `rate_limits`. All failure modes are
+  fail-soft: if the session can't spawn or the snapshot goes stale, the line
+  simply disappears (a `record_ts` staleness gate hides frozen numbers).
+* "Session" throughout this feature means the **5-hour usage window**, not a
+  Claude Code chat or the context window.

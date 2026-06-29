@@ -38,21 +38,22 @@ _THRESHOLDS = (50, 60, 70, 80, 90)
 _CRITICAL = 95
 
 
-def _fire(pct: int, kind: str) -> None:
+def _fire(pct: int, kind: str, reset_secs: int) -> None:
     """Spawn a detached ``notify-usage.sh`` for one usage alert.
 
     ``start_new_session=True`` severs the child from SwiftBar so it outlives
     our tick; stdio goes to ``/dev/null`` — same detachment contract as
     :mod:`idle_reminders`. The alert is account-wide (no session), so we pass
-    only the current percentage and the template kind (``"A"`` / ``"B"``);
-    the script does its own config / quiet-hours gating. Invoked via
+    the current percentage, the template kind (``"A"`` / ``"B"``), and the
+    seconds until the 5-hour window resets (the 70 %+ and critical phrases quote
+    it); the script does its own config / quiet-hours gating. Invoked via
     ``/bin/bash <path>`` so it doesn't depend on the executable bit surviving
     distribution.
     """
     script = core.PLUGIN_DIR / "hooks" / "notify-usage.sh"
     try:
         subprocess.Popen(
-            ["/bin/bash", str(script), str(pct), kind],
+            ["/bin/bash", str(script), str(pct), kind, str(reset_secs)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -77,9 +78,10 @@ def reconcile(now: int) -> None:
     multi-threshold catch-up into one alert), and the notification carries the
     *actual* current percentage, not the threshold value.
     """
-    if not core.CONFIG.notify_on_usage:
-        # Feature off. Leave any existing sidecar alone — cheap, and it'll be
-        # overwritten the moment the user re-enables the feature.
+    if not core.usage_monitor_enabled() or not core.CONFIG.notify_on_usage:
+        # Master switch off (whole feature dark) or alerts sub-flag off. Leave
+        # any existing sidecar alone — cheap, and it'll be overwritten the
+        # moment the user re-enables the feature.
         return
 
     usage = sidecars.read_usage()
@@ -104,5 +106,6 @@ def reconcile(now: int) -> None:
         return
 
     top = max(crossed)  # collapse a multi-threshold catch-up into one alert.
-    _fire(pct, "B" if top >= _CRITICAL else "A")
+    reset_secs = max(0, int(usage.five_resets_at) - now)
+    _fire(pct, "B" if top >= _CRITICAL else "A", reset_secs)
     sidecars.write_usage_alerts((window, top))

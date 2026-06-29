@@ -14,25 +14,31 @@
 # session id / cwd: the banner is non-clickable and carries no project line.
 # Arguments are positional (NOT a JSON payload on stdin):
 #
-#     notify-usage.sh <pct> <kind>      kind = A (threshold) | B (critical)
+#     notify-usage.sh <pct> <kind> <reset_secs>
+#         kind       = A (threshold) | B (critical)
+#         reset_secs = seconds until the 5-hour window resets (quoted in the
+#                      70 %+ and critical phrases as "X ч")
 #
-# Can be run by hand for a smoke test: `notify-usage.sh 70 A`.
+# Can be run by hand for a smoke test: `notify-usage.sh 70 A 9000`.
 #
 # Requires: terminal-notifier  (brew install terminal-notifier)
 # Optional: jq  (for config parsing); afplay/say are macOS builtins.
 #
-# Config keys read from the ClaudeAgentsBar config.json (all optional):
+# Config keys read from the ClaudeAgentsBar config.json (all optional). The
+# phrase defaults are English; override any of them to localize.
 #   notify_sound_usage           string  "Glass" — built-in sound name, path,
 #                                                 ~-path, or null to skip the
 #                                                 chime (distinct from Hero =
 #                                                 done, Funk = awaiting,
 #                                                 Submarine = idle)
-#   notify_usage_phrase_threshold string "Session limit at {pct}%" — template A;
-#                                                 "{pct}" is replaced with the
-#                                                 current percentage
-#   notify_usage_phrase_critical  string "Session limit almost exhausted — only
-#                                                 a refresh restores it" —
-#                                                 template B (95 %)
+#   notify_usage_title           string  "Current usage" — banner title (line 1)
+#   notify_usage_phrase_threshold string "Session limit at {pct}%" — 50/60 %;
+#                                                 "{pct}" → current percentage
+#   notify_usage_phrase_threshold_reset string "Session limit at {pct}%, resets
+#                                                 in {until}h" — 70/80/90 %;
+#                                                 "{until}" → whole hours left
+#   notify_usage_phrase_critical string "Session limit almost exhausted, resets
+#                                                 in {until}h" — 95 %
 #   notify_voice                 string  null    — say(1) voice (shared)
 #   quiet_hours / quiet_hours_silences           — same silence window as the
 #                                                 other notify hooks
@@ -79,21 +85,52 @@ fi
 # ── Positional input (from the plugin, not a hook payload) ───────────────────
 PCT="${1:-0}"
 KIND="${2:-A}"
+RESET_SECS="${3:-0}"
+
+# Whole hours until the 5-hour window resets (round half-up), substituted as a
+# bare NUMBER into the {until} placeholder — the time unit ("h" / "ч") lives in
+# the phrase template so it localizes with the rest of the string.
+UNTIL=""
+case "$RESET_SECS" in
+    ''|*[!0-9]*) : ;;
+    *)
+        if [ "$RESET_SECS" -gt 0 ]; then
+            _h=$(((RESET_SECS + 1800) / 3600))   # round to nearest hour
+            [ "$_h" -lt 1 ] && _h=1               # never 0 while time remains
+            UNTIL="${_h}"
+        fi
+        ;;
+esac
+
+# Banner title (line 1) — a constant type label so the banner reads as its own
+# kind. English default; override to localize (e.g. "Текущий расход").
+TITLE=$(_cfg_string "notify_usage_title" "Current usage")
 
 if [ "$KIND" = "B" ]; then
     TMPL=$(_cfg_string "notify_usage_phrase_critical" \
-        "Session limit almost exhausted — only a refresh restores it")
+        "Session limit almost exhausted, resets in {until}h")
     MSG="$TMPL"
-    ICON="🪫"
+    # Red — matches the red zone (>=85%) of the menu usage line; a flat status
+    # glyph like wait's ❓ / idle's ⚠️. The 95% critical alert.
+    ICON="🔴"
+elif [ "$PCT" -ge 70 ] 2>/dev/null; then
+    # 70/80/90 % — quote the time remaining so the nudge is actionable.
+    TMPL=$(_cfg_string "notify_usage_phrase_threshold_reset" \
+        "Session limit at {pct}%, resets in {until}h")
+    MSG="${TMPL//\{pct\}/$PCT}"
+    ICON="🟡"
 else
+    # 50/60 % — just the percentage, no countdown yet.
     TMPL=$(_cfg_string "notify_usage_phrase_threshold" "Session limit at {pct}%")
     MSG="${TMPL//\{pct\}/$PCT}"
-    ICON="📊"
+    ICON="🟡"
 fi
+MSG="${MSG//\{until\}/$UNTIL}"
 
 # ── Chime + speech + banner (shared emit) ────────────────────────────────────
 # Account-wide: no session url / id / cwd, so the banner is non-clickable and
 # has no project-branch subtitle (_emit_notification / _banner_subtitle handle
-# the empty positionals). Line 1 carries the message with a type icon; the
-# spoken text is the message without the icon (no "chart emoji" read aloud).
-_emit_notification "${ICON} $MSG" "" "$MSG" "" "" ""
+# the empty positionals). The title is the "Current usage" type header; the
+# coloured glyph + message carry the percentage detail; the spoken text is the
+# message without the glyph.
+_emit_notification "$TITLE" "${ICON} $MSG" "$MSG" "" "" ""

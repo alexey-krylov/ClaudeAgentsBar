@@ -18,12 +18,16 @@
 #
 # Snapshot format (one row, tab-separated), read by sidecars.read_usage:
 #
-#     record_ts  five_used  five_resets_at  seven_used  seven_target
+#     record_ts  five_used  five_resets_at  seven_used  seven_resets_at
 #
-# record_ts / five_resets_at are unix epoch seconds; five_used / seven_used are
-# integer percentages; seven_target is the weekly pacing target (see below).
+# record_ts / *_resets_at are unix epoch seconds; five_used / seven_used are
+# floored integer percentages.
 # Nothing is written when the payload carries no rate_limits (API-key auth) —
-# the chain still runs, so a non-subscription user is unaffected.
+# the chain still runs, so a non-subscription user is unaffected. Nothing is
+# written either unless the calling session's cwd is the monitor's trusted work
+# folder: the statusLine is global, so every interactive session fires this, and
+# a non-monitor session's stale cached rate_limits would otherwise clobber the
+# daemon's live snapshot and make the menu flap.
 #
 # Requires: jq. (date is a macOS builtin.)
 
@@ -32,60 +36,48 @@ set -u
 USAGE_SIDECAR="${HOME}/.claude/agent-state.usage"
 ORIG="${1:-}"
 
-# ── WEEKLY PACING MODEL (EDIT FOR YOUR OWN SCHEDULE) ─────────────────────────
-# The weekly segment shows "used%/target%", where target% is a self-imposed
-# cumulative pacing goal for how much of the weekly quota you intend to have
-# spent by the end of the current day-bucket. The week is split into buckets
-# from the weekly reset; each bucket's cumulative target lives in WK_CUM, in
-# order from the reset: [FriPM+Sat+Sun, Mon, Tue, Wed, Thu, Fri-AM]. The
-# defaults below derive from one user's office-hour weights and a Friday
-# 14:00 Singapore reset — CHANGE THEM to match your timezone, reset day/hour,
-# and how you want to pace your week.
-WEEK_TZ="Asia/Singapore"
-WEEK_RESET_HOUR=14
-WK_CUM=(9.5 29.5 49.5 69.5 89.5 100)
-
 # ── Parse rate_limits off the statusLine payload ─────────────────────────────
 input=$(cat)
 
+# The statusLine command is GLOBAL — every interactive claude session calls it,
+# not just our background monitor. A non-monitor session (especially an old one
+# reopened via resume) carries a STALE cached rate_limits snapshot from its last
+# response; if we wrote that, it would clobber the daemon's live number and the
+# menu would flap (5% → 20% → 5% as focus moves between sessions). So ONLY the
+# monitor daemon writes the sidecar: gate on cwd being our trusted work folder
+# (the daemon always runs there). Every other session falls straight through to
+# the chain below and leaves the sidecar untouched.
+MON_DIR="${HOME}/.claude/cab-usage-monitor"
+
 snapshot=""
-if command -v jq >/dev/null 2>&1; then
-    # Single jq pass. Emits "five_used five_resets_at seven_used" when the
-    # 5-hour window is present (subscription auth, after the first response),
-    # nothing otherwise.
-    read -r five_used five_reset seven_used < <(
+if command -v jq >/dev/null 2>&1 \
+   && [ "$(printf '%s' "$input" | jq -r '.cwd // .workspace.current_dir // ""' 2>/dev/null)" = "$MON_DIR" ]; then
+    # Single jq pass. Emits "five_used five_resets_at seven_used seven_resets_at"
+    # when the 5-hour window is present (subscription auth, after the first
+    # response), nothing otherwise.
+    read -r five_used five_reset seven_used seven_reset < <(
         printf '%s' "$input" | jq -r '
             if .rate_limits.five_hour then
                 "\(.rate_limits.five_hour.used_percentage // 0) " +
                 "\(.rate_limits.five_hour.resets_at // 0) " +
-                "\(.rate_limits.seven_day.used_percentage // 0)"
+                "\(.rate_limits.seven_day.used_percentage // 0) " +
+                "\(.rate_limits.seven_day.resets_at // 0)"
             else empty end' 2>/dev/null
     )
 
     if [ -n "${five_reset:-}" ]; then
-        # Weekly pacing target L = cumulative goal for the current day-bucket
-        # (a straight WK_CUM lookup — no arithmetic, so no bc/awk dependency).
-        dow=$(TZ="$WEEK_TZ" date +%u)            # 1=Mon .. 7=Sun
-        hour=$((10#$(TZ="$WEEK_TZ" date +%H)))   # strip any leading zero
-        bkt=0
-        case "$dow" in
-            5) [ "$hour" -ge "$WEEK_RESET_HOUR" ] && bkt=0 || bkt=5 ;;  # Fri
-            6|7) bkt=0 ;;                                               # Sat/Sun
-            1) bkt=1 ;; 2) bkt=2 ;; 3) bkt=3 ;; 4) bkt=4 ;;             # Mon..Thu
-        esac
-        L="${WK_CUM[$bkt]}"
-
         # Floor the percentages (truncate the fraction) so they match Claude
         # Code's own USAGE view — which never shows a percentage higher than
         # the real one — and so a threshold like 50 % only fires at a real
-        # >= 50 %, not at 49.6 %. Epoch is already integral (printf rounds any
+        # >= 50 %, not at 49.6 %. Epochs are already integral (printf rounds any
         # rare fractional form harmlessly).
         now=$(date +%s)
         five_used_i=${five_used%.*};   five_used_i=${five_used_i:-0}
         seven_used_i=${seven_used%.*}; seven_used_i=${seven_used_i:-0}
         five_reset_i=$(printf '%.0f' "$five_reset" 2>/dev/null || echo 0)
+        seven_reset_i=$(printf '%.0f' "${seven_reset:-0}" 2>/dev/null || echo 0)
         snapshot=$(printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$now" "$five_used_i" "$five_reset_i" "$seven_used_i" "$L")
+            "$now" "$five_used_i" "$five_reset_i" "$seven_used_i" "$seven_reset_i")
     fi
 fi
 

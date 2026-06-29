@@ -311,3 +311,47 @@ plugin file itself, not from the runtime `language` config. If you
 want a different language in the *About* dialog specifically, that's
 a SwiftBar limitation — the runtime menu still respects your
 `language` setting.
+
+## Usage line is missing / shows nothing
+
+The usage line and alerts (spec 0011) come from the **usage monitor**, which is
+**on by default** — it holds a window-less background `claude` (Haiku, in a
+detached `screen`) and reads usage off its status line. **Start with `doctor`:**
+
+```bash
+claude-agents-bar doctor      # look at the [..] usage/ line
+```
+
+* `[ok] usage/ live (…)` — working; if the menu still looks off it's a render
+  glitch, refresh with `open swiftbar://refreshallplugins`.
+* `[err] usage/ … stuck on Claude Code's first-run prompt …` — **the common
+  one.** On Claude Code v2.1.181+ the background session hangs on the *"Try the
+  new fullscreen renderer?"* upsell and never reaches the ready TUI, so nothing
+  is read. `setup` pre-seeds the `~/.claude.json` keys that suppress it — run
+  `claude-agents-bar setup`, then `open swiftbar://refreshallplugins`.
+* `[warn] usage/ … onboarding keys are seeded …` — peek inside the session with
+  `screen -r cab-usage-mon` (detach with **`Ctrl-A` then `d`** — *don't* `Ctrl-C`
+  or `/quit`, that kills it). Look for a *new* blocking prompt a fresh Claude
+  Code version may have added, or confirm you're not on API-key auth.
+* `[warn] usage/ background session down …` — the plugin respawns it on the next
+  tick (~5 s); re-check.
+
+Other causes:
+
+* **API-key auth:** `rate_limits` exist only for a Claude.ai subscription
+  (Pro/Max). On API-key auth there's nothing to show — this is not a bug.
+* **Toggled off:** *Statistics → Usage monitor* (or `usage_monitor: "off"`)
+  stops the session, the line, and the alerts together.
+* **Stale → hidden on purpose:** if the background session dies, the line
+  disappears rather than freezing on old numbers (a `record_ts` staleness gate).
+* **Never run `setup` after a `brew upgrade`:** the status-line sensor, the
+  `refreshInterval`, and the trusted folder all live in `~/.claude` and only
+  `setup` writes them. A plain upgrade ships code, not wiring.
+
+### Usage number jumps around (e.g. 10 % → 20 % → 10 %)
+
+Fixed in 1.3.0. The `statusLine` sensor is global — every interactive session
+fired it — so an old session reopened via resume wrote its **stale cached**
+`rate_limits` over the daemon's live number. The sensor now writes only for the
+monitor's own session (gated on its work-folder cwd). If you still see it, your
+plugin predates the fix — `brew upgrade claude-agents-bar` and re-run `setup`.

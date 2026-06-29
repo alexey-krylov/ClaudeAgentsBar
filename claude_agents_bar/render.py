@@ -982,37 +982,54 @@ def _swiftbar_quote(value: str) -> str:
     return '"' + value.replace('"', "'") + '"'
 
 
-def _format_until(seconds: int) -> str:
-    """Compact "time remaining" for the usage line — ``2h48m`` / ``42m`` / ``1d4h``.
+def _format_until(seconds: int, lang: str) -> str:
+    """Localized "time remaining" for the usage line — ``3ч`` / ``4д``.
 
-    Mirrors the format of the source statusLine script (units, no spaces, no
-    locale words) so it reads the same in any language; ``<1m`` for a window
-    about to reset, empty when already past.
+    Rounded to **whole hours**, half-up (``2ч29м`` → ``2ч``, ``2ч30м`` → ``3ч``);
+    a day or more reads in whole days (``4д``, half-up too), matching Claude
+    Code's own USAGE view. Floored at ``1ч`` while time remains. Empty when past.
+    Integer arithmetic, not :func:`round`, which rounds halves to even.
     """
     if seconds <= 0:
         return ""
-    days, rem = divmod(seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes = rem // 60
-    if days > 0:
-        return f"{days}d{hours}h"
-    if hours > 0:
-        return f"{hours}h{minutes}m"
-    if minutes > 0:
-        return f"{minutes}m"
-    return "<1m"
+    if seconds >= 86400:
+        days = (seconds + 43200) // 86400  # round half up
+        return core._t_for("age.days", lang, n=days)
+    hours = (seconds + 1800) // 3600  # round half up
+    if hours < 1:
+        hours = 1  # never "0 ч" while time remains
+    return core._t_for("age.hours", lang, n=hours)
+
+
+def _usage_pct_ansi(pct: int) -> str:
+    """A used-% number coloured by zone: ≥85 red, ≥60 yellow, else bare.
+
+    A bare number stays grey (the line's base ``color=#999999``); the warn /
+    crit numbers get an ANSI span that overrides it (``ansi=true`` on the line).
+    Reuses the menu's existing bold yellow / red escapes.
+    """
+    if pct >= 85:
+        return f"{core._ANSI_WAITING}{pct}{core._ANSI_RESET}"  # bold red
+    if pct >= 60:
+        return f"{core._ANSI_WORKING}{pct}{core._ANSI_RESET}"  # bold yellow
+    return str(pct)
 
 
 def _print_usage_line() -> None:
-    """One grey, inactive Tools line with the subscription usage snapshot.
+    """One grey, **passive** (non-clickable) line with the subscription usage.
 
-    ``Session: {used}% | {remaining-until-reset} | Week: {used}%/{target}%``,
-    sourced from the ``agent-state.usage`` sidecar the statusLine sensor wrote
-    (spec 0011). Shown whenever a snapshot exists and the 5-hour window hasn't
-    expired — independent of ``notify_on_usage`` (that gates only the alerts).
-    Absent / stale snapshot → nothing printed (graceful: API-key auth or no
-    sensor just has no usage line).
+    ``Session: {used}% · {until-reset} · Week: {used}% · {until-reset}``,
+    sourced from the ``agent-state.usage`` sidecar the background session's
+    status line wrote (spec 0011). Printed as a ``--`` sub-item under *Statistics*
+    (next to *Stats today*): a top-level line would get a SwiftBar
+    refresh/about submenu and an arrow — this is just text. Shown only when the
+    usage monitor is **on** and the snapshot is fresh; the session %/week %
+    numbers are coloured by zone (≥60 yellow, ≥85 red). Hidden when the monitor
+    is off, no snapshot exists, the 5-hour window expired, or the snapshot is
+    stale (the background session died) — graceful, just no line.
     """
+    if not core.usage_monitor_enabled():
+        return
     usage = sidecars.read_usage()
     if usage is None:
         return
@@ -1023,9 +1040,19 @@ def _print_usage_line() -> None:
         return
     if now >= resets_at:
         return  # window expired; snapshot is stale, don't show it
+    # Staleness gate: if the background session stopped writing (crashed,
+    # killed), the snapshot freezes. Hide it once it's older than two ping
+    # intervals rather than show frozen percentages.
+    if now - usage.record_ts > 2 * core.CONFIG.usage_ping_interval_sec:
+        return
+    lang = _lang()
+    try:
+        wk_until = _format_until(int(usage.seven_resets_at) - now, lang)
+    except ValueError:
+        wk_until = ""
     print(
-        f"--{_t('menu.usage', sess=usage.five_used, until=_format_until(resets_at - now), wk=usage.seven_used, target=usage.seven_target)} | "
-        "font=Menlo color=#999999 sfimage=gauge.with.dots.needle.50percent"
+        f"--{_t('menu.usage', sess=_usage_pct_ansi(usage.five_used), until=_format_until(resets_at - now, lang), wk=_usage_pct_ansi(usage.seven_used), wk_until=wk_until)} | "
+        "font=Menlo color=#999999 ansi=true sfimage=gauge.with.dots.needle.50percent"
     )
 
 
@@ -1056,15 +1083,6 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
         "terminal=false refresh=true "
         "sfimage=eraser.fill sfcolor=systemOrange"
     )
-    stats_script = bin_dir / "stats-today.sh"
-    print(
-        f"--{_t('menu.stats_today')} | "
-        f"shell={_swiftbar_quote(str(stats_script))} "
-        "terminal=false refresh=false "
-        "sfimage=chart.bar.fill sfcolor=systemPurple"
-    )
-    _print_usage_line()
-
     print("-----")
     _print_notifications_block(bin_dir)
 
@@ -1112,6 +1130,32 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
         "href=https://github.com/alexey-krylov/ClaudeAgentsBar/issues/new "
         "sfimage=lightbulb.fill"
     )
+
+    # Stats submenu (its own top-level item) — today's usage dialog, the usage
+    # monitor master toggle, and the passive live-usage line under it.
+    print(f"{_t('menu.stats')} | sfimage=chart.bar.fill")
+    stats_script = bin_dir / "stats-today.sh"
+    print(
+        f"--{_t('menu.stats_today')} | "
+        f"shell={_swiftbar_quote(str(stats_script))} "
+        "terminal=false refresh=false "
+        "sfimage=calendar sfcolor=systemPurple"
+    )
+    # Usage monitor master toggle (spec 0011) — the background claude session,
+    # the live-usage line below, and the threshold alerts, all on/off together.
+    # Same checkbox pattern as multi-workspace (sidecar folds over config).
+    um_on = core.usage_monitor_enabled()
+    um_set_script = bin_dir / "usage-monitor-set.sh"
+    print(
+        f"--{_t('menu.usage_monitor')} | "
+        "shell=/bin/bash "
+        f"param1={_swiftbar_quote(str(um_set_script))} "
+        f"param2={'off' if um_on else 'on'} "
+        f"checked={'true' if um_on else 'false'} "
+        "terminal=false refresh=true "
+        "sfimage=chart.line.uptrend.xyaxis"
+    )
+    _print_usage_line()
 
 
 # --------------------------------------------------------------------------- #

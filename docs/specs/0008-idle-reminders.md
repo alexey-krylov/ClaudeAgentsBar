@@ -44,16 +44,16 @@ Reminder *k* (k = 1, 2, …) is due once
 now - stop_ts >= interval * 2**(k-1)
 ```
 
-where `interval = notify_idle_interval_min` (default **20 min**) and
-`stop_ts` is when the session finished. So: 20, 40, 80, 160, … minutes.
+where `interval = notify_idle_interval_min` (default **30 min**) and
+`stop_ts` is when the session finished. So: 30, 60, 120, 240, … minutes.
 
 **The count is not a separate knob** — it's bounded by how long the row
 stays green. `_classify` auto-promotes 🟢 FRESH → 🔵 ACKNOWLEDGED after
 `fresh_sec` (default 60 min) even without a click, and `reconcile` only
 ever considers `RenderGroup.FRESH` sessions. With the defaults
-(interval 20, fresh 60) that yields **two** reminders, at 20 and 40 min
-(80 > 60 is past the green window). Raising `fresh_minutes` allows more;
-shortening `notify_idle_interval_min` fits more in.
+(interval 30, fresh 60) that yields **one** reminder, at 30 min (the
+60-min one lands right at the green-window edge). Raising `fresh_minutes`
+allows more; shortening `notify_idle_interval_min` fits more in.
 
 A click (or *Tools → Acknowledge all*) moves the session out of the green
 group, ending the schedule. A new finished turn gives a fresh `stop_ts`,
@@ -66,7 +66,7 @@ on/off switch:
 
 | Value | Effect |
 |---|---|
-| absent | default 20 — feature **on** |
+| absent | default 30 — feature **on** |
 | `> 0` | base interval in minutes |
 | `0` / `null` / negative | feature **off** |
 

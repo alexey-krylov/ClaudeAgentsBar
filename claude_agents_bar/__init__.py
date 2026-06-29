@@ -38,6 +38,7 @@ from . import (
     render,
     sidecars,
     usage_alerts,
+    usage_monitor,
 )
 
 # --- Re-exports from .core -------------------------------------------------- #
@@ -154,7 +155,9 @@ from .doctor import (
     _doctor_check_swiftbar_plugin,
     _doctor_check_terminal_notifier,
     _doctor_check_tsv_freshness,
+    _doctor_check_usage_monitor,
     _has_agent_state_hook,
+    _onboarding_preseeded,
     _run_doctor,
 )
 
@@ -223,6 +226,23 @@ def main() -> int:
             core._warn(f"notify_audio: refusing invalid value {arg!r}")
             return 1
         return core.write_notify_audio_mode(arg == "on")
+    if len(sys.argv) > 1 and sys.argv[1] == "--usage-monitor":
+        arg = sys.argv[2] if len(sys.argv) > 2 else ""
+        if arg not in ("on", "off"):
+            core._warn(f"usage_monitor: refusing invalid value {arg!r}")
+            return 1
+        rc = core.write_usage_monitor_mode(arg)
+        if rc == 0:
+            # Reconcile immediately so toggling *on* spawns the background
+            # session (and *off* kills it) without waiting for the next tick.
+            try:
+                usage_monitor.reconcile(int(time.time()))
+            except Exception as exc:
+                core._warn(f"usage_monitor: post-set reconcile failed: {exc}")
+        return rc
+    if len(sys.argv) > 1 and sys.argv[1] == "--usage-monitor-shutdown":
+        usage_monitor.shutdown()
+        return 0
     try:
         now = int(time.time())
         sessions = render.collect_sessions(now)
@@ -249,6 +269,13 @@ def main() -> int:
             usage_alerts.reconcile(now)
         except Exception as exc:
             core._warn(f"usage_alerts: reconcile failed: {exc}")
+        # Usage monitor rides the same tick: keep the background claude session
+        # in line with the master switch and ping it on schedule. Same
+        # crash-isolation. See :mod:`usage_monitor`.
+        try:
+            usage_monitor.reconcile(now)
+        except Exception as exc:
+            core._warn(f"usage_monitor: reconcile failed: {exc}")
     except Exception as exc:
         # Catch-all so SwiftBar never sees a Python traceback in the menu.
         print("⚠️ | color=red")

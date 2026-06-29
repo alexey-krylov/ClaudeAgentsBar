@@ -5,33 +5,63 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
-## Unreleased
+## 1.3.0 — 2026-06-29
+
+> **After `brew upgrade`, run `claude-agents-bar setup` once** to enable the
+> usage monitor — it wires the status-line sensor, the `refreshInterval`, and a
+> trusted work folder into `~/.claude` (things a plain upgrade doesn't touch).
+> Existing features keep working without it.
 
 ### Added
 
-- **Subscription usage alerts + a live usage line.** ClaudeAgentsBar now
-  tracks the Claude.ai subscription's rolling 5-hour usage window. You get a
-  one-shot notification (chime + spoken phrase + banner) when it first crosses
-  50/60/70/80/90 % — *"Session limit at N%"* — and a distinct final alert at
-  95 %. Each threshold fires once per window; a fresh window alerts from 50 %
-  again, and a jump across several thresholds collapses to a single banner.
-  A grey, always-on line under *Tools → Stats today* shows the live usage —
-  `Session: 63% · 2h48m · Week: 7%/69.5%`. Off via `notify_on_usage: false`;
-  the alerts honor quiet hours and *Banner only* like every other
-  notification.
+- **Subscription usage monitor — live 5-hour/weekly usage in the menu, with
+  alerts.** A new *Statistics* item in the main menu carries a grey, passive
+  line mirroring Claude Code's own USAGE view —
+  `Session: 24% · 2h · Week: 8% · 4d` — with the session/week percentages
+  turning **yellow past 60 %, red past 85 %**. You also get a one-shot
+  notification (chime + spoken phrase + banner) when the 5-hour window first
+  crosses 50/60/70/80/90 % — *"Session limit at N%"*, the 70 %+ ones quoting the
+  hours left — and a distinct critical alert at 95 %. Each threshold fires once
+  per window; a fresh window alerts from 50 % again; a jump across several
+  thresholds collapses to one banner. Alerts honor quiet hours and *Banner
+  only* and share the speech lock; silence them alone with
+  `notify_on_usage: false`.
 
-  The data (`rate_limits`) is exposed by Claude Code **only** on the
-  `statusLine` stdin, so `setup` wires a bundled sensor
-  (`hooks/usage-sensor.sh`) in as your `statusLine` that captures it and then
-  **chains** to whatever `statusLine` command you already had — your status
-  line still renders, and `teardown` restores your original. On API-key auth
-  there are no `rate_limits`, so the feature is silently inert. The weekly
-  pacing target (`/69.5%`) is a personal office-hours model computed in the
-  sensor — edit `WK_CUM` / `WEEK_TZ` / `WEEK_RESET_HOUR` at the top of
-  `hooks/usage-sensor.sh` to match your schedule. New knobs: `notify_on_usage`,
-  `notify_usage_phrase_threshold`, `notify_usage_phrase_critical`,
-  `notify_sound_usage`. See [spec 0011](./docs/specs/0011-usage-alerts.md) and
+  **How it works (and the catch).** Claude Code exposes the usage figures
+  (`rate_limits`) **only** to an interactive terminal status line — never to
+  `claude -p`, headless runs, or the VSCode extension. So the monitor holds a
+  **hidden background `claude` session** in a detached `screen` (no window, a
+  real TTY) and reads the usage off its status line via a bundled sensor. The
+  plugin watches that session on its tick and **recycles** it (kill + fresh
+  spawn) every 10 minutes — a fresh session's first response is what pulls
+  current usage from the server (account-wide, so it catches your VSCode work
+  too). It's **on by default and zero-config** (`setup` trusts the work
+  folder), but it runs a real (window-less) `claude` (Haiku) and spends a little
+  quota, so one click in *Statistics → Usage monitor* turns the whole thing off.
+  `teardown` reverses everything.
+
+  Because the `statusLine` is global, the sensor writes the sidecar **only for
+  the daemon's own session** (gated on its work-folder cwd) — otherwise an old
+  session reopened via resume, carrying a stale cached `rate_limits`, would
+  clobber the live number and the menu would flap. `setup` also pre-seeds the
+  `~/.claude.json` keys that gate Claude Code's first-run prompts
+  (`fullscreenUpsellSeenCount`, `hasCompletedOnboarding`) so the background
+  session doesn't hang on the *"Try the new fullscreen renderer?"* upsell, and
+  the monitor collapses any duplicate background sessions down to one.
+  `claude-agents-bar doctor` gained a `usage/` check that reports monitor health
+  and, if the background session is up but no data is arriving, names the fix.
+  New knobs: `usage_monitor`,
+  `usage_ping_interval_min`, `usage_ping_model`, `notify_on_usage`,
+  `notify_usage_title`, `notify_usage_phrase_threshold` /
+  `_threshold_reset` / `_critical`, `notify_sound_usage`. See
+  [spec 0011](./docs/specs/0011-usage-alerts.md) and
   [ADR-0018](./docs/adr/0018-usage-sensor-statusline-chain.md).
+
+### Changed
+
+- **Idle-reminder default is now 30 minutes** (was 20) — the first "look at
+  this" nudge for a finished-but-unread session fires after 30 min instead of
+  20. Override with `notify_idle_interval_min` (`0`/`null` to disable).
 
 ## 1.2.2 — 2026-06-15
 

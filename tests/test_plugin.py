@@ -1495,6 +1495,43 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"notify_on_usage": "false"})
         self.assertIs(config.notify_on_usage, True)
 
+    def test_usage_monitor_default_on(self):
+        self.assertEqual(plugin.Config().usage_monitor, "on")
+
+    def test_usage_monitor_accepts_on_off(self):
+        self.assertEqual(
+            plugin.Config._from_mapping({"usage_monitor": "on"}).usage_monitor,
+            "on",
+        )
+
+    def test_usage_monitor_rejects_unknown(self):
+        # Invalid → keep the default (now "on").
+        config = plugin.Config._from_mapping({"usage_monitor": "maybe"})
+        self.assertEqual(config.usage_monitor, "on")
+
+    def test_usage_ping_interval_default(self):
+        self.assertEqual(plugin.Config().usage_ping_interval_sec, 600)
+
+    def test_usage_ping_interval_minutes_to_seconds(self):
+        config = plugin.Config._from_mapping({"usage_ping_interval_min": 10})
+        self.assertEqual(config.usage_ping_interval_sec, 600)
+
+    def test_usage_ping_interval_sub_five_dropped(self):
+        # Below the 5-minute floor → keep default (10 min) with a warning.
+        config = plugin.Config._from_mapping({"usage_ping_interval_min": 2})
+        self.assertEqual(config.usage_ping_interval_sec, 600)
+
+    def test_usage_ping_model_default(self):
+        self.assertEqual(
+            plugin.Config().usage_ping_model, "claude-haiku-4-5-20251001"
+        )
+
+    def test_usage_ping_model_rejects_metacharacters(self):
+        # Goes into a shell command → a value with shell metacharacters drops
+        # to the default rather than risking injection.
+        config = plugin.Config._from_mapping({"usage_ping_model": "x; rm -rf /"})
+        self.assertEqual(config.usage_ping_model, "claude-haiku-4-5-20251001")
+
     def test_notify_summary_marker_default(self):
         self.assertEqual(plugin.Config().notify_summary_marker, "-- ")
 
@@ -1978,6 +2015,77 @@ class TestDoctorChecks(unittest.TestCase):
         with patch.object(plugin.core, "SIDECAR_PATH", missing):
             status, _ = plugin._doctor_check_tsv_freshness(int(time.time()))
         self.assertEqual(status, "warn")
+
+    # --- usage-monitor health (problem A: onboarding hang) --------------- #
+
+    def _check_usage(self, *, enabled=True, sessions=None, usage=None,
+                     preseeded=True, now=None):
+        if now is None:
+            now = int(time.time())
+        if sessions is None:
+            sessions = ["1.cab-usage-mon"]
+        with patch.object(plugin.core, "usage_monitor_enabled", return_value=enabled), \
+             patch.object(plugin.usage_monitor, "_live_sessions", return_value=sessions), \
+             patch.object(plugin.sidecars, "read_usage", return_value=usage), \
+             patch.object(plugin.doctor, "_onboarding_preseeded", return_value=preseeded):
+            return plugin._doctor_check_usage_monitor(now)
+
+    def test_usage_off_is_ok(self):
+        status, _ = self._check_usage(enabled=False)
+        self.assertEqual(status, "ok")
+
+    def test_usage_no_daemon_is_warn(self):
+        status, _ = self._check_usage(sessions=[])
+        self.assertEqual(status, "warn")
+
+    def test_usage_duplicates_is_warn(self):
+        status, msg = self._check_usage(
+            sessions=["1.cab-usage-mon", "2.cab-usage-mon"])
+        self.assertEqual(status, "warn")
+        self.assertIn("duplicate", msg)
+
+    def test_usage_live_is_ok(self):
+        now = int(time.time())
+        usage = plugin.core.Usage(now, 42, now + 3600, 7, now + 86400)
+        status, msg = self._check_usage(usage=usage, now=now)
+        self.assertEqual(status, "ok")
+        self.assertIn("42", msg)
+
+    def test_usage_daemon_up_no_data_unseeded_points_at_setup(self):
+        # The onboarding-hang signature → hard error naming the fix.
+        status, msg = self._check_usage(usage=None, preseeded=False)
+        self.assertEqual(status, "err")
+        self.assertIn("setup", msg)
+
+    def test_usage_daemon_up_no_data_seeded_is_warn(self):
+        status, msg = self._check_usage(usage=None, preseeded=True)
+        self.assertEqual(status, "warn")
+        self.assertIn("screen -r", msg)
+
+    def test_usage_stale_snapshot_treated_as_no_data(self):
+        now = int(time.time())
+        stale = plugin.core.Usage(now - 10_000, 42, now, 7, now)  # > 2*interval
+        with patch.object(plugin.core, "CONFIG", plugin.Config(usage_ping_interval_sec=300)):
+            status, _ = self._check_usage(usage=stale, preseeded=False, now=now)
+        self.assertEqual(status, "err")
+
+    def test_onboarding_preseeded_true_when_keys_set(self):
+        j = self.tmpdir / ".claude.json"
+        j.write_text('{"fullscreenUpsellSeenCount":99,"hasCompletedOnboarding":true}',
+                     encoding="utf-8")
+        with patch.object(plugin.doctor.Path, "home", return_value=self.tmpdir):
+            self.assertTrue(plugin._onboarding_preseeded())
+
+    def test_onboarding_preseeded_false_when_count_low(self):
+        j = self.tmpdir / ".claude.json"
+        j.write_text('{"fullscreenUpsellSeenCount":1,"hasCompletedOnboarding":true}',
+                     encoding="utf-8")
+        with patch.object(plugin.doctor.Path, "home", return_value=self.tmpdir):
+            self.assertFalse(plugin._onboarding_preseeded())
+
+    def test_onboarding_preseeded_false_when_file_absent(self):
+        with patch.object(plugin.doctor.Path, "home", return_value=self.tmpdir):
+            self.assertFalse(plugin._onboarding_preseeded())
 
     def test_hook_registration_all_present_ok(self):
         settings = self.tmpdir / ".claude" / "settings.json"
@@ -3510,8 +3618,8 @@ class TestIdleReminderConfig(unittest.TestCase):
     clamps to off instead of scheduling a reminder in the past.
     """
 
-    def test_default_enabled_at_twenty_minutes(self):
-        self.assertEqual(plugin.Config().notify_idle_interval_sec, 20 * 60)
+    def test_default_enabled_at_thirty_minutes(self):
+        self.assertEqual(plugin.Config().notify_idle_interval_sec, 30 * 60)
 
     def test_minutes_to_seconds(self):
         config = plugin.Config._from_mapping({"notify_idle_interval_min": 30})
@@ -3537,7 +3645,7 @@ class TestIdleReminderConfig(unittest.TestCase):
         config = plugin.Config._from_mapping(
             {"notify_idle_interval_min": "soon"}
         )
-        self.assertEqual(config.notify_idle_interval_sec, 20 * 60)
+        self.assertEqual(config.notify_idle_interval_sec, 30 * 60)
 
     def test_bool_keeps_default(self):
         # JSON ``true`` is a bool (subclass of int) — a config mistake, not
@@ -3545,11 +3653,11 @@ class TestIdleReminderConfig(unittest.TestCase):
         config = plugin.Config._from_mapping(
             {"notify_idle_interval_min": True}
         )
-        self.assertEqual(config.notify_idle_interval_sec, 20 * 60)
+        self.assertEqual(config.notify_idle_interval_sec, 30 * 60)
 
     def test_absent_keeps_default(self):
         config = plugin.Config._from_mapping({"window_minutes": 60})
-        self.assertEqual(config.notify_idle_interval_sec, 20 * 60)
+        self.assertEqual(config.notify_idle_interval_sec, 30 * 60)
 
 
 class TestUseSessionTitlesConfig(unittest.TestCase):
@@ -3787,24 +3895,24 @@ class TestUsageSidecars(unittest.TestCase):
         self.assertIsNone(plugin.read_usage())
 
     def test_read_usage_valid_row(self):
-        self.usage.write_text("1700\t63\t9999999999\t7\t69.5\n", encoding="utf-8")
+        self.usage.write_text("1700\t63\t9999999999\t7\t8888888888\n", encoding="utf-8")
         u = plugin.read_usage()
         self.assertEqual(u.record_ts, 1700)
         self.assertEqual(u.five_used, 63)
         self.assertEqual(u.five_resets_at, "9999999999")
         self.assertEqual(u.seven_used, 7)
-        self.assertEqual(u.seven_target, "69.5")
+        self.assertEqual(u.seven_resets_at, "8888888888")
 
     def test_read_usage_too_few_columns_is_none(self):
         self.usage.write_text("1700\t63\t9999999999\t7\n", encoding="utf-8")
         self.assertIsNone(plugin.read_usage())
 
     def test_read_usage_non_numeric_is_none(self):
-        self.usage.write_text("1700\tNaNpercent\t9999999999\t7\t69.5\n", encoding="utf-8")
+        self.usage.write_text("1700\tNaNpercent\t9999999999\t7\t8888888888\n", encoding="utf-8")
         self.assertIsNone(plugin.read_usage())
 
     def test_read_usage_non_numeric_resets_is_none(self):
-        self.usage.write_text("1700\t63\tlater\t7\t69.5\n", encoding="utf-8")
+        self.usage.write_text("1700\t63\tlater\t7\t8888888888\n", encoding="utf-8")
         self.assertIsNone(plugin.read_usage())
 
     def test_read_usage_empty_file_is_none(self):
@@ -3848,11 +3956,15 @@ class TestUsageAlertsReconcile(unittest.TestCase):
         alerts = self._tmpdir / "agent-state.usage-alerts"
         self._orig_alerts = plugin.core.USAGE_ALERTS_PATH
         self._orig_alerts_lock = plugin.core._USAGE_ALERTS_LOCK_DIR
+        self._orig_mode = plugin.core.USAGE_MONITOR_MODE_PATH
         self._orig_config = plugin.core.CONFIG
         plugin.core.USAGE_ALERTS_PATH = alerts
         plugin.core._USAGE_ALERTS_LOCK_DIR = alerts.with_suffix(
             alerts.suffix + ".lock.d"
         )
+        # Redirect the monitor-mode sidecar to an absent tmp path so the master
+        # gate falls through to CONFIG.usage_monitor (set per-test).
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._tmpdir / "usage-monitor.mode"
         self.alerts = alerts
         self.now = 1_700_000_000
         # a window that hasn't expired yet
@@ -3862,11 +3974,23 @@ class TestUsageAlertsReconcile(unittest.TestCase):
         import shutil
         plugin.core.USAGE_ALERTS_PATH = self._orig_alerts
         plugin.core._USAGE_ALERTS_LOCK_DIR = self._orig_alerts_lock
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._orig_mode
         plugin.core.CONFIG = self._orig_config
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _set_on(self, on=True):
-        plugin.core.CONFIG = plugin.Config(notify_on_usage=on)
+        # Master on; ``on`` toggles the notify_on_usage sub-flag.
+        plugin.core.CONFIG = plugin.Config(
+            usage_monitor="on", notify_on_usage=on
+        )
+
+    def test_master_off_does_nothing(self):
+        plugin.core.CONFIG = plugin.Config(
+            usage_monitor="off", notify_on_usage=True
+        )
+        fired = self._run(self._usage(72))
+        self.assertEqual(fired, [])
+        self.assertFalse(self.alerts.exists())
 
     def _usage(self, five_used, resets_at=None):
         return plugin.core.Usage(
@@ -3874,14 +3998,14 @@ class TestUsageAlertsReconcile(unittest.TestCase):
             five_used=five_used,
             five_resets_at=resets_at or self.window,
             seven_used=7,
-            seven_target="69.5",
+            seven_resets_at=str(self.now + 345600),
         )
 
     def _run(self, usage):
         fired = []
         with patch.object(
             plugin.usage_alerts, "_fire",
-            side_effect=lambda pct, kind: fired.append((pct, kind)),
+            side_effect=lambda pct, kind, reset_secs: fired.append((pct, kind)),
         ), patch.object(plugin.sidecars, "read_usage", return_value=usage):
             plugin.usage_alerts.reconcile(self.now)
         return fired
@@ -3960,11 +4084,19 @@ class TestUsageRenderLine(unittest.TestCase):
         self._tmpdir = Path(tempfile.mkdtemp())
         self.usage = self._tmpdir / "agent-state.usage"
         self._orig_usage = plugin.core.USAGE_PATH
+        self._orig_mode = plugin.core.USAGE_MONITOR_MODE_PATH
+        self._orig_config = plugin.core.CONFIG
         plugin.core.USAGE_PATH = self.usage
+        # Master on by default for these tests (the line is gated on it); the
+        # mode sidecar points at an absent path so it falls through to CONFIG.
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._tmpdir / "usage-monitor.mode"
+        plugin.core.CONFIG = plugin.Config(usage_monitor="on")
 
     def tearDown(self):
         import shutil
         plugin.core.USAGE_PATH = self._orig_usage
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._orig_mode
+        plugin.core.CONFIG = self._orig_config
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _capture(self):
@@ -3975,13 +4107,41 @@ class TestUsageRenderLine(unittest.TestCase):
             plugin.render._print_usage_line()
         return buf.getvalue()
 
+    def test_master_off_prints_nothing(self):
+        # Even with a fresh snapshot, monitor off → no line.
+        plugin.core.CONFIG = plugin.Config(usage_monitor="off")
+        future = int(time.time()) + 10080
+        self.usage.write_text(
+            f"{int(time.time())}\t63\t{future}\t7\t{future}\n", encoding="utf-8"
+        )
+        self.assertEqual(self._capture(), "")
+
+    def test_stale_record_ts_prints_nothing(self):
+        # record_ts far in the past (background session died) → hidden even
+        # though the window itself hasn't expired.
+        now = int(time.time())
+        self.usage.write_text(
+            f"{now - 100000}\t63\t{now + 10080}\t7\t{now + 10080}\n", encoding="utf-8"
+        )
+        self.assertEqual(self._capture(), "")
+
+    def test_colored_numbers(self):
+        now = int(time.time())
+        self.usage.write_text(
+            f"{now}\t72\t{now + 10080}\t90\t{now + 10080}\n", encoding="utf-8"
+        )
+        out = self._capture()
+        self.assertIn("ansi=true", out)
+        self.assertIn(plugin.core._ANSI_WORKING, out)  # 72 → yellow
+        self.assertIn(plugin.core._ANSI_WAITING, out)  # 90 → red
+
     def test_no_snapshot_prints_nothing(self):
         self.assertEqual(self._capture(), "")
 
     def test_expired_window_prints_nothing(self):
         # resets_at in the past → stale, hidden
         self.usage.write_text(
-            f"{int(time.time())}\t63\t{int(time.time()) - 10}\t7\t69.5\n",
+            f"{int(time.time())}\t63\t{int(time.time()) - 10}\t7\t{int(time.time()) + 99999}\n",
             encoding="utf-8",
         )
         self.assertEqual(self._capture(), "")
@@ -3989,18 +4149,200 @@ class TestUsageRenderLine(unittest.TestCase):
     def test_snapshot_prints_grey_line(self):
         future = int(time.time()) + 10080  # ~2h48m
         self.usage.write_text(
-            f"{int(time.time())}\t63\t{future}\t7\t69.5\n", encoding="utf-8"
+            f"{int(time.time())}\t63\t{future}\t7\t{future}\n", encoding="utf-8"
         )
         out = self._capture()
-        # grey, inactive, indented Tools line carrying the substituted values
+        # grey, passive Tools sub-item ("--" prefix — a top-level line would get
+        # a SwiftBar refresh/about submenu; this is just text)
         self.assertTrue(out.startswith("--"))
         self.assertIn("color=#999999", out)
         self.assertIn("63", out)   # session %
         self.assertIn("7", out)    # weekly %
-        self.assertIn("69.5", out)  # weekly target
+        # weekly reset time present (future → non-empty); no pacing target
+        self.assertNotIn("/", out.split(" | ", 1)[0])  # no "wk%/target%" form
         # the visual separator must NOT be a bare pipe (would break SwiftBar)
         label = out.split(" | ", 1)[0]
         self.assertNotIn(" | ", label)
+
+    def test_until_rounds_to_whole_hours_half_up(self):
+        f = plugin.render._format_until
+        self.assertEqual(f(2 * 3600 + 29 * 60, "en"), "2h")   # 2:29 → 2h
+        self.assertEqual(f(2 * 3600 + 30 * 60, "en"), "3h")   # 2:30 → 3h
+        self.assertEqual(f(2 * 3600 + 55 * 60, "en"), "3h")
+        self.assertEqual(f(42 * 60, "en"), "1h")              # 0:42 → 1h
+        self.assertEqual(f(4 * 60, "en"), "1h")               # floored at 1h
+        self.assertEqual(f(0, "en"), "")
+        self.assertEqual(f(4 * 86400, "en"), "4d")            # whole days
+        self.assertEqual(f(2 * 3600 + 30 * 60, "ru"), "3ч")   # localized
+
+
+class TestUsageMonitorMode(unittest.TestCase):
+    """Sidecar-override + write for the usage-monitor master switch."""
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        self._orig_path = plugin.core.USAGE_MONITOR_MODE_PATH
+        self._orig_config = plugin.core.CONFIG
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._tmpdir / "mode"
+        self.path = plugin.core.USAGE_MONITOR_MODE_PATH
+
+    def tearDown(self):
+        import shutil
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._orig_path
+        plugin.core.CONFIG = self._orig_config
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_sidecar_on_beats_config_off(self):
+        plugin.core.CONFIG = plugin.Config(usage_monitor="off")
+        self.path.write_text("on\n", encoding="utf-8")
+        self.assertEqual(plugin.core.usage_monitor_mode(), "on")
+        self.assertTrue(plugin.core.usage_monitor_enabled())
+
+    def test_absent_falls_back_to_config(self):
+        plugin.core.CONFIG = plugin.Config(usage_monitor="on")
+        self.assertEqual(plugin.core.usage_monitor_mode(), "on")
+
+    def test_garbage_falls_back_to_config(self):
+        plugin.core.CONFIG = plugin.Config(usage_monitor="off")
+        self.path.write_text("wat\n", encoding="utf-8")
+        self.assertEqual(plugin.core.usage_monitor_mode(), "off")
+
+    def test_write_round_trip(self):
+        self.assertEqual(plugin.core.write_usage_monitor_mode("on"), 0)
+        self.assertEqual(self.path.read_text(encoding="utf-8").strip(), "on")
+
+    def test_write_rejects_invalid(self):
+        self.assertEqual(plugin.core.write_usage_monitor_mode("bogus"), 1)
+        self.assertFalse(self.path.exists())
+
+
+class TestUsageMonitorReconcile(unittest.TestCase):
+    """Lifecycle decisions in :func:`usage_monitor.reconcile` — spawn/kill/ping
+    are patched out so only the state machine is exercised."""
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        self._orig_ping = plugin.core.USAGE_MONITOR_PING_PATH
+        self._orig_mode = plugin.core.USAGE_MONITOR_MODE_PATH
+        self._orig_config = plugin.core.CONFIG
+        plugin.core.USAGE_MONITOR_PING_PATH = self._tmpdir / "ping"
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._tmpdir / "mode"
+        self.now = 1_700_000_000
+
+    def tearDown(self):
+        import shutil
+        plugin.core.USAGE_MONITOR_PING_PATH = self._orig_ping
+        plugin.core.USAGE_MONITOR_MODE_PATH = self._orig_mode
+        plugin.core.CONFIG = self._orig_config
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _set_mode(self, mode):
+        plugin.core.CONFIG = plugin.Config(
+            usage_monitor=mode, usage_ping_interval_sec=300
+        )
+
+    def _run(self, sessions):
+        calls = {"spawn": 0, "kill": 0}
+        with patch.object(plugin.usage_monitor, "_live_sessions", return_value=sessions), \
+             patch.object(plugin.usage_monitor, "_spawn",
+                          side_effect=lambda: calls.__setitem__("spawn", calls["spawn"] + 1)), \
+             patch.object(plugin.usage_monitor, "_kill",
+                          side_effect=lambda *a, **k: calls.__setitem__("kill", calls["kill"] + 1)):
+            plugin.usage_monitor.reconcile(self.now)
+        return calls
+
+    _ONE = ["34777.cab-usage-mon"]
+    _TWO = ["34777.cab-usage-mon", "34778.cab-usage-mon"]
+
+    def test_off_alive_kills(self):
+        self._set_mode("off")
+        calls = self._run(self._ONE)
+        self.assertEqual(calls["kill"], 1)
+        self.assertEqual(calls["spawn"], 0)
+
+    def test_off_dead_noop(self):
+        self._set_mode("off")
+        calls = self._run([])
+        self.assertEqual(calls, {"spawn": 0, "kill": 0})
+
+    def test_off_duplicates_killed(self):
+        self._set_mode("off")
+        calls = self._run(self._TWO)
+        self.assertEqual(calls["kill"], 1)   # _kill(sessions) → one call, all tokens
+        self.assertEqual(calls["spawn"], 0)
+
+    def test_on_dead_spawns_and_stamps(self):
+        self._set_mode("on")
+        calls = self._run([])
+        self.assertEqual(calls["spawn"], 1)
+        self.assertEqual(calls["kill"], 0)
+        self.assertEqual(plugin.usage_monitor._read_ping(), self.now)
+
+    def test_on_alive_within_interval_noop(self):
+        self._set_mode("on")
+        plugin.usage_monitor._write_ping(self.now - 100)  # < 300s ago
+        calls = self._run(self._ONE)
+        self.assertEqual(calls, {"spawn": 0, "kill": 0})
+
+    def test_on_alive_past_interval_recycles(self):
+        # A long-lived session goes stale, so on the interval we recycle it
+        # (kill + respawn) rather than ping — that forces fresh rate_limits.
+        self._set_mode("on")
+        plugin.usage_monitor._write_ping(self.now - 400)  # >= 300s ago
+        calls = self._run(self._ONE)
+        self.assertEqual(calls["kill"], 1)
+        self.assertEqual(calls["spawn"], 1)
+        self.assertEqual(plugin.usage_monitor._read_ping(), self.now)
+
+    def test_on_duplicates_collapse_regardless_of_interval(self):
+        # Leaked duplicates collapse to one fresh session even well within the
+        # recycle interval — they burn quota, so don't wait.
+        self._set_mode("on")
+        plugin.usage_monitor._write_ping(self.now - 1)  # freshly stamped
+        calls = self._run(self._TWO)
+        self.assertEqual(calls["kill"], 1)
+        self.assertEqual(calls["spawn"], 1)
+        self.assertEqual(plugin.usage_monitor._read_ping(), self.now)
+
+
+class TestScreenSessionParser(unittest.TestCase):
+    """`screen -ls` output parsing for usage-monitor liveness + dedup."""
+
+    def test_session_present(self):
+        out = (
+            "There is a screen on:\n"
+            "\t34777.cab-usage-mon\t(Detached)\n"
+            "1 Socket in /tmp/screens.\n"
+        )
+        self.assertEqual(
+            plugin.usage_monitor._session_tokens(out, "cab-usage-mon"),
+            ["34777.cab-usage-mon"],
+        )
+
+    def test_no_sessions(self):
+        out = "No Sockets found in /tmp/screens.\n"
+        self.assertEqual(
+            plugin.usage_monitor._session_tokens(out, "cab-usage-mon"), []
+        )
+
+    def test_similar_name_not_matched(self):
+        out = "\t999.cab-usage-mon-2\t(Detached)\n"
+        self.assertEqual(
+            plugin.usage_monitor._session_tokens(out, "cab-usage-mon"), []
+        )
+
+    def test_duplicates_all_returned(self):
+        out = (
+            "There are screens on:\n"
+            "\t37614.cab-usage-mon\t(Detached)\n"
+            "\t30473.cab-usage-mon\t(Detached)\n"
+            "\t27581.cab-usage-mon\t(Detached)\n"
+            "3 Sockets in /tmp/screens.\n"
+        )
+        self.assertEqual(
+            plugin.usage_monitor._session_tokens(out, "cab-usage-mon"),
+            ["37614.cab-usage-mon", "30473.cab-usage-mon", "27581.cab-usage-mon"],
+        )
 
 
 if __name__ == "__main__":
