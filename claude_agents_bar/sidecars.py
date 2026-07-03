@@ -372,14 +372,22 @@ def _forget_lock(timeout_sec: float = 2.0):
 
 
 def _idle_reminders_lock(timeout_sec: float = 2.0):
-    """Mutex on ``agent-state.idle-reminders``. Only the plugin tick writes
-    it, but overlapping ticks could race, so the rewrite is serialised."""
+    """Mutex on ``agent-state.idle-reminders``. Only the plugin tick writes it,
+    but SwiftBar runs the plugin concurrently (scheduled tick + hook-fired
+    ``refreshallplugins``). :func:`idle_reminders.reconcile` holds this across
+    the whole read→decide→fire→write so two ticks can't fire the same reminder
+    twice; :func:`_write_idle_reminders_locked` is the reentrancy-safe write it
+    uses inside."""
     return _mkdir_lock(core._IDLE_REMINDERS_LOCK_DIR, timeout_sec)
 
 
 def _usage_alerts_lock(timeout_sec: float = 2.0):
     """Mutex on ``agent-state.usage-alerts``. Only the plugin tick writes it,
-    but overlapping ticks could race, so the rewrite is serialised."""
+    but SwiftBar runs the plugin concurrently (scheduled tick + hook-fired
+    ``refreshallplugins``). :func:`usage_alerts.reconcile` holds this across the
+    whole read→decide→fire→write so two ticks can't fire the same threshold
+    twice; :func:`_write_usage_alerts_locked` is the reentrancy-safe write it
+    uses inside."""
     return _mkdir_lock(core._USAGE_ALERTS_LOCK_DIR, timeout_sec)
 
 
@@ -583,6 +591,20 @@ def write_idle_reminders(state: dict[str, tuple[int, int]]) -> None:
     machine leaves no sidecar behind. Best-effort: any OSError is logged
     and swallowed so a write failure never takes the menu down.
     """
+    with _idle_reminders_lock():
+        _write_idle_reminders_locked(state)
+
+
+def _write_idle_reminders_locked(state: dict[str, tuple[int, int]]) -> None:
+    """Body of :func:`write_idle_reminders` **without** acquiring the lock.
+
+    :func:`idle_reminders.reconcile` holds :func:`_idle_reminders_lock` across
+    the whole read→decide→fire→write so two overlapping SwiftBar ticks can't
+    both observe the same ``fired`` count for a 🟢 session and fire the same
+    reminder twice (a double banner + double speech). The mkdir lock is not
+    reentrant, so that caller writes through this unlocked variant rather than
+    :func:`write_idle_reminders`.
+    """
     if not state:
         try:
             core.IDLE_REMINDERS_PATH.unlink()
@@ -590,20 +612,19 @@ def write_idle_reminders(state: dict[str, tuple[int, int]]) -> None:
             pass
         return
     lines = [f"{sid}\t{stop_ts}\t{fired}" for sid, (stop_ts, fired) in state.items()]
-    with _idle_reminders_lock():
-        tmp = core.IDLE_REMINDERS_PATH.with_suffix(
-            core.IDLE_REMINDERS_PATH.suffix + f".{os.getpid()}.tmp"
-        )
+    tmp = core.IDLE_REMINDERS_PATH.with_suffix(
+        core.IDLE_REMINDERS_PATH.suffix + f".{os.getpid()}.tmp"
+    )
+    try:
+        core.IDLE_REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp.replace(core.IDLE_REMINDERS_PATH)
+    except OSError as exc:
+        _warn(f"idle-reminders write failed: {exc}")
         try:
-            core.IDLE_REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            tmp.replace(core.IDLE_REMINDERS_PATH)
-        except OSError as exc:
-            _warn(f"idle-reminders write failed: {exc}")
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def read_usage() -> core.Usage | None:
@@ -679,6 +700,20 @@ def write_usage_alerts(state: tuple[str, int] | None) -> None:
     Best-effort: any OSError is logged and swallowed so a write failure never
     takes the menu down.
     """
+    with _usage_alerts_lock():
+        _write_usage_alerts_locked(state)
+
+
+def _write_usage_alerts_locked(state: tuple[str, int] | None) -> None:
+    """Body of :func:`write_usage_alerts` **without** acquiring the lock.
+
+    :func:`usage_alerts.reconcile` holds :func:`_usage_alerts_lock` across the
+    whole read→decide→fire→write so two overlapping SwiftBar ticks can't both
+    observe the same ``max_threshold_fired`` and fire the same threshold twice
+    (the double-banner / double-speech bug). Because the mkdir lock is not
+    reentrant, that caller writes through this unlocked variant rather than
+    :func:`write_usage_alerts`.
+    """
     if state is None:
         try:
             core.USAGE_ALERTS_PATH.unlink()
@@ -686,20 +721,19 @@ def write_usage_alerts(state: tuple[str, int] | None) -> None:
             pass
         return
     window_key, max_fired = state
-    with _usage_alerts_lock():
-        tmp = core.USAGE_ALERTS_PATH.with_suffix(
-            core.USAGE_ALERTS_PATH.suffix + f".{os.getpid()}.tmp"
-        )
+    tmp = core.USAGE_ALERTS_PATH.with_suffix(
+        core.USAGE_ALERTS_PATH.suffix + f".{os.getpid()}.tmp"
+    )
+    try:
+        core.USAGE_ALERTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(f"{window_key}\t{max_fired}\n", encoding="utf-8")
+        tmp.replace(core.USAGE_ALERTS_PATH)
+    except OSError as exc:
+        _warn(f"usage-alerts write failed: {exc}")
         try:
-            core.USAGE_ALERTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(f"{window_key}\t{max_fired}\n", encoding="utf-8")
-            tmp.replace(core.USAGE_ALERTS_PATH)
-        except OSError as exc:
-            _warn(f"usage-alerts write failed: {exc}")
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def ack_fresh(now: int) -> int:

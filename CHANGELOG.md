@@ -5,6 +5,21 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## Unreleased
+
+### Fixed
+
+- **Duplicate notifications from overlapping ticks.** SwiftBar runs the plugin
+  concurrently — the scheduled 5-second tick plus any
+  `swiftbar://refreshallplugins` a hook or menu action fires — so two ticks
+  could overlap. The usage-alert and idle-reminder reconcilers read their
+  progress sidecar, decided to fire, and wrote back in three separate steps with
+  the lock guarding only the write, so two overlapping ticks could both observe
+  the same counter and fire the same alert twice (a double banner + double
+  speech — e.g. *"Session limit at 53%"* spoken back-to-back). Both reconcilers
+  now hold the sidecar lock across the whole read→decide→fire→write, so the
+  second tick observes the first's write and stays quiet.
+
 ## 1.3.0 — 2026-06-29
 
 > **After `brew upgrade`, run `claude-agents-bar setup` once** to enable the

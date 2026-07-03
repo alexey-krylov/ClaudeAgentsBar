@@ -93,19 +93,28 @@ def reconcile(now: int) -> None:
     pct = usage.five_used
     window = usage.five_resets_at
 
-    prev = sidecars.read_usage_alerts()
-    max_fired = prev[1] if (prev is not None and prev[0] == window) else 0
+    # Hold the sidecar lock across the whole read→decide→fire→write. SwiftBar
+    # runs the plugin concurrently — the scheduled 5-s tick plus any
+    # ``swiftbar://refreshallplugins`` fired by a hook or a menu action — so
+    # without this two ticks could both read the same ``max_fired``, both cross
+    # the same threshold, and fire the same alert twice (a double banner +
+    # double "you've hit N%" speech). Serialising the section makes the second
+    # tick observe the first's write and stay quiet. Reads/writes inside use
+    # the unlocked helpers because the mkdir lock is not reentrant.
+    with sidecars._usage_alerts_lock():
+        prev = sidecars.read_usage_alerts()
+        max_fired = prev[1] if (prev is not None and prev[0] == window) else 0
 
-    crossed = [t for t in (*_THRESHOLDS, _CRITICAL) if pct >= t and t > max_fired]
-    if not crossed:
-        # Nothing new to announce. Still persist the window rollover (so a new
-        # window starts from a 0 counter) — but only when the stored state has
-        # actually changed, to avoid a needless write every tick.
-        if prev != (window, max_fired):
-            sidecars.write_usage_alerts((window, max_fired))
-        return
+        crossed = [t for t in (*_THRESHOLDS, _CRITICAL) if pct >= t and t > max_fired]
+        if not crossed:
+            # Nothing new to announce. Still persist the window rollover (so a
+            # new window starts from a 0 counter) — but only when the stored
+            # state has actually changed, to avoid a needless write every tick.
+            if prev != (window, max_fired):
+                sidecars._write_usage_alerts_locked((window, max_fired))
+            return
 
-    top = max(crossed)  # collapse a multi-threshold catch-up into one alert.
-    reset_secs = max(0, int(usage.five_resets_at) - now)
-    _fire(pct, "B" if top >= _CRITICAL else "A", reset_secs)
-    sidecars.write_usage_alerts((window, top))
+        top = max(crossed)  # collapse a multi-threshold catch-up into one alert.
+        reset_secs = max(0, int(usage.five_resets_at) - now)
+        _fire(pct, "B" if top >= _CRITICAL else "A", reset_secs)
+        sidecars._write_usage_alerts_locked((window, top))

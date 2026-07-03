@@ -229,6 +229,27 @@ class TestUsageAlertsReconcile(unittest.TestCase):
         self.assertEqual(fired, [])
         self.assertEqual(plugin.read_usage_alerts(), (self.window, 0))
 
+    def test_fire_and_write_happen_under_lock(self):
+        # Regression: SwiftBar runs the plugin concurrently (scheduled tick +
+        # hook-fired refreshallplugins). If the read→decide→fire→write section
+        # weren't serialised, two ticks could both read max_fired=0, both cross
+        # 50, and both fire — a double banner + double "you've hit N%" speech.
+        # reconcile now holds _usage_alerts_lock across the whole section, so at
+        # the moment _fire runs the lock dir exists — a second tick would block
+        # on it and, once it acquired the lock, observe the persisted counter
+        # and stay quiet.
+        self._set_on(True)
+        lock_dir = plugin.core._USAGE_ALERTS_LOCK_DIR
+        held = []
+        with patch.object(
+            plugin.usage_alerts, "_fire",
+            side_effect=lambda pct, kind, reset_secs: held.append(lock_dir.exists()),
+        ), patch.object(plugin.sidecars, "read_usage", return_value=self._usage(52)):
+            plugin.usage_alerts.reconcile(self.now)
+        self.assertEqual(held, [True])          # fired while the lock was held
+        self.assertFalse(lock_dir.exists())     # and released it afterwards
+        self.assertEqual(plugin.read_usage_alerts(), (self.window, 50))
+
 
 
 class TestUsageRenderLine(unittest.TestCase):

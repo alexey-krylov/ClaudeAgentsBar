@@ -81,35 +81,45 @@ def reconcile(sessions: Iterable[Session], now: int) -> None:
         # be overwritten the moment the user re-enables the feature.
         return
 
-    previous = sidecars.read_idle_reminders()
-    updated: dict[str, tuple[int, int]] = {}
+    # Hold the sidecar lock across the whole read→decide→fire→write. SwiftBar
+    # runs the plugin concurrently — the scheduled 5-s tick plus any
+    # ``swiftbar://refreshallplugins`` fired by a hook or a menu action — so
+    # without this two ticks could both read the same ``fired`` count for a 🟢
+    # session, both cross its next threshold, and fire the same reminder twice
+    # (a double banner + double speech). Serialising the section makes the
+    # second tick observe the first's write and stay quiet. Reads/writes inside
+    # use the unlocked helpers because the mkdir lock is not reentrant.
+    with sidecars._idle_reminders_lock():
+        previous = sidecars.read_idle_reminders()
+        updated: dict[str, tuple[int, int]] = {}
 
-    for session in sessions:
-        if session.group is not RenderGroup.FRESH:
-            continue
-        # For a FRESH row last_event_ts is the Stop timestamp (no click has
-        # landed since, and no active-state floor applies) — i.e. when the
-        # green episode began.
-        stop_ts = session.last_event_ts
-        prev = previous.get(session.id)
-        fired = prev[1] if prev is not None and prev[0] == stop_ts else 0
+        for session in sessions:
+            if session.group is not RenderGroup.FRESH:
+                continue
+            # For a FRESH row last_event_ts is the Stop timestamp (no click has
+            # landed since, and no active-state floor applies) — i.e. when the
+            # green episode began.
+            stop_ts = session.last_event_ts
+            prev = previous.get(session.id)
+            fired = prev[1] if prev is not None and prev[0] == stop_ts else 0
 
-        elapsed = now - stop_ts
-        # How many doubling thresholds the elapsed time has crossed.
-        target = fired
-        while elapsed >= interval * (2 ** target):
-            target += 1
+            elapsed = now - stop_ts
+            # How many doubling thresholds the elapsed time has crossed.
+            target = fired
+            while elapsed >= interval * (2 ** target):
+                target += 1
 
-        # Collapse a multi-threshold catch-up — e.g. the machine slept across
-        # several intervals — into a SINGLE reminder: advance the counter to
-        # the current level but spawn at most one notify per tick, so the user
-        # gets one nudge, not a back-to-back burst of banners + speech.
-        if target > fired:
-            _fire(session)
-            fired = target
+            # Collapse a multi-threshold catch-up — e.g. the machine slept
+            # across several intervals — into a SINGLE reminder: advance the
+            # counter to the current level but spawn at most one notify per
+            # tick, so the user gets one nudge, not a back-to-back burst of
+            # banners + speech.
+            if target > fired:
+                _fire(session)
+                fired = target
 
-        if fired >= 1:
-            updated[session.id] = (stop_ts, fired)
+            if fired >= 1:
+                updated[session.id] = (stop_ts, fired)
 
-    if updated != previous:
-        sidecars.write_idle_reminders(updated)
+        if updated != previous:
+            sidecars._write_idle_reminders_locked(updated)
