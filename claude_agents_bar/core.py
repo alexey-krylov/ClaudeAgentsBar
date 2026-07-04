@@ -57,6 +57,24 @@ _CLICKS_LOCK_DIR = CLICKS_PATH.with_suffix(CLICKS_PATH.suffix + ".lock.d")
 #: back. Use the per-row *Delete session…* action for permanent removal.
 FORGET_PATH = HOME / ".claude" / "agent-state.forget"
 
+#: ``{session_id: bookmarked_at}`` sidecar for the bookmark feature
+#: (spec 0012). One row per pinned session; ``bookmarked_at`` is the unix
+#: epoch second the pin was created (shown as a relative age in the
+#: Bookmarks submenu). Same two-column ``sid\tts`` shape and ``mkdir``-lock
+#: as :data:`FORGET_PATH`, written by ``bin/app/bookmark-set.sh``. A pin
+#: whose transcript no longer exists is garbage-collected on the tick, so
+#: there are never dangling rows.
+BOOKMARKS_PATH = HOME / ".claude" / "agent-state.bookmarks"
+
+#: ``{session_id: color_key}`` sidecar for the session-tags feature (spec
+#: 0013). One row per tagged session; the value is a stable **color key**
+#: (``red``/``orange``/…/``gray`` — see :data:`TAG_PALETTE`), never a hex or a
+#: localized name, so the sidecar is i18n-independent and stable across
+#: releases. Same two-column ``sid\tvalue`` shape and ``mkdir``-lock as
+#: :data:`BOOKMARKS_PATH`, written by ``bin/app/tag-set.sh``. A tag whose
+#: transcript is gone is garbage-collected on the tick, like a bookmark.
+TAGS_PATH = HOME / ".claude" / "agent-state.tags"
+
 #: ``{session_id: (stop_ts, fired_count)}`` sidecar for the idle-session
 #: reminder feature (spec 0008). One row per 🟢 FRESH session the plugin
 #: has already nudged the user about, written by the per-tick
@@ -175,6 +193,16 @@ NOTIFY_AUDIO_MODE_PATH = HOME / ".claude" / "agent-state.notify-audio.mode"
 #: ``bin/app/forget-session.sh``. Same ``mkdir``-based scheme as the other sidecar
 #: locks.
 _FORGET_LOCK_DIR = FORGET_PATH.with_suffix(FORGET_PATH.suffix + ".lock.d")
+
+#: Mutex on :data:`BOOKMARKS_PATH`, shared between plugin (gc) and
+#: ``bin/app/bookmark-set.sh``. Same ``mkdir``-based scheme as the other
+#: sidecar locks.
+_BOOKMARKS_LOCK_DIR = BOOKMARKS_PATH.with_suffix(BOOKMARKS_PATH.suffix + ".lock.d")
+
+#: Mutex on :data:`TAGS_PATH`, shared between plugin (gc) and
+#: ``bin/app/tag-set.sh``. Same ``mkdir``-based scheme as the other sidecar
+#: locks.
+_TAGS_LOCK_DIR = TAGS_PATH.with_suffix(TAGS_PATH.suffix + ".lock.d")
 
 #: Directory used as a mutex on the sidecar by both the plugin (cleanup) and
 #: ``hooks/agent-state.sh`` (writes). ``mkdir`` is atomic on every POSIX
@@ -344,6 +372,46 @@ SUBAGENT_STATES = frozenset({"working", "stopped"})
 
 #: The subset of :data:`SUBAGENT_STATES` that still hold the parent ACTIVE.
 SUBAGENT_LIVE_STATES = frozenset({"working"})
+
+#: Finder-style tag palette, in Finder's own order (spec 0013). Source rows are
+#: ``(color_key, circled_letter, ansi_256_color, i18n_key)``; :data:`TAG_PALETTE`
+#: derives ``(color_key, glyph, i18n_key)`` where ``glyph`` is the letter
+#: wrapped in its ANSI colour (so it drops straight into an ``ansi=true`` line).
+#:
+#: A **circled letter coloured via ANSI**, not a tinted SF Symbol: SwiftBar's
+#: ``sfcolor`` does not tint symbols in the dropdown (verified — hex *and* named
+#: ``system*`` both rendered all-gray, as do the shipping Delete/Remind icons),
+#: whereas ANSI text colour *does* render in the menu (it's how the row labels
+#: are coloured). The letter mirrors the colour name (``ⓑ`` = blue) and echoes
+#: the model badges (``ⓞⓢⓗⓕ``) — those stay grey while a tag is coloured, so
+#: colour tells a tag from a model badge. The seventh Finder slot is **white**
+#: (``ⓦ``). Each row's third field is the raw ANSI SGR parameter: the six
+#: colours use 256-colour (``38;5;N``); white uses **truecolour pure white**
+#: (``38;2;255;255;255``) because both the 256-cube white ``231`` and
+#: bright-white ``97`` render as grey in SwiftBar — full RGB bypasses the
+#: palette. If a SwiftBar build can't render 256-/truecolour they'd fall back
+#: to the default (the one thing to confirm in the GUI pass — see spec 0013).
+_TAG_COLORS = (
+    ("red", "ⓡ", "38;5;196", "tag.red"),
+    ("orange", "ⓞ", "38;5;208", "tag.orange"),
+    ("yellow", "ⓨ", "38;5;220", "tag.yellow"),
+    ("green", "ⓖ", "38;5;40", "tag.green"),
+    ("blue", "ⓑ", "38;5;39", "tag.blue"),
+    ("purple", "ⓟ", "38;5;135", "tag.purple"),
+    ("white", "ⓦ", "38;2;255;255;255", "tag.white"),
+)
+TAG_PALETTE = tuple(
+    (key, f"\x1b[{sgr}m{letter}{_ANSI_RESET}", i18n)
+    for key, letter, sgr, i18n in _TAG_COLORS
+)
+
+#: Valid tag color keys — the sidecar reader drops any row whose value isn't
+#: one of these (a corrupt / renamed color hides one flag, never crashes).
+TAG_KEYS = frozenset(k for k, _, _ in TAG_PALETTE)
+
+#: ``color_key → ANSI-coloured circled letter`` shown on the row and picker.
+#: Only renders coloured on an ``ansi=true`` line.
+TAG_GLYPH = {k: g for k, g, _ in TAG_PALETTE}
 
 #: Agent ids in Claude Code 2.1.x are 16-char hex tokens (e.g.
 #: ``a2a96465dfa0eee5d``). Same threat model as :data:`_SESSION_ID_RE` —
@@ -549,7 +617,7 @@ class Config:
     compact: bool = False
     context_window_tokens: int = 1_000_000
     context_warning_threshold: int = 80
-    #: Toggle for the per-row model badge (ⓞ/ⓢ/ⓗ/ⓜ next to the title when
+    #: Toggle for the per-row model badge (ⓞ/ⓢ/ⓗ/ⓕ/ⓜ next to the title when
     #: the session's model differs from the user's default) and the model
     #: line in each session's submenu. Defaults ``True``; flip to
     #: ``False`` to suppress the glyph and the row entirely. See
@@ -1330,6 +1398,7 @@ class TranscriptMeta:
     """Subset of a JSONL transcript needed to render a menu row."""
 
     session_title: str = ""
+    custom_title: str = ""
     ai_title: str = ""
     raw_title: str = ""
     cwd: str = ""
@@ -1340,19 +1409,29 @@ class TranscriptMeta:
     def display_title(self) -> str:
         """Title to show in the UI.
 
-        Priority order: session title (from response marker) → AI-generated
-        summary → latest user prompt (so a fresh session shows what the
-        user just asked rather than a stale opening line) → first user
-        prompt (works on truncated transcripts where the tail doesn't
-        carry a parseable user event yet).
+        Priority order: session title (from response marker) → **custom title
+        (a manual rename in the IDE)** → AI-generated summary → latest user
+        prompt (so a fresh session shows what the user just asked rather than
+        a stale opening line) → first user prompt (works on truncated
+        transcripts where the tail doesn't carry a parseable user event yet).
+
+        ``custom_title`` sits above ``ai_title`` on purpose: when the user
+        renames a session in VSCode/VSCodium, Claude Code records a
+        ``custom-title`` event, and the editor sidebar then shows that name.
+        Since the menu's job is to mirror what the editor shows, a manual
+        rename must win over the auto-generated ``ai-title``.
 
         ``session_title`` is only populated when
         :attr:`Config.use_session_titles_for_menubar` is on — otherwise it's
-        empty and the title falls through to ``ai_title`` (the VSCode-
-        consistent default). See ``read_transcript_meta``.
+        empty and the title falls through to ``custom_title``/``ai_title``
+        (the VSCode-consistent default). See ``read_transcript_meta``.
         """
         return _shorten(
-            self.session_title or self.ai_title or self.last_user_message or self.raw_title
+            self.session_title
+            or self.custom_title
+            or self.ai_title
+            or self.last_user_message
+            or self.raw_title
         )
 
 
@@ -1422,6 +1501,17 @@ class Session:
     #: so it can't be derived from a single session in isolation. Surfaced
     #: as a red ``⚠`` branch line in the submenu.
     cwd_collision: bool = False
+    #: ``True`` when this session is pinned (present in ``agent-state.bookmarks``).
+    #: Set by :func:`render.collect_sessions` on the live list and forced ``True``
+    #: on the rows rebuilt for the Bookmarks submenu, so the *Bookmark* checkbox
+    #: renders ``checked`` in both places. See ``docs/specs/0012-bookmarks.md``.
+    is_bookmarked: bool = False
+    #: The session's tag color key (``red``/…/``gray``, a key in
+    #: :data:`TAG_PALETTE`) or ``None`` when untagged. Set by
+    #: :func:`render.collect_sessions` on the live list and on the rows rebuilt
+    #: for the Bookmarks submenu, so the flag renders wherever the row does.
+    #: See ``docs/specs/0013-tags.md``.
+    tag: str | None = None
 
     @property
     def live_subagent_count(self) -> int:
@@ -1509,6 +1599,7 @@ _MODEL_FAMILY_BADGES: tuple[tuple[str, str], ...] = (
     ("claude-opus-", "ⓞ"),
     ("claude-sonnet-", "ⓢ"),
     ("claude-haiku-", "ⓗ"),
+    ("claude-fable-", "ⓕ"),
 )
 
 #: Fallback badge for non-Claude providers and unparseable models. Spec

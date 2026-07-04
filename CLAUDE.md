@@ -20,9 +20,10 @@ titles + `cwd` and joins them with the TSV at render time.
 
 **Session titles** are sourced in priority order:
 1. **`session_title`** — parsed from the last Claude response marker `*-- Name - Summary*` (the `notify_summary_marker` prefix `-- `, then the name, a `" - "` divider split on the **first** occurrence, then the summary). **Opt-in**: only used when `use_session_titles_for_menubar` is `true` (default `false`). When off, this field is left empty (the per-tick parse is skipped) and the menu falls through to `ai_title` — the same label VSCode shows, so the menu stays consistent with the editor. Prefix and divider are split byte-for-byte the same way in `claude_agents_bar/sidecars.py` and `hooks/_notify-common.sh`.
-2. **`ai_title`** — Claude Code's auto-generated summary of the conversation (the menu default)
-3. **`last_user_message`** — latest user prompt (for fresh sessions)
-4. **`raw_title`** — initial session title (fallback)
+2. **`custom_title`** — a manual rename in the IDE. Claude Code writes a `{"type":"custom-title","customTitle":"…"}` event when the user renames a session in VSCode/VSCodium; the editor sidebar then shows that name, so the menu mirrors it by ranking `custom_title` above `ai_title`. Read **latest-from-tail** (not head-first like `ai_title`): a session can be renamed twice and the newest name wins. An empty `customTitle` (rename cleared) falls through to `ai_title`.
+3. **`ai_title`** — Claude Code's auto-generated summary of the conversation (the menu default)
+4. **`last_user_message`** — latest user prompt (for fresh sessions)
+5. **`raw_title`** — initial session title (fallback)
 
 The marker's **primary purpose is the spoken notifications**, which parse it in Bash **independently of `use_session_titles_for_menubar`**: **Stop** speaks the summary alone, an **awaiting** permission prompt speaks the session name + summary (`hooks/notify-stop.sh` / `hooks/notify-wait.sh`). A single-field line (`*-- Summary*`, no `" - "`) has no name; the menu (when the opt-in is on) falls through to `ai_title` and only the summary is spoken — backward-compatible with spec 0005. Claude agents write the marker following the global CLAUDE.md instructions.
 
@@ -100,7 +101,8 @@ to re-run.
 `claude-agents-bar teardown` (or the legacy `bash uninstall.sh`)
 reverses everything except the sidecar files under `~/.claude/`
 (`agent-state.tsv`, `agent-state.subagents.tsv`,
-`agent-state.clicks`, `agent-state.dismiss`, `agent-state.forget`). If the user wants a truly clean slate, delete
+`agent-state.clicks`, `agent-state.dismiss`, `agent-state.forget`,
+`agent-state.bookmarks`, `agent-state.tags`). If the user wants a truly clean slate, delete
 those manually. After a Homebrew install, finish with
 `brew uninstall claude-agents-bar` to remove the binary itself.
 

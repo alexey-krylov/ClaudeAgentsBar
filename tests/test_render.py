@@ -146,6 +146,12 @@ class TestModelBadge(unittest.TestCase):
             "ⓗ",
         )
 
+    def test_fable_renders_circled_f(self):
+        self.assertEqual(
+            plugin.core._model_badge("claude-fable-5", "claude-opus-4-8"),
+            "ⓕ",
+        )
+
     def test_non_claude_provider_falls_back_to_m(self):
         # OpenRouter, custom endpoints, anything we don't recognise.
         self.assertEqual(

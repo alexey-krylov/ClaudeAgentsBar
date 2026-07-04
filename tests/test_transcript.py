@@ -193,6 +193,47 @@ class TestReadTranscriptMetaTailFallback(unittest.TestCase):
         meta = plugin.read_transcript_meta(self._write(body))
         self.assertEqual(meta.ai_title, "")
 
+    def test_custom_title_read_and_overrides_ai_title(self):
+        # Renaming a session in the IDE writes a custom-title event; the menu
+        # must show it over the auto ai-title (the editor sidebar does too).
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"ai-title","aiTitle":"Auto topic"}\n'
+            '{"type":"custom-title","customTitle":"Hand named"}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.custom_title, "Hand named")
+        self.assertEqual(meta.display_title, "Hand named")
+
+    def test_custom_title_recovered_from_tail_when_past_head_window(self):
+        from claude_agents_bar import core as core_mod
+        filler = "x" * (core_mod.JSONL_TITLE_SCAN_BYTES + 4096)
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"ai-title","aiTitle":"Auto topic"}\n'
+            '{"type":"assistant","message":{"content":"' + filler + '"}}\n'
+            '{"type":"custom-title","customTitle":"Renamed late"}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.custom_title, "Renamed late")
+        self.assertEqual(meta.display_title, "Renamed late")
+
+    def test_latest_custom_title_wins_on_double_rename(self):
+        # Renamed twice: the newest name must win (it's what the editor shows).
+        # custom-title is read latest-from-tail, never head-first, precisely so
+        # a stale first rename can't pin the row.
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"custom-title","customTitle":"First name"}\n'
+            '{"type":"custom-title","customTitle":"Second name"}\n'
+        )
+        meta = plugin.read_transcript_meta(self._write(body))
+        self.assertEqual(meta.custom_title, "Second name")
+        self.assertEqual(meta.display_title, "Second name")
+
 
 
 class TestSummariseToolUse(unittest.TestCase):
@@ -345,6 +386,31 @@ class TestDisplayTitleFallback(unittest.TestCase):
             raw_title="first",
         )
         self.assertEqual(meta.display_title, "Чиню баг")
+
+    def test_custom_title_outranks_ai_title(self):
+        # A manual rename in the IDE (custom-title) must win over the
+        # auto-generated ai-title — the menu mirrors the editor sidebar.
+        meta = plugin.TranscriptMeta(
+            custom_title="My renamed session",
+            ai_title="Auto generated topic",
+            last_user_message="latest",
+            raw_title="first",
+        )
+        self.assertEqual(meta.display_title, "My renamed session")
+
+    def test_session_title_still_outranks_custom_title(self):
+        # The opt-in marker name stays the top source when enabled.
+        meta = plugin.TranscriptMeta(
+            session_title="Маркерное имя",
+            custom_title="Renamed",
+            ai_title="Auto",
+        )
+        self.assertEqual(meta.display_title, "Маркерное имя")
+
+    def test_empty_custom_title_falls_through_to_ai_title(self):
+        # A cleared rename (empty customTitle) must not blank the row.
+        meta = plugin.TranscriptMeta(custom_title="", ai_title="Auto topic")
+        self.assertEqual(meta.display_title, "Auto topic")
 
 
 

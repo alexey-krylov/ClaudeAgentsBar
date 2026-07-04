@@ -235,6 +235,8 @@ def collect_sessions(now: int) -> list[Session]:
     sidecar = sidecars.read_sidecar()
     clicks = sidecars.read_clicks()
     forget = sidecars.read_forget()
+    bookmarks = sidecars.read_bookmarks()
+    tags = sidecars.read_tags()
     subagents_by_sid = sidecars.read_subagents_sidecar()
     if stale := sidecars._stale_sidecar_ids(sidecar, now):
         sidecars.gc_sidecar(stale)
@@ -259,7 +261,7 @@ def collect_sessions(now: int) -> list[Session]:
     # Click and forget rows for sessions whose transcript no longer exists
     # are pure overhead. The transcript — not the state sidecar — is
     # authoritative: plenty of legitimate sessions have a JSONL but no TSV row.
-    if clicks or forget:
+    if clicks or forget or bookmarks or tags:
         live_ids = sidecars._live_session_ids()
         orphan_clicks = set(clicks) - live_ids
         if orphan_clicks:
@@ -271,6 +273,21 @@ def collect_sessions(now: int) -> list[Session]:
             sidecars.gc_forget(orphan_forget)
             for sid in orphan_forget:
                 forget.pop(sid, None)
+        # A bookmark whose transcript is gone (Delete… or external cleanup)
+        # can't be rebuilt, so it's pruned like an orphan click/forget row —
+        # the pin auto-expires with the session (spec 0012).
+        orphan_bookmarks = set(bookmarks) - live_ids
+        if orphan_bookmarks:
+            sidecars.gc_bookmarks(orphan_bookmarks)
+            for sid in orphan_bookmarks:
+                bookmarks.pop(sid, None)
+        # A tag whose transcript is gone is pruned the same way — the flag
+        # vanishes with the session (spec 0013).
+        orphan_tags = set(tags) - live_ids
+        if orphan_tags:
+            sidecars.gc_tags(orphan_tags)
+            for sid in orphan_tags:
+                tags.pop(sid, None)
     # Only sessions the hook has actually written a row for are eligible
     # for rendering. A JSONL transcript on its own is not enough — Claude
     # Code touches the transcript on every IDE tab switch (SessionStart
@@ -301,6 +318,12 @@ def collect_sessions(now: int) -> list[Session]:
             if s.id not in forget or s.last_event_ts > forget[s.id]
         ]
     _mark_cwd_collisions(sessions)
+    if bookmarks or tags:
+        for s in sessions:
+            if s.id in bookmarks:
+                s.is_bookmarked = True
+            if s.id in tags:
+                s.tag = tags[s.id]
     sessions.sort(key=lambda s: (s.group.order, -s.last_event_ts))
     return sessions
 
@@ -572,8 +595,23 @@ def _branch_decoration(session: Session) -> tuple[str, str, str]:
     return ("#999999", session.git_branch, "")
 
 
-def _print_session_row(session: Session) -> None:
+def _print_session_row(
+    session: Session,
+    *,
+    indent: str = "",
+    bookmark_age: str | None = None,
+    show_state: bool = True,
+) -> None:
     """Emit one main row plus the submenu for one session.
+
+    ``indent`` is prepended to every emitted line so the whole row can be
+    nested one level deeper — the live list passes ``""`` (row at top level,
+    submenu at ``--``); the Bookmarks submenu passes ``"--"`` (row at ``--``,
+    submenu at ``----``). ``bookmark_age`` (a pre-humanized age string, set
+    only under Bookmarks) adds a passive "Added Xm ago" leaf at the top of
+    the submenu. ``show_state=False`` (Bookmarks) drops the live-state circle
+    and its row colour, so a pinned session renders neutral. See
+    ``docs/specs/0012-bookmarks.md``.
 
     Main row: state icon + title + coloured right-label. Clicking it
     invokes ``bin/app/open-session.sh`` which records the click into the
@@ -628,9 +666,20 @@ def _print_session_row(session: Session) -> None:
     subagent_segment = (
         f"{_t('row.subagent_badge', n=live_count)} · " if live_count else ""
     )
+    # Tag marker — an inline ANSI-coloured circled letter after the state circle
+    # (``sfcolor`` won't tint an SF Symbol in the dropdown, so the colour rides
+    # in the letter's ANSI escape). No bookmark marker on the row (see below).
+    # ``show_state`` is False inside the Bookmarks submenu — a pinned session's
+    # live state (🟡/🟢/🔵/⚪ + its colour) is noise there, so the row renders
+    # neutral.
+    state_segment = f"{session.group.icon} " if show_state else ""
+    tag_segment = f"{core.TAG_GLYPH[session.tag]} " if session.tag else ""
+    # The right label (age / state duration) is state-coloured — use the plain,
+    # uncoloured variant under Bookmarks so no status colour leaks through.
+    right_label = session.right_label_ansi if show_state else session.right_label
     label = (
-        f"{session.group.icon} {session.title} · "
-        f"{collision_segment}{worktree_segment}{subagent_segment}{waiting_segment}{warning_segment}{session.right_label_ansi}"
+        f"{state_segment}{tag_segment}{session.title} · "
+        f"{collision_segment}{worktree_segment}{subagent_segment}{waiting_segment}{warning_segment}{right_label}"
     )
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
@@ -654,14 +703,27 @@ def _print_session_row(session: Session) -> None:
             f"param4={_swiftbar_quote(editor_app)}",
             f"param5={_swiftbar_quote(str(core.CONFIG.editor_focus_settle_sec))}",
         ]
-    main_params += [
-        "terminal=false",
-        "refresh=true",
-        f"color={session.group.color}",
-        "font=Menlo",
-        "ansi=true",
-    ]
-    print(f"{label} | {' '.join(main_params)}")
+    main_params += ["terminal=false", "refresh=true"]
+    # State colour on the row is itself a status signal, so drop it under
+    # Bookmarks (show_state=False) — the row stays the default menu colour.
+    if show_state:
+        main_params.append(f"color={session.group.color}")
+    main_params += ["font=Menlo", "ansi=true"]
+    # No bookmark marker on the row itself. An ``sfimage`` always leads, so a
+    # bookmark icon couldn't sit after the state circle (SwiftBar can't place an
+    # image after text), and an inline emoji was rejected — so a pinned session
+    # in the live list just looks normal; it's surfaced under *Bookmarks*
+    # instead (whose header carries the icon).
+    print(f"{indent}{label} | {' '.join(main_params)}")
+
+    # Bookmarks-only leaf: show when this session was pinned, first in the
+    # submenu. Passive grey; the age string is pre-humanized by the caller
+    # (which holds ``now``). Only rendered inside the Bookmarks submenu.
+    if bookmark_age is not None:
+        print(
+            f"{indent}--{_t('bookmark.added', when=bookmark_age)} | "
+            "font=Menlo color=#999999 sfimage=clock"
+        )
 
     # "Remind" — re-speak this session's last spoken summary via say(1).
     # First item in every row's submenu. The transcript is parsed only on
@@ -673,7 +735,7 @@ def _print_session_row(session: Session) -> None:
     if core.CONFIG.notify_summary_marker:
         remind_script = bin_dir / "remind-session.sh"
         print(
-            f"--{_t('menu.remind_session')} | "
+            f"{indent}--{_t('menu.remind_session')} | "
             f"shell={_swiftbar_quote(str(remind_script))} "
             f"param1={_swiftbar_quote(session.id)} "
             f"param2={_swiftbar_quote(_t('remind.no_marker'))} "
@@ -682,14 +744,31 @@ def _print_session_row(session: Session) -> None:
         )
     else:
         print(
-            f"--{_t('menu.remind_session')} | "
+            f"{indent}--{_t('menu.remind_session')} | "
             "color=#999999 sfimage=speaker.wave.2.fill"
         )
+
+    # "Bookmark" — pin/unpin toggle. A native checkbox reflecting the live
+    # sidecar state; clicking flips it by handing bookmark-set.sh the opposite
+    # value (on/off), like the multi-workspace / usage-monitor toggles. Same
+    # item in the live row and inside the Bookmarks submenu (where it's always
+    # checked), so unpinning works from either place. See spec 0012.
+    bookmark_set_script = bin_dir / "bookmark-set.sh"
+    print(
+        f"{indent}--{_t('menu.bookmark')} | "
+        "shell=/bin/bash "
+        f"param1={_swiftbar_quote(str(bookmark_set_script))} "
+        f"param2={_swiftbar_quote(session.id)} "
+        f"param3={'off' if session.is_bookmarked else 'on'} "
+        f"checked={'true' if session.is_bookmarked else 'false'} "
+        "terminal=false refresh=true "
+        "sfimage=bookmark.fill sfcolor=systemYellow"
+    )
 
     if session.group is RenderGroup.FRESH:
         ack_session_script = bin_dir / "ack-session.sh"
         print(
-            f"--{_t('menu.mark_read')} | "
+            f"{indent}--{_t('menu.mark_read')} | "
             f"shell={_swiftbar_quote(str(ack_session_script))} "
             f"param1={_swiftbar_quote(session.id)} "
             "terminal=false refresh=true "
@@ -698,7 +777,7 @@ def _print_session_row(session: Session) -> None:
 
     forget_script = bin_dir / "forget-session.sh"
     print(
-        f"--{_t('menu.forget_session')} | "
+        f"{indent}--{_t('menu.forget_session')} | "
         f"shell={_swiftbar_quote(str(forget_script))} "
         f"param1={_swiftbar_quote(session.id)} "
         "terminal=false refresh=true "
@@ -706,7 +785,7 @@ def _print_session_row(session: Session) -> None:
     )
     delete_script = bin_dir / "delete-session.sh"
     print(
-        f"--{_t('menu.delete_session')} | "
+        f"{indent}--{_t('menu.delete_session')} | "
         f"shell={_swiftbar_quote(str(delete_script))} "
         f"param1={_swiftbar_quote(session.id)} "
         "terminal=false refresh=true "
@@ -714,12 +793,13 @@ def _print_session_row(session: Session) -> None:
     )
     reveal_script = bin_dir / "reveal-session.sh"
     print(
-        f"--{_t('menu.reveal_in_finder')} | "
+        f"{indent}--{_t('menu.reveal_in_finder')} | "
         f"shell={_swiftbar_quote(str(reveal_script))} "
         f"param1={_swiftbar_quote(session.id)} "
         "terminal=false refresh=false "
         "sfimage=doc.text.magnifyingglass sfcolor=systemGray"
     )
+    _print_tags_picker(session, indent, bin_dir)
     if session.git_branch:
         # Project + branch are split across two submenu lines so each
         # gets its own SF Symbol (SwiftBar allows one ``sfimage=`` per
@@ -730,7 +810,7 @@ def _print_session_row(session: Session) -> None:
         branch_color, branch_text, branch_tooltip = _branch_decoration(session)
         if session.project:
             project_line = (
-                f"--{session.project} | "
+                f"{indent}--{session.project} | "
                 "font=Menlo color=#999999 sfimage=folder"
             )
             # The cwd tooltip rides on the project line by default, but a
@@ -741,14 +821,14 @@ def _print_session_row(session: Session) -> None:
                 project_line += f" tooltip={_swiftbar_quote(session.cwd)}"
             print(project_line)
             branch_line = (
-                f"--{branch_text} | "
+                f"{indent}--{branch_text} | "
                 f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
             )
             if branch_tooltip:
                 branch_line += f" tooltip={_swiftbar_quote(branch_tooltip)}"
         else:
             branch_line = (
-                f"--{branch_text} | "
+                f"{indent}--{branch_text} | "
                 f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
             )
             tooltip = branch_tooltip or session.cwd
@@ -760,7 +840,7 @@ def _print_session_row(session: Session) -> None:
         # the full path directly so the menu still tells the user which
         # project the session belongs to.
         print(
-            f"--{session.cwd} | font=Menlo color=#999999 sfimage=folder.fill"
+            f"{indent}--{session.cwd} | font=Menlo color=#999999 sfimage=folder.fill"
         )
     if core.CONFIG.model_badge and session.model:
         # Full model string between branch and context — same read-only
@@ -769,7 +849,7 @@ def _print_session_row(session: Session) -> None:
         # only surface that tells the user which model is live; gated by
         # ``model_badge`` config for users who want a quieter menu.
         print(
-            f"--{session.model} | font=Menlo color=#999999 sfimage=cpu"
+            f"{indent}--{session.model} | font=Menlo color=#999999 sfimage=cpu"
         )
     if session.context_used is not None:
         label = _format_context_left(session.context_used, core.CONFIG.context_window_tokens)
@@ -781,7 +861,7 @@ def _print_session_row(session: Session) -> None:
             # on hover and that win-races the tooltip; leaf rows under
             # the open submenu show their tooltips reliably.
             context_line = (
-                f"--{label} | font=Menlo color=#999999 sfimage=gauge.medium"
+                f"{indent}--{label} | font=Menlo color=#999999 sfimage=gauge.medium"
             )
             if session.last_tool_use:
                 context_line += (
@@ -789,10 +869,40 @@ def _print_session_row(session: Session) -> None:
                 )
             print(context_line)
     if session.subagents:
-        _print_subagent_block(session)
+        _print_subagent_block(session, indent=indent)
 
 
-def _print_subagent_block(session: Session) -> None:
+def _print_tags_picker(session: Session, indent: str, bin_dir: Path) -> None:
+    """Emit the ``Tags ▸`` submenu — a Finder-style color-flag picker (spec 0013).
+
+    A parent item (tinted ``flag.fill`` when the session is tagged, an outline
+    ``flag`` when it isn't, so the current tag reads without opening it) opens
+    the seven Finder colors. Clicking a color tags the session with it;
+    clicking the color it already has (shown ``checked``) clears it — the
+    toggle. Threaded through the same ``indent`` as the rest of the row, so the
+    options land at ``----`` in the live list and ``------`` inside a Bookmarks
+    entry.
+    """
+    tag_set_script = bin_dir / "tag-set.sh"
+    # Plain parent — the current tag is already visible on the row itself, so
+    # the picker header stays a clean section marker (a ``tag`` SF Symbol).
+    print(f"{indent}--{_t('menu.tags')} | sfimage=tag")
+    for key, glyph, i18n_key in core.TAG_PALETTE:
+        is_current = session.tag == key
+        # The colored square leads the label (self-colored, unlike sfcolor);
+        # ``checked`` marks the current one, which toggles off (param3=clear).
+        print(
+            f"{indent}----{glyph} {_t(i18n_key)} | "
+            "shell=/bin/bash "
+            f"param1={_swiftbar_quote(str(tag_set_script))} "
+            f"param2={_swiftbar_quote(session.id)} "
+            f"param3={'clear' if is_current else key} "
+            f"checked={'true' if is_current else 'false'} "
+            "terminal=false refresh=true ansi=true"
+        )
+
+
+def _print_subagent_block(session: Session, *, indent: str = "") -> None:
     """Render the Subagents info block in a parent's submenu.
 
     A submenu separator (``-----``) precedes the header so the block
@@ -817,7 +927,7 @@ def _print_subagent_block(session: Session) -> None:
     which would turn every status circle grey instead of yellow/green.
     Inline emoji carry their own colour and dodge that conflict.
     """
-    print("-----")
+    print(f"{indent}-----")
     project_dir = _project_dir_for(session)
     now = int(time.time())
     visible = sorted(
@@ -830,7 +940,7 @@ def _print_subagent_block(session: Session) -> None:
     live_count = session.live_subagent_count
     header = _t("menu.subagents_header", n=live_count, total=len(visible))
     print(
-        f"--🤖 {header} | "
+        f"{indent}--🤖 {header} | "
         "font=Menlo color=#888888"
     )
     for snap in visible:
@@ -838,9 +948,9 @@ def _print_subagent_block(session: Session) -> None:
             snap, session, project_dir, now,
         )
         color = "#cc7700" if snap.is_live else "#999999"
-        print(f"--{main_label} | color={color}")
+        print(f"{indent}--{main_label} | color={color}")
         for sub_row in sub_rows:
-            print(f"----{sub_row}")
+            print(f"{indent}----{sub_row}")
 
 
 def _project_dir_for(session: Session) -> Path | None:
@@ -1001,6 +1111,20 @@ def _format_until(seconds: int, lang: str) -> str:
     return core._t_for("age.hours", lang, n=hours)
 
 
+def _humanize_bookmark_age(seconds: int, lang: str) -> str:
+    """Relative age for a bookmark's "Added … ago" leaf (spec 0012).
+
+    Reuses :func:`_humanize_age` under a day, so a fresh pin reads finely
+    (``5m`` / ``2h 13m``) rather than the coarse ``1h`` that ``_format_until``
+    would floor it to; rolls into whole days at a day or more (``3d``, round
+    half up) so an old pin doesn't read as an unwieldy ``192h``.
+    """
+    if seconds >= 86400:
+        days = (seconds + 43200) // 86400  # round half up
+        return core._t_for("age.days", lang, n=days)
+    return _humanize_age(max(0, seconds), lang)
+
+
 def _usage_pct_ansi(pct: int) -> str:
     """A used-% number coloured by zone: ≥85 red, ≥60 yellow, else bare.
 
@@ -1056,6 +1180,55 @@ def _print_usage_line() -> None:
     )
 
 
+def _print_bookmarks_block(live_sessions: list[Session]) -> None:
+    """Emit the Bookmarks submenu — pinned sessions that survive the window.
+
+    Sits directly under *Refresh* (spec 0012) and is **hidden when nothing
+    is pinned**, so it costs a single empty sidecar read when unused. Each
+    pinned session is rendered with its full submenu one level deep
+    (``indent="--"``), led by a passive "Added Xm ago" leaf.
+
+    A pinned session still in the live list is **reused** (it was already
+    parsed this tick); one that's fallen out of ``window_sec`` is **rebuilt
+    on demand** from its transcript via :func:`build_session` — the whole
+    point of the pin. The extra per-tick parse is therefore bounded to
+    out-of-window bookmarks, and the heavier sidecar reads happen only when
+    at least one such bookmark exists. A pin whose transcript is gone was
+    already pruned in :func:`collect_sessions`; any straggler is skipped.
+    """
+    bookmarks = sidecars.read_bookmarks()
+    if not bookmarks:
+        return
+    now = int(time.time())
+    by_id = {s.id: s for s in live_sessions}
+    missing = [sid for sid in bookmarks if sid not in by_id]
+    if missing:
+        sidecar = sidecars.read_sidecar()
+        clicks = sidecars.read_clicks()
+        subagents_by_sid = sidecars.read_subagents_sidecar()
+        tags = sidecars.read_tags()
+        for sid in missing:
+            jsonl = sidecars.transcript_for(sid)
+            if jsonl is None:
+                continue  # transcript gone — orphan, already GC'd; skip
+            built = build_session(jsonl, sidecar, clicks, subagents_by_sid, now)
+            built.is_bookmarked = True
+            built.tag = tags.get(sid)
+            by_id[sid] = built
+    pinned = [by_id[sid] for sid in bookmarks if sid in by_id]
+    if not pinned:
+        return
+    # Same ordering as the live list — activity first, coldest last.
+    pinned.sort(key=lambda s: (s.group.order, -s.last_event_ts))
+    lang = _lang()
+    # The same ``bookmark.fill`` SF icon each pinned row carries, so the header
+    # and every entry show one consistent bookmark icon.
+    print(f"{_t('menu.bookmarks')} | sfimage=bookmark.fill")
+    for s in pinned:
+        age = _humanize_bookmark_age(now - bookmarks[s.id], lang)
+        _print_session_row(s, indent="--", bookmark_age=age, show_state=False)
+
+
 def _print_footer(sessions: list[Session] | None = None) -> None:
     """System actions at the bottom of the menu — manual refresh + Tools submenu.
 
@@ -1064,6 +1237,9 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
     without re-walking the disk. ``None`` is treated as "no live work".
     """
     print(f"{_t('menu.refresh')} | refresh=true sfimage=arrow.clockwise")
+    # Bookmarks — pinned sessions that outlive the render window (spec 0012).
+    # Directly under Refresh; hidden when nothing is pinned.
+    _print_bookmarks_block(sessions or [])
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
     ack_fresh_script = bin_dir / "ack-fresh.sh"
     forget_script = bin_dir / "forget-sessions.sh"

@@ -7,7 +7,45 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## Unreleased
 
+### Added
+
+- **Bookmarks — pin sessions so they don't vanish.** Every session's submenu
+  gains a **Bookmark** checkbox; pinned sessions appear under a new
+  **Bookmarks** item directly below *Refresh*, each with its full submenu
+  (Remind, Forget, Delete…, Reveal in Finder, project/branch, context usage)
+  one level deep and a passive *Added Xm ago* leaf. A pin **survives the render
+  window**: the row is rebuilt from the transcript on demand, so a session that
+  would otherwise drop off the menu after `window_sec` stays reachable.
+  Opening a pinned session records a click like any row, so it moves to 🔵
+  *acknowledged*. A bookmark whose transcript is deleted auto-prunes. The
+  Bookmarks item is hidden while nothing is pinned; no config knob. See
+  [spec 0012](./docs/specs/0012-bookmarks.md).
+
+- **Session tags — a colored marker on any session.** Each session's submenu
+  gains a **Tags ▸** picker of seven colors (Red, Orange, Yellow, Green, Blue,
+  Purple, White); pick a color to tag the session, re-pick the same color to
+  clear it. A tagged session shows a small colored circled letter (`ⓡⓞⓨⓖⓑⓟⓦ`,
+  the letter mirroring the color) right after its state circle, in the live
+  list and inside a Bookmarks entry. The color rides in an **ANSI** escape,
+  not `sfcolor` — SwiftBar renders ANSI text color in the dropdown but won't
+  tint SF Symbols. One color per session (a new color replaces the old).
+  Stored as a stable color key in `agent-state.tags`; auto-prunes when the
+  transcript is gone; always on, inert until used, no config knob. See
+  [spec 0013](./docs/specs/0013-tags.md).
+
 ### Fixed
+
+- **Fable now shows a ⓕ badge, not the ⓜ fallback.** The model-family badge
+  table had no `claude-fable-` prefix, so a Fable session fell through to the
+  generic ⓜ ("other model") glyph in the row badge and the *Stats → Models*
+  list. Added the family so it renders ⓕ.
+
+- **Renaming a session in VSCode/VSCodium now shows the new name in the menu.**
+  Claude Code records a manual rename as a `custom-title` event; the menu read
+  only the auto-generated `ai-title` and ignored it, so a renamed session kept
+  its stale title. `custom_title` now ranks above `ai_title` (mirroring what
+  the editor sidebar shows) and is read latest-from-tail, so a second rename
+  wins.
 
 - **Duplicate notifications from overlapping ticks.** SwiftBar runs the plugin
   concurrently — the scheduled 5-second tick plus any

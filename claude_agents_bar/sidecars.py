@@ -202,6 +202,30 @@ def _live_session_ids() -> set[str]:
     return live_ids
 
 
+def transcript_for(sid: str) -> Path | None:
+    """Return the JSONL transcript path for ``sid``, or ``None`` if it's gone.
+
+    Globs ``~/.claude/projects/*/<sid>.jsonl`` — the same layout
+    :func:`_live_session_ids` scans. Used to rebuild a bookmarked session
+    that's fallen out of the render window (spec 0012): the transcript, not
+    the sidecar, is what lets :func:`render.build_session` reconstruct the
+    row. Ids that fail :func:`_is_valid_session_id` are rejected — they'd
+    otherwise flow into shell args and grep regexes downstream.
+    """
+    if not _is_valid_session_id(sid) or not core.PROJECTS_DIR.exists():
+        return None
+    for project_dir in core.PROJECTS_DIR.iterdir():
+        if not project_dir.is_dir():
+            continue
+        hit = project_dir / f"{sid}.jsonl"
+        try:
+            if hit.exists():
+                return hit
+        except OSError:
+            continue
+    return None
+
+
 def read_subagents_sidecar() -> dict[str, tuple[SubagentSnapshot, ...]]:
     """Load ``agent-state.subagents.tsv`` into ``{parent_sid: (snap, ...)}``.
 
@@ -371,6 +395,16 @@ def _forget_lock(timeout_sec: float = 2.0):
     return _mkdir_lock(core._FORGET_LOCK_DIR, timeout_sec)
 
 
+def _bookmarks_lock(timeout_sec: float = 2.0):
+    """Mutex shared with ``bin/app/bookmark-set.sh`` for ``agent-state.bookmarks``."""
+    return _mkdir_lock(core._BOOKMARKS_LOCK_DIR, timeout_sec)
+
+
+def _tags_lock(timeout_sec: float = 2.0):
+    """Mutex shared with ``bin/app/tag-set.sh`` for ``agent-state.tags``."""
+    return _mkdir_lock(core._TAGS_LOCK_DIR, timeout_sec)
+
+
 def _idle_reminders_lock(timeout_sec: float = 2.0):
     """Mutex on ``agent-state.idle-reminders``. Only the plugin tick writes it,
     but SwiftBar runs the plugin concurrently (scheduled tick + hook-fired
@@ -496,6 +530,28 @@ def gc_forget(stale: set[str]) -> None:
     _gc_two_col_sidecar(core.FORGET_PATH, stale, _forget_lock, "forget")
 
 
+def gc_bookmarks(stale: set[str]) -> None:
+    """Drop the given session ids from the bookmarks sidecar, atomically.
+
+    Mirrors :func:`gc_forget`. The transcript — not the sidecar — is
+    authoritative: a bookmark whose JSONL is gone (deleted or externally
+    removed) can no longer be rendered, so it's pruned rather than left
+    dangling. See ``docs/specs/0012-bookmarks.md`` § auto-prune.
+    """
+    _gc_two_col_sidecar(core.BOOKMARKS_PATH, stale, _bookmarks_lock, "bookmarks")
+
+
+def gc_tags(stale: set[str]) -> None:
+    """Drop the given session ids from the tags sidecar, atomically.
+
+    Mirrors :func:`gc_bookmarks`. The GC helper only inspects column 1 (the
+    sid), so the ``sid\\tcolor`` shape works unchanged. A tag whose transcript
+    is gone is pruned — the flag vanishes with the session, no tombstone. See
+    ``docs/specs/0013-tags.md``.
+    """
+    _gc_two_col_sidecar(core.TAGS_PATH, stale, _tags_lock, "tags")
+
+
 def gc_clicks(stale: set[str]) -> None:
     """Drop the given session ids from the click sidecar, atomically.
 
@@ -551,6 +607,58 @@ def read_forget() -> dict[str, int]:
     except OSError:
         return {}
     return _parse_clicks(raw)
+
+
+def read_bookmarks() -> dict[str, int]:
+    """Load the bookmarks sidecar into a ``{session_id: bookmarked_at}`` map.
+
+    Same two-column ``sid\\tts`` TSV shape as the clicks/forget sidecars, so
+    it reuses :func:`_parse_clicks`. Unparseable rows are dropped silently —
+    a corrupt byte hides one bookmark, never crashes the menu.
+    """
+    if not core.BOOKMARKS_PATH.exists():
+        return {}
+    try:
+        raw = core.BOOKMARKS_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return _parse_clicks(raw)
+
+
+def read_tags() -> dict[str, str]:
+    """Load the tags sidecar into a ``{session_id: color_key}`` map.
+
+    Two-column ``sid\\tcolor_key`` TSV. Unlike the bookmarks/clicks/forget
+    sidecars the value is a **string** (a color key), so it can't reuse
+    :func:`_parse_clicks` (which coerces column 2 to ``int``) — see
+    :func:`_parse_tags`. ``{}`` on a missing/unreadable file.
+    """
+    if not core.TAGS_PATH.exists():
+        return {}
+    try:
+        raw = core.TAGS_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return _parse_tags(raw)
+
+
+def _parse_tags(raw: str) -> dict[str, str]:
+    """Decode tags TSV text into ``{sid: color_key}``. Pure helper.
+
+    Requires ≥2 columns and drops any row whose color key isn't in
+    :data:`core.TAG_KEYS` — a corrupt or renamed color hides one flag, never
+    crashes the menu (same fail-open stance as :func:`_parse_clicks`).
+    """
+    out: dict[str, str] = {}
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        sid, color = parts[0], parts[1]
+        if color not in core.TAG_KEYS:
+            continue
+        out[sid] = color
+    return out
 
 
 def read_idle_reminders() -> dict[str, tuple[int, int]]:
@@ -840,9 +948,11 @@ def _read_jsonl_tail(path: Path) -> bytes:
 def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     """Extract title and cwd from a session transcript.
 
-    Title priority: session_title (parsed from response marker) → ai-title
-    (Claude Code event) → latest user message → raw_title (first message).
-    ``session_title`` is only parsed when
+    Title priority: session_title (parsed from response marker) → custom-title
+    (a manual rename in the IDE) → ai-title (Claude Code event) → latest user
+    message → raw_title (first message). ``custom-title`` outranks ``ai-title``
+    so a rename in VSCode/VSCodium is reflected in the menu — that's the label
+    the editor sidebar shows once renamed. ``session_title`` is only parsed when
     :attr:`core.Config.use_session_titles_for_menubar` is on; off (the
     default) skips the per-tick parse and the menu shows ``ai-title`` — the
     same label VSCode displays. The spoken notifications parse the marker
@@ -853,6 +963,7 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     cwd mid-flight (subagents).
     """
     ai_title = ""
+    custom_title = ""
     raw_title = ""
     cwd = ""
     entrypoint = ""
@@ -890,6 +1001,13 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
         # which visibly flap as tool output pushes the latest prompt out of
         # the tail window.
         ai_title = _latest_tail_ai_title(jsonl_path)
+    # Unlike ai-title we take the *latest* custom-title, not the first: a
+    # rename is deliberate and can happen twice, and the editor shows the
+    # newest name. Claude Code re-emits the current custom-title every turn,
+    # so the cached tail always carries it — no head scan needed (which would
+    # otherwise pin the *first* rename forever). Cheap: same cached buffer the
+    # ai-title fallback and last-user-message reader already walk.
+    custom_title = _latest_tail_custom_title(jsonl_path)
     # Opt-in (default off): the menu shows ai-title unless the user asks for
     # the marker name. When off we skip the parse entirely — keeps the tick
     # cheap and the title consistent with what VSCode shows.
@@ -900,6 +1018,7 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     )
     return TranscriptMeta(
         session_title=session_title.strip(),
+        custom_title=custom_title.strip(),
         ai_title=ai_title.strip(),
         raw_title=raw_title,
         cwd=cwd,
@@ -915,6 +1034,42 @@ def _parse_ai_title(raw: bytes) -> str | None:
         return None
     ai_title = event.get("aiTitle")
     return ai_title if isinstance(ai_title, str) else None
+
+
+def _parse_custom_title(raw: bytes) -> str | None:
+    """Decode a single ``custom-title`` JSONL line; ``None`` if unparseable.
+
+    Claude Code writes ``{"type":"custom-title","customTitle":"…"}`` when the
+    user renames a session in the IDE. An empty string is a valid "rename
+    cleared" signal — returned as-is so the caller falls through to
+    ``ai-title`` rather than pinning a blank label.
+    """
+    try:
+        event = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    custom_title = event.get("customTitle")
+    return custom_title if isinstance(custom_title, str) else None
+
+
+def _latest_tail_custom_title(jsonl_path: Path) -> str:
+    """Return the freshest non-empty ``custom-title`` in the JSONL tail, or ``""``.
+
+    Mirrors :func:`_latest_tail_ai_title`. Reads the *last* match so a
+    session renamed more than once shows its current name — the same one the
+    VSCode sidebar shows.
+    """
+    data = _read_jsonl_tail(jsonl_path)
+    if not data:
+        return ""
+    last = ""
+    for raw in data.splitlines():
+        if b'"type":"custom-title"' not in raw:
+            continue
+        title = _parse_custom_title(raw)
+        if title is not None and title.strip():
+            last = title
+    return last
 
 
 def _latest_tail_ai_title(jsonl_path: Path) -> str:
