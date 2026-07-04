@@ -5,7 +5,7 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
-## Unreleased
+## 1.4.0 — 2026-07-05
 
 ### Added
 
