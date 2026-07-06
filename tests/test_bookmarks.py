@@ -65,16 +65,52 @@ class TestRowIndentAndCheckbox(unittest.TestCase):
         self.assertIn("checked=true", item)
         self.assertIn("param3=off", item)
 
-    def test_bookmark_age_leaf_only_under_bookmarks(self):
-        # No age → no "Added …" leaf.
+    def test_bookmark_age_rides_the_row_not_a_submenu_leaf(self):
+        # 1.4.1: the pin age is the row's right label, not a "clock" leaf,
+        # and never carries the literal word "Added"/"Добавлено".
         plain = _render_row(_make_session())
         self.assertFalse(any("sfimage=clock" in l for l in plain))
-        # With a pre-humanized age → a passive leaf carrying it.
-        leafed = _render_row(_make_session(), indent="--", bookmark_age="5m")
-        leaf = [l for l in leafed if "sfimage=clock" in l]
-        self.assertEqual(len(leaf), 1)
-        self.assertIn("5m", leaf[0])
-        self.assertTrue(leaf[0].startswith("----"))
+        rows = _render_row(
+            _make_session(), indent="--", show_state=False, bookmark_age="5m"
+        )
+        # No clock leaf anywhere in the submenu.
+        self.assertFalse(any("sfimage=clock" in l for l in rows))
+        # No "Added …" wording leaked anywhere.
+        self.assertFalse(any("Added" in l or "Добавлено" in l for l in rows))
+        # The age rides the row's right label.
+        row_label = rows[0].split(" | ")[0]
+        self.assertTrue(row_label.rstrip().endswith("5m"))
+
+    def test_bookmark_row_shows_pin_age_not_wait_duration(self):
+        # A waiting session: live list shows the ❓ marker + blocked duration;
+        # under Bookmarks that's replaced by the bare pin age, ❓ dropped.
+        waiting = _make_session(hook_state="waiting")
+        live_label = _render_row(waiting)[0].split(" | ")[0]
+        self.assertIn("❓", live_label)  # sanity: live row does mark waiting
+        pinned_label = _render_row(
+            waiting, indent="--", show_state=False, bookmark_age="5m"
+        )[0].split(" | ")[0]
+        self.assertIn("5m", pinned_label)
+        self.assertTrue(pinned_label.rstrip().endswith("5m"))
+        self.assertNotIn("❓", pinned_label)
+        self.assertNotEqual(live_label, pinned_label)
+
+    def test_bookmark_item_sits_directly_under_forget(self):
+        # 1.4.1 submenu order: Remind … Forget → Bookmark → Delete.
+        lines = _render_row(_make_session())
+
+        def only_index(needle):
+            hits = [i for i, l in enumerate(lines) if needle in l]
+            self.assertEqual(len(hits), 1, (needle, hits))
+            return hits[0]
+
+        remind_i = only_index("sfimage=speaker.wave.2.fill")
+        forget_i = only_index("sfimage=eraser.fill")
+        bookmark_i = only_index("sfimage=bookmark.fill")
+        delete_i = only_index("sfimage=trash.fill")
+        self.assertLess(remind_i, forget_i)
+        self.assertLess(forget_i, bookmark_i)  # Bookmark directly under Forget
+        self.assertLess(bookmark_i, delete_i)
 
 
 class TestBookmarkAge(unittest.TestCase):

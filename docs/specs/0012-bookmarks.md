@@ -1,7 +1,9 @@
 # Spec 0012 — Bookmarks (pin sessions so they survive the render window)
 
-* Status: **Implemented** — ships in 1.4.0 (with Tags, spec 0013)
-* Date: 2026-07-03
+* Status: **Implemented** — ships in 1.4.0 (with Tags, spec 0013); menu
+  polish revised in 1.4.1 (pin age on the row, no date leaf, *Bookmark* under
+  *Forget*, delete-prunes-pin)
+* Date: 2026-07-03 (rev. 2026-07-06)
 
 ## Why
 
@@ -76,9 +78,13 @@ constant `BOOKMARKS_PATH` + `BOOKMARKS_LOCK_DIR` in
   disk is dead and is dropped, reusing the orphan-cleanup already run in
   `collect_sessions` (render.py:262): `set(bookmarks) - _live_session_ids()`
   → `gc_bookmarks(orphans)` via the shared `_gc_two_col_sidecar`
-  (sidecars.py:391). This covers both *Delete…* (transcript removed by
-  `delete-session.sh`) and any external cleanup — the pin vanishes with
-  the session, no tombstone.
+  (sidecars.py:391). This is the safety net for **external** cleanup — the
+  pin vanishes with the session, no tombstone.
+* **Explicit prune on *Delete…*** — `delete-session.sh` removes the pin from
+  `agent-state.bookmarks` itself (field-equality awk under the same `.lock.d`
+  as `bookmark-set.sh`) right after it removes the transcript and the
+  `agent-state.tsv` row, so deleting a pinned session clears its bookmark
+  **immediately**, not one tick later via the orphan GC above (1.4.1).
 
 ### The toggle — `bin/app/bookmark-set.sh`
 
@@ -103,8 +109,8 @@ changes:
    `--` become `indent + "--"`. `indent=""` (the live list) is byte-for-byte
    unchanged. Bookmarks pass `indent="--"`. `_print_subagent_block`
    (render.py) takes the same `indent`.
-2. **Add the Bookmark checkbox item** to the row's submenu (right after
-   *Remind*). Its state reads off `session.is_bookmarked` — a new `Session`
+2. **Add the Bookmark checkbox item** to the row's submenu (directly under
+   *Forget*). Its state reads off `session.is_bookmarked` — a new `Session`
    field set on the live list by `collect_sessions` and forced `True` on the
    rows the Bookmarks block rebuilds, so the one item is correct in both
    places:
@@ -128,13 +134,13 @@ line, before *Tools*:
 ```
 Refresh                    ← existing
 Bookmarks ▸                ← new, hidden when empty
-  auth-refactor · 3m ▸     ← neutral: no state circle/colour (show_state=False)
-    ★ Added 3m ago         ← passive date leaf (----), relative age
-    Bookmark ✓             ← the toggle, checked (----)
+  auth-refactor · 3m ▸     ← neutral (show_state=False); right label is the bare
+                             pin age, not the live state duration
     Remind
-    Forget …               ← the full existing submenu, verbatim
+    Forget …
+    Bookmark ✓             ← the toggle, checked (----), directly under Forget
+    Delete… / Reveal …     ← the full existing submenu, verbatim
   parse-bug · 2h ▸
-    ★ Added 2h ago
     …
 Tools ▸                    ← existing
 ```
@@ -159,8 +165,12 @@ Logic:
    — `show_state=False` drops the state circle, state row colour, and state-
    coloured age, so pinned entries render neutral.
 
-The date leaf (first sub-item, `indent + "--"` → `----`) is passive grey:
-`{indent}--{_t('bookmark.added', when=bookmark_age)} | font=Menlo color=#999999 sfimage=clock`.
+`bookmark_age` becomes the **row's right-hand label** — the bare pin age (`3м`)
+in place of the live state duration, so a pinned row reads "how long ago I
+pinned this", not "how long it's been blocked". The `❓` waiting marker is also
+dropped under Bookmarks (it's a live-state signal). No passive "Added …" leaf in
+the submenu — the age lives on the row alone (1.4.1: the leaf was removed and the
+literal word "Added"/"Добавлено" dropped in favour of a bare age).
 
 ### The bookmarked-date format
 
@@ -177,15 +187,15 @@ def _humanize_bookmark_age(seconds, lang):
 Sub-day reuses the existing `_humanize_age` (`core.py`), so a fresh pin reads
 finely (`5м` / `2ч 20м`) rather than the coarse `1ч` that `_format_until`
 would floor it to; a day or more rolls into whole days (`8д`) so an old pin
-never reads as an unwieldy `192ч`. Result:
-`_t("bookmark.added", when=…)` → `"Добавлено 3м назад"`.
+never reads as an unwieldy `192ч`. The result string (`3м` / `8д`) is the
+pinned row's right-hand label verbatim — no wrapping phrase.
 
-`bookmark.added` = `"Added {when} ago"` / `"Добавлено {when} назад"` — the
-only date-related i18n key, added to every locale. English is
-source-of-truth; the fallback chain (`requested → primary_subtag → en →
-key`) covers gaps. (An absolute "weekday, then D month" format was
-considered and dropped as too much i18n surface for the payoff — relative
-age is what the rest of the menu already speaks.)
+There is **no** date-related i18n key: the age is a bare, locale-independent
+duration from `_humanize_age` (`5м` / `8д`), so it needs no "Added {when} ago"
+template. (1.4.1 dropped the earlier `bookmark.added` key and its "Добавлено
+{when} назад" leaf — the word added no information over the bare age and cost
+an i18n string in every locale. An absolute "weekday, then D month" format was
+also considered and dropped as too much i18n surface for the payoff.)
 
 ### Opening a pinned session acknowledges it
 
@@ -224,9 +234,10 @@ one.
 
 ## i18n
 
-Three new keys, all 8 locales: `menu.bookmarks` (header), `menu.bookmark`
-(checkbox), `bookmark.added` (`"Added {when} ago"` / `"Добавлено {when}
-назад"`, `{when}` filled by `_humanize_age`).
+Two new keys, all 8 locales: `menu.bookmarks` (header), `menu.bookmark`
+(checkbox). The pin age on the row is a bare, locale-independent duration from
+`_humanize_age` (`3м` / `8д`), so it needs **no** date-phrase key. (1.4.1
+removed the earlier `bookmark.added` key — see *The bookmarked-date format*.)
 
 ## Icons (SF Symbols)
 
@@ -236,7 +247,8 @@ All from the system SF Symbols set (rendered by SwiftBar on macOS 11+):
   filled bookmark; ties the section and the toggle together visually,
   the way *Tools* = `wrench.adjustable.fill` and *Stats* =
   `chart.bar.fill` do).
-* **Added … ago** date leaf — `clock` (it's a time annotation).
+  (The former `clock` date leaf was removed in 1.4.1 — the pin age moved onto
+  the row's right label.)
 
 Alternatives if `bookmark.fill` reads too heavy next to the neighbouring
 icons: `bookmark` (outline) or `bookmark.circle.fill`. Final pick is a
@@ -268,32 +280,43 @@ surface.)
    `s.is_bookmarked=True` the *Bookmark* item emits `checked=true`.
 5. `_print_bookmarks_block`: empty sidecar → **no** output; N bookmarks →
    a `Bookmarks` header + N entries sorted by `(group.order,
-   -last_event_ts)`, each led by the localized date leaf; an in-window
-   pinned session is **not** re-parsed (reused from `live_sessions`); an
-   out-of-window pinned session **is** built via `build_session`; an
-   orphan sid is skipped.
-6. The date leaf renders `bookmark.added` with `{when}` from
-   `_humanize_bookmark_age(now - bookmarked_at, lang)` — a pin 3 min old
-   shows `Добавлено 3м назад` (RU) / `Added 3m ago` (EN); sub-day reuses
-   `_humanize_age`, a day or more rolls to whole days (`8d`, half up) so an
-   old pin never reads as `192h`.
+   -last_event_ts)`, each row carrying the bare pin age as its right label;
+   an in-window pinned session is **not** re-parsed (reused from
+   `live_sessions`); an out-of-window pinned session **is** built via
+   `build_session`; an orphan sid is skipped.
+6. Under Bookmarks the row's right label is the bare pin age from
+   `_humanize_bookmark_age(now - bookmarked_at, lang)` — a pin 3 min old shows
+   `3м`; sub-day reuses `_humanize_age`, a day or more rolls to whole days
+   (`8d`, half up) so an old pin never reads as `192h`. No `Added …` leaf in
+   the submenu, and no `❓` waiting marker on the row. There is no
+   `bookmark.added` key.
+6b. Submenu order (both live list and Bookmarks entry): the *Bookmark*
+   checkbox line sits **directly under *Forget*** (its index > the *Forget*
+   line's, < *Delete*'s).
 7. The *Bookmark* checkbox in the **live** row reflects real state:
    `checked=false` + `param3=on` when unpinned, `checked=true` +
    `param3=off` when pinned.
 8. Opening a pinned row records a click (reused `open-session.sh`), so an
    out-of-window pin classifies 🔵 *acknowledged* on the next tick — no
    bookmark-specific ack path.
+8b. *Delete…* a pinned session removes the row from `agent-state.bookmarks`
+   **in the same script run** (`delete-session.sh`, field-equality awk under
+   `.lock.d`), independent of the render-time orphan GC. `bash -n
+   bin/app/delete-session.sh` exits 0.
 9. Every new i18n key resolves in all 8 locales (no key falls through to
-   the literal).
+   the literal); the removed `bookmark.added` leaves all locales key-parity
+   equal (`test_config.TestLocaleCompleteness`).
 10. Full `unittest` suite green (including the above).
 11. **Manual GUI required before release** (SwiftBar clicks, checkmarks,
     and submenu nesting aren't scriptable): pin a live session → it
     appears under *Refresh* with its full working submenu; let it fall
     out of `window_sec` (or shorten it) → it **persists** in Bookmarks
-    with Remind/Forget/Reveal/context all functional; the date leaf shows
-    the relative pin age (`Added 3m ago`); unpin from either the live row
-    or the Bookmarks entry → it disappears from Bookmarks and the checkbox
-    clears; *Delete…* a pinned session → the bookmark auto-prunes.
+    with Remind/Forget/Reveal/context all functional; the row shows the
+    bare pin age (`3м`) as its right label, no `Added …` leaf and no `❓`;
+    the *Bookmark* line sits directly under *Forget*; unpin from either the
+    live row or the Bookmarks entry → it disappears from Bookmarks and the
+    checkbox clears; *Delete…* a pinned session → it disappears from
+    Bookmarks immediately.
 
 ## Out of scope
 

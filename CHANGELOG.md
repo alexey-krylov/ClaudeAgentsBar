@@ -5,6 +5,26 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.4.1 — 2026-07-06
+
+### Changed
+
+- **Bookmarks — menu polish.** In the *Bookmarks* list a pinned session's row
+  now shows its **pin age** (`3м`) as the right-hand label instead of the live
+  wait/idle duration, and the `❓` waiting marker is dropped there — a pinned
+  entry answers "how long ago I pinned this", not "how long it's been blocked".
+  The passive *Added Xm ago* leaf is gone (the age lives on the row alone, with
+  no "Added" wording), and the **Bookmark** checkbox now sits directly under
+  *Forget* in every session's submenu. See
+  [spec 0012](./docs/specs/0012-bookmarks.md).
+
+### Fixed
+
+- **Deleting a session now clears its bookmark immediately.** *Delete…* removes
+  the pin from `agent-state.bookmarks` in the same step it removes the
+  transcript and the state row, instead of leaving it for the next tick's
+  orphan cleanup to prune.
+
 ## 1.4.0 — 2026-07-05
 
 ### Added

@@ -128,6 +128,7 @@ fi
 CLAUDE_DIR="${HOME}/.claude"
 PROJECTS_DIR="${CLAUDE_DIR}/projects"
 STATE_FILE="${CLAUDE_DIR}/agent-state.tsv"
+BOOKMARKS_FILE="${CLAUDE_DIR}/agent-state.bookmarks"
 
 # Sessions live one level deep: ~/.claude/projects/<slug>/<sid>.jsonl.
 # Bounded ``find`` with maxdepth 2 keeps it cheap and avoids scanning into
@@ -240,6 +241,32 @@ if [ -f "$STATE_FILE" ]; then
     TMP="${STATE_FILE}.$$"
     /usr/bin/awk -F'\t' -v sid="$SID" '$1 != sid' "$STATE_FILE" > "$TMP" || true
     mv "$TMP" "$STATE_FILE"
+fi
+
+# Drop the session's bookmark too, if it was pinned — deleting a session
+# should leave no pin residue. Same field-equality awk + mkdir lock as
+# bin/app/bookmark-set.sh, so a concurrent pin/unpin click serializes on the
+# same ``.lock.d`` (and a leaked lock self-heals: bookmark-set.sh steals a
+# stuck lock after 40 attempts). The render-time orphan GC would also prune
+# the pin on the next tick, but doing it here makes deletion self-contained
+# and immediate rather than eventually-consistent.
+if [ -f "$BOOKMARKS_FILE" ]; then
+    BM_LOCK_DIR="${BOOKMARKS_FILE}.lock.d"
+    bm_attempts=0
+    until mkdir "$BM_LOCK_DIR" 2>/dev/null; do
+        bm_attempts=$((bm_attempts + 1))
+        if [ "$bm_attempts" -gt 40 ]; then
+            rmdir "$BM_LOCK_DIR" 2>/dev/null || true   # steal a stuck lock
+        fi
+        sleep 0.05
+    done
+    BM_TMP="${BOOKMARKS_FILE}.$$"
+    if /usr/bin/awk -F'\t' -v sid="$SID" '$1 != sid' "$BOOKMARKS_FILE" > "$BM_TMP"; then
+        mv "$BM_TMP" "$BOOKMARKS_FILE"
+    else
+        rm -f "$BM_TMP"
+    fi
+    rmdir "$BM_LOCK_DIR" 2>/dev/null || true
 fi
 
 # Refresh SwiftBar so the row disappears in the next render rather than at

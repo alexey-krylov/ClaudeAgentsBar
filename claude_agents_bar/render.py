@@ -608,9 +608,11 @@ def _print_session_row(
     nested one level deeper — the live list passes ``""`` (row at top level,
     submenu at ``--``); the Bookmarks submenu passes ``"--"`` (row at ``--``,
     submenu at ``----``). ``bookmark_age`` (a pre-humanized age string, set
-    only under Bookmarks) adds a passive "Added Xm ago" leaf at the top of
-    the submenu. ``show_state=False`` (Bookmarks) drops the live-state circle
-    and its row colour, so a pinned session renders neutral. See
+    only under Bookmarks) becomes the row's right-hand label — the bare pin
+    age (``3m``) in place of the live state duration, so a pinned row reads
+    "how long ago I pinned this", not "how long it's been blocked".
+    ``show_state=False`` (Bookmarks) drops the live-state circle and its row
+    colour, so a pinned session renders neutral. See
     ``docs/specs/0012-bookmarks.md``.
 
     Main row: state icon + title + coloured right-label. Clicking it
@@ -638,7 +640,10 @@ def _print_session_row(
             core.CONFIG.context_warning_threshold,
         )
     warning_segment = f"{warning} · " if warning else ""
-    waiting_segment = "❓ · " if session.hook_state == "waiting" else ""
+    # The ❓ waiting marker is a live-state signal — dropped under Bookmarks
+    # (show_state=False), where the row reads as a neutral pinned entry
+    # carrying its pin age, not its blocked duration.
+    waiting_segment = "❓ · " if session.hook_state == "waiting" and show_state else ""
     # Two active sessions sharing a folder: a red branch glyph (U+2387 ⎇ —
     # the same branch icon the notification banner uses, spec 0009) between
     # the title and the duration. ``⚠`` is already taken by the context-usage
@@ -674,9 +679,16 @@ def _print_session_row(
     # neutral.
     state_segment = f"{session.group.icon} " if show_state else ""
     tag_segment = f"{core.TAG_GLYPH[session.tag]} " if session.tag else ""
-    # The right label (age / state duration) is state-coloured — use the plain,
-    # uncoloured variant under Bookmarks so no status colour leaks through.
-    right_label = session.right_label_ansi if show_state else session.right_label
+    # The right label. On the live list it's the state duration, state-coloured.
+    # Under Bookmarks (bookmark_age set) it's the bare, pre-humanized pin age
+    # instead — the row answers "how long ago I pinned this", neutral (no status
+    # colour). ``show_state`` alone (no bookmark_age) keeps the plain duration.
+    if bookmark_age is not None:
+        right_label = bookmark_age
+    elif show_state:
+        right_label = session.right_label_ansi
+    else:
+        right_label = session.right_label
     label = (
         f"{state_segment}{tag_segment}{session.title} · "
         f"{collision_segment}{worktree_segment}{subagent_segment}{waiting_segment}{warning_segment}{right_label}"
@@ -716,15 +728,6 @@ def _print_session_row(
     # instead (whose header carries the icon).
     print(f"{indent}{label} | {' '.join(main_params)}")
 
-    # Bookmarks-only leaf: show when this session was pinned, first in the
-    # submenu. Passive grey; the age string is pre-humanized by the caller
-    # (which holds ``now``). Only rendered inside the Bookmarks submenu.
-    if bookmark_age is not None:
-        print(
-            f"{indent}--{_t('bookmark.added', when=bookmark_age)} | "
-            "font=Menlo color=#999999 sfimage=clock"
-        )
-
     # "Remind" — re-speak this session's last spoken summary via say(1).
     # First item in every row's submenu. The transcript is parsed only on
     # click (in remind-session.sh), never per tick — here we just gate on
@@ -748,23 +751,6 @@ def _print_session_row(
             "color=#999999 sfimage=speaker.wave.2.fill"
         )
 
-    # "Bookmark" — pin/unpin toggle. A native checkbox reflecting the live
-    # sidecar state; clicking flips it by handing bookmark-set.sh the opposite
-    # value (on/off), like the multi-workspace / usage-monitor toggles. Same
-    # item in the live row and inside the Bookmarks submenu (where it's always
-    # checked), so unpinning works from either place. See spec 0012.
-    bookmark_set_script = bin_dir / "bookmark-set.sh"
-    print(
-        f"{indent}--{_t('menu.bookmark')} | "
-        "shell=/bin/bash "
-        f"param1={_swiftbar_quote(str(bookmark_set_script))} "
-        f"param2={_swiftbar_quote(session.id)} "
-        f"param3={'off' if session.is_bookmarked else 'on'} "
-        f"checked={'true' if session.is_bookmarked else 'false'} "
-        "terminal=false refresh=true "
-        "sfimage=bookmark.fill sfcolor=systemYellow"
-    )
-
     if session.group is RenderGroup.FRESH:
         ack_session_script = bin_dir / "ack-session.sh"
         print(
@@ -782,6 +768,23 @@ def _print_session_row(
         f"param1={_swiftbar_quote(session.id)} "
         "terminal=false refresh=true "
         "sfimage=eraser.fill sfcolor=systemOrange"
+    )
+    # "Bookmark" — pin/unpin toggle. A native checkbox reflecting the live
+    # sidecar state; clicking flips it by handing bookmark-set.sh the opposite
+    # value (on/off), like the multi-workspace / usage-monitor toggles. Same
+    # item in the live row and inside the Bookmarks submenu (where it's always
+    # checked), so unpinning works from either place. Sits directly under
+    # *Forget* in the submenu. See spec 0012.
+    bookmark_set_script = bin_dir / "bookmark-set.sh"
+    print(
+        f"{indent}--{_t('menu.bookmark')} | "
+        "shell=/bin/bash "
+        f"param1={_swiftbar_quote(str(bookmark_set_script))} "
+        f"param2={_swiftbar_quote(session.id)} "
+        f"param3={'off' if session.is_bookmarked else 'on'} "
+        f"checked={'true' if session.is_bookmarked else 'false'} "
+        "terminal=false refresh=true "
+        "sfimage=bookmark.fill sfcolor=systemYellow"
     )
     delete_script = bin_dir / "delete-session.sh"
     print(
@@ -1186,7 +1189,8 @@ def _print_bookmarks_block(live_sessions: list[Session]) -> None:
     Sits directly under *Refresh* (spec 0012) and is **hidden when nothing
     is pinned**, so it costs a single empty sidecar read when unused. Each
     pinned session is rendered with its full submenu one level deep
-    (``indent="--"``), led by a passive "Added Xm ago" leaf.
+    (``indent="--"``); the row's right-hand label carries the bare pin age
+    (``3m``) instead of its live state duration.
 
     A pinned session still in the live list is **reused** (it was already
     parsed this tick); one that's fallen out of ``window_sec`` is **rebuilt
