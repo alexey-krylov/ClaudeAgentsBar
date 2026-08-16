@@ -22,6 +22,8 @@
   "menu.delete_session": "Supprimer…",
   "menu.mark_read": "Marquer comme lu",
   "menu.reveal_in_finder": "Afficher dans le Finder",
+  "menu.session": "Session",
+  "menu.copy_session_id": "Copier l'ID",
   "menu.bookmarks": "Favoris",
   "menu.bookmark": "Favori",
   "menu.tags": "Tags",

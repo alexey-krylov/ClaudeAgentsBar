@@ -22,6 +22,8 @@
   "menu.delete_session": "Löschen…",
   "menu.mark_read": "Als gelesen markieren",
   "menu.reveal_in_finder": "Im Finder anzeigen",
+  "menu.session": "Sitzung",
+  "menu.copy_session_id": "ID kopieren",
   "menu.bookmarks": "Lesezeichen",
   "menu.bookmark": "Lesezeichen",
   "menu.tags": "Tags",

@@ -1,6 +1,6 @@
 """CLI diagnostics — what ``claude-agents-bar doctor`` runs.
 
-Seven independent checks the user (or a Homebrew formula test, or CI) can
+Eight independent checks the user (or a Homebrew formula test, or CI) can
 read in plain text. Each returns ``(status, message)`` where status is
 ``"ok"`` / ``"warn"`` / ``"err"``. ``_run_doctor`` formats the lot,
 prints a greppable line per check, and exits non-zero only when something
@@ -14,11 +14,12 @@ imports it, so the SwiftBar hot path doesn't pay for it.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
 
-from . import core
+from . import core, sidecars
 
 
 #: Hook events the plugin needs registered in ``~/.claude/settings.json``.
@@ -128,8 +129,6 @@ def _doctor_check_swiftbar_plugin() -> tuple[str, str]:
 
 def _doctor_check_sidecar_permissions() -> tuple[str, str]:
     """Can the current user read/write every ``~/.claude/agent-state.*`` file?"""
-    import os
-
     pattern_dir = core.HOME / ".claude"
     if not pattern_dir.exists():
         # Nothing to check yet — fresh install before any hook fires.
@@ -146,6 +145,48 @@ def _doctor_check_sidecar_permissions() -> tuple[str, str]:
     if bad:
         return "warn", "; ".join(bad)
     return "ok", "sidecars readable + writable"
+
+
+#: WARN above this many files of either kind. Below it the directory is still
+#: readable by hand, which is the thing the litter actually costs you.
+_LITTER_WARN_THRESHOLD = 10
+
+
+def _doctor_check_state_dir_litter() -> tuple[str, str]:
+    """Is ``~/.claude`` accumulating orphaned temps / stale settings backups?
+
+    Two leaks the user can't see without ``ls``-ing the directory and noticing
+    by eye (issue #3): ``agent-state*.<pid>`` temp files stranded by a killed
+    writer, and ``settings.json.bak.<timestamp>`` copies from every setup run.
+    Both are self-limiting now — the render tick sweeps dead-PID temps and the
+    installers rotate backups — so a high count here means pre-fix litter that
+    was never cleaned, and the message says how to clear it.
+    """
+    state_dir = core.HOME / ".claude"
+    if not state_dir.exists():
+        return "ok", f"{state_dir} not present yet"
+    try:
+        names = [entry.name for entry in os.scandir(state_dir)]
+    except OSError as exc:
+        return "warn", f"can't scan {state_dir}: {exc}"
+    temps = [n for n in names if sidecars._TEMP_LITTER_RE.match(n)]
+    backups = [n for n in names if n.startswith("settings.json.bak.")]
+    problems = []
+    if len(temps) > _LITTER_WARN_THRESHOLD:
+        problems.append(
+            f"{len(temps)} orphaned agent-state temp files "
+            "(the render tick prunes dead-PID ones older than 5 min)"
+        )
+    if len(backups) > _LITTER_WARN_THRESHOLD:
+        problems.append(
+            f"{len(backups)} settings.json backups — keep the newest 5: "
+            "ls -t ~/.claude/settings.json.bak.* | tail -n +6 | tr '\\n' '\\0' | xargs -0 rm -f"
+        )
+    if problems:
+        return "warn", "; ".join(problems)
+    return "ok", (
+        f"{len(temps)} temp files, {len(backups)} settings backups in {state_dir}"
+    )
 
 
 def _doctor_check_editor_app() -> tuple[str, str]:
@@ -253,6 +294,7 @@ def _run_doctor() -> int:
         ("tsv/", _doctor_check_tsv_freshness(now)),
         ("plugin/", _doctor_check_swiftbar_plugin()),
         ("perms/", _doctor_check_sidecar_permissions()),
+        ("litter/", _doctor_check_state_dir_litter()),
         ("editor/", _doctor_check_editor_app()),
         ("notify/", _doctor_check_terminal_notifier()),
         ("usage/", _doctor_check_usage_monitor(now)),

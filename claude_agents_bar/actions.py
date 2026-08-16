@@ -229,10 +229,15 @@ def _collect_stats_today(now: int) -> dict:
 #: Models within the same family share this rank, then break ties on
 #: the model id string so two opus releases stay adjacent and ordered.
 #: Non-Claude / unparseable strings sort after all Claude families.
+#: Keep in step with :data:`core._MODEL_FAMILY_BADGES` — a family that has
+#: a badge but no rank here still renders its glyph, it just sorts into the
+#: non-Claude tail alongside OpenRouter strings (which is how Fable read
+#: before 1.4.2).
 _MODEL_FAMILY_RANK: dict[str, int] = {
     "claude-opus-": 0,
     "claude-sonnet-": 1,
     "claude-haiku-": 2,
+    "claude-fable-": 3,
 }
 
 

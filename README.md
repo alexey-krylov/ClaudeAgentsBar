@@ -62,9 +62,11 @@ tells you which sessions are close to auto-compact.
 
 **Session titles** — by default the row shows Claude's auto-generated `ai-title`, the same label VSCode displays, so the menu stays consistent with the editor. Set `use_session_titles_for_menubar: true` to instead use the **name** from Claude's response marker (`*-- Session name - Summary*`) — your own wording in place of the English auto-title. Either way that marker drives the spoken notifications (its primary purpose) — see [docs/configuration.md § Spoken summary](./docs/configuration.md#spoken-summary). Claude agents are instructed to end each reply with this line; you set that up once in your CLAUDE.md.
 
-**Submenu per row** — *Mark as read*, *Forget*, *Delete…*, *Reveal
-in Finder*, plus git branch, the model running the session
-(`claude-opus-4-7` / `claude-sonnet-4-6` / …) and context %.
+**Submenu per row** — *Mark as read*, *Forget*, *Bookmark*, a *Session ▸*
+submenu (*Reveal in Finder*, *Copy ID* — the id you hand to another agent or
+to `claude --resume` — and *Delete…*) and a *Tags ▸* color picker, plus git
+branch, the model running the session (`claude-opus-4-7` / `claude-fable-5`
+/ …) and context %.
 Hovering the context line shows the session's last `tool_use` as a
 tooltip (e.g. `Read: main.py`, `Bash: pytest …`) — quick answer to
 *what is this session doing?* without expanding anything.

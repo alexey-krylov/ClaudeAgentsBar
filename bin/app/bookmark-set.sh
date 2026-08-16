@@ -53,7 +53,9 @@ acquire_lock() {
 release_lock() {
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
-trap release_lock EXIT
+# The trap also drops ``$TMP`` — ``awk … && mv`` strands it on a non-zero
+# awk or a kill mid-write (issue #3). ``rm -f ""`` is a silent no-op.
+trap 'rm -f "${TMP:-}"; release_lock' EXIT
 acquire_lock
 
 TMP="${BOOKMARKS_FILE}.$$"

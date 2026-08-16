@@ -84,8 +84,14 @@ fi
 # ── Write the snapshot atomically (only when we have one) ────────────────────
 if [ -n "$snapshot" ]; then
     tmp="${USAGE_SIDECAR}.$$.tmp"
+    # Drop the temp on *both* failure branches (issue #3). The redirect creates
+    # the file before printf writes to it, so a failed write leaves a 0-byte
+    # orphan behind — and this runs every ~8 s off the statusLine, the highest
+    # write frequency in the project.
     if printf '%s' "$snapshot" > "$tmp" 2>/dev/null; then
         mv "$tmp" "$USAGE_SIDECAR" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else
+        rm -f "$tmp" 2>/dev/null
     fi
 fi
 

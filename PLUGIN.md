@@ -83,8 +83,9 @@ ClaudeAgentsBar/
 │       ├── ack-fresh.sh     ← Tools: acknowledge all fresh sessions
 │       ├── forget-session.sh ← submenu: hide one session
 │       ├── forget-sessions.sh ← Tools: wipe TSV + clicks, set dismiss cutoff
-│       ├── delete-session.sh ← submenu: delete a session
-│       ├── reveal-session.sh ← submenu: open in Finder
+│       ├── delete-session.sh ← Session ▸: delete a session
+│       ├── reveal-session.sh ← Session ▸: open transcript in Finder
+│       ├── copy-session-id.sh ← Session ▸: session id → clipboard
 │       ├── open-config.sh   ← Tools: open config.json
 │       └── stats-today.sh   ← Tools: show session activity summary
 ├── config.example.json      ← bundled starter config

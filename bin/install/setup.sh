@@ -87,10 +87,56 @@ NOTIFY_WAIT_HOOK_DST="${HOOKS_DIR}/notify-wait.sh"
 SENSOR_DST="${HOOKS_DIR}/usage-sensor.sh"
 STATUSLINE_ORIG_FILE="${HOME}/.claude/agent-state.statusline.orig"
 SETTINGS="${HOME}/.claude/settings.json"
-SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
 say()  { printf '  %s\n' "$*"; }
 step() { printf '\n→ %s\n' "$*"; }
+
+#: How many ``<file>.bak.<timestamp>`` copies to keep per backed-up file.
+#: Backups exist for the "setup mangled my settings" rollback, and that need
+#: is served by the last few, not by six months of them. Re-running setup
+#: after every upgrade is the documented workflow, so without rotation this
+#: grew without limit — 33 files / ~950 KB on the reporter's machine
+#: (issue #3). Paired with the "only back up when the file actually changes"
+#: guard below, which kills the burst-of-15-in-20-seconds retry-loop case.
+BACKUPS_KEPT=5
+
+# Keep the $2 newest "$1".bak.* files, delete the rest. Newest-first via
+# ``ls -t``; ``tail -n +N`` skips the ones we keep. Silent when there are
+# fewer than $2 — the glob simply produces nothing.
+rotate_backups() {
+    local prefix="$1" keep="$2" old
+    ls -t "${prefix}".bak.* 2>/dev/null | tail -n "+$((keep + 1))" | while IFS= read -r old; do
+        rm -f "$old"
+    done
+}
+
+# Publish "$1".tmp over "$1" only when it differs, taking a rotated backup
+# first. Returns 0 when the file changed, 1 when it was already identical —
+# so callers can report accurately. The temp file is consumed either way.
+publish_if_changed() {
+    local target="$1" label="${2:-$1}"
+    if [ ! -f "${target}.tmp" ]; then
+        # No candidate to publish — a caller whose jq failed. Refuse rather
+        # than letting `cmp` report "differs" and `mv` a file that isn't there.
+        say "WARN: $label — nothing staged to publish"
+        return 1
+    fi
+    if cmp -s "${target}.tmp" "$target"; then
+        rm -f "${target}.tmp"
+        say "$label already up to date — not rewritten, no backup taken"
+        # Rotate anyway: a machine that accumulated backups before this fix
+        # would otherwise keep them forever, because the merge it re-runs is
+        # now a no-op and would never reach the rotation below.
+        rotate_backups "$target" "$BACKUPS_KEPT"
+        return 1
+    fi
+    local backup="${target}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp "$target" "$backup"
+    say "backup written: $backup"
+    mv "${target}.tmp" "$target"
+    rotate_backups "$target" "$BACKUPS_KEPT"
+    return 0
+}
 
 
 step "1. Verify required tools"
@@ -162,9 +208,6 @@ PATCH_EXPANDED="$(/usr/bin/python3 -c \
     "import os,sys; print(sys.stdin.read().replace('\${HOME}', os.environ['HOME']))" \
     < "$HOOK_PATCH")"
 
-cp "$SETTINGS" "$SETTINGS_BACKUP"
-say "backup written: $SETTINGS_BACKUP"
-
 # Two-phase merge:
 #   1. Purge any *existing* matchers under .hooks that reference
 #      ``agent-state.sh`` — these were written by a previous setup run
@@ -190,8 +233,13 @@ say "backup written: $SETTINGS_BACKUP"
         .;
         .hooks[$kv.key] = ((.hooks[$kv.key] // []) + $kv.value)
     )
-' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-say "merged"
+' "$SETTINGS" > "${SETTINGS}.tmp" || { rm -f "${SETTINGS}.tmp"; echo "jq merge failed — settings.json left untouched"; exit 1; }
+# The merge is deterministic, so a re-run over already-merged settings
+# produces a byte-identical file. Publishing (and backing up) only on a real
+# change is what stops every upgrade from dropping another .bak — issue #3.
+if publish_if_changed "$SETTINGS" "settings.json"; then
+    say "merged"
+fi
 
 
 step "5b. Wire usage sensor into statusLine (chain)"
@@ -215,10 +263,16 @@ case "$CUR_STATUSLINE" in
             NEW_STATUSLINE="bash \"$SENSOR_DST\""
             say "no existing statusLine — installing sensor only (blank status line)"
         fi
-        /usr/bin/jq --arg cmd "$NEW_STATUSLINE" \
+        if /usr/bin/jq --arg cmd "$NEW_STATUSLINE" \
             '.statusLine = ((.statusLine // {}) + {type: "command", command: $cmd})' \
-            "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        say "statusLine wired"
+            "$SETTINGS" > "${SETTINGS}.tmp"; then
+            if publish_if_changed "$SETTINGS" "statusLine"; then
+                say "statusLine wired"
+            fi
+        else
+            rm -f "${SETTINGS}.tmp"
+            say "WARN: couldn't wire statusLine — settings.json left untouched"
+        fi
         ;;
 esac
 
@@ -228,9 +282,15 @@ esac
 # statusLine (covers the idempotent re-run path above).
 case "$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)" in
     *usage-sensor.sh*)
-        /usr/bin/jq '.statusLine.refreshInterval = 8' \
-            "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        say "statusLine refreshInterval set to 8s"
+        if /usr/bin/jq '.statusLine.refreshInterval = 8' \
+            "$SETTINGS" > "${SETTINGS}.tmp"; then
+            if publish_if_changed "$SETTINGS" "refreshInterval"; then
+                say "statusLine refreshInterval set to 8s"
+            fi
+        else
+            rm -f "${SETTINGS}.tmp"
+            say "WARN: couldn't set refreshInterval — settings.json left untouched"
+        fi
         ;;
 esac
 
@@ -252,14 +312,18 @@ USAGE_MON_DIR="${HOME}/.claude/cab-usage-monitor"
 mkdir -p "$USAGE_MON_DIR"
 CLAUDE_JSON="${HOME}/.claude.json"
 if [ -f "$CLAUDE_JSON" ]; then
-    cp "$CLAUDE_JSON" "${CLAUDE_JSON}.bak.$(date +%Y%m%d-%H%M%S)"
+    # Same skip-if-unchanged + rotation as settings.json: this patch is
+    # idempotent, so a re-run leaves the file byte-identical and there's
+    # nothing to back up (issue #3). Note the backup now happens *after* a
+    # successful jq — the previous order took one even when jq then failed.
     if /usr/bin/jq --arg p "$USAGE_MON_DIR" \
         '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})
          | .fullscreenUpsellSeenCount = ([(.fullscreenUpsellSeenCount // 0), 99] | max)
          | .hasCompletedOnboarding = true' \
         "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" 2>/dev/null; then
-        mv "${CLAUDE_JSON}.tmp" "$CLAUDE_JSON"
-        say "trusted $USAGE_MON_DIR + silenced onboarding prompts in ~/.claude.json"
+        if publish_if_changed "$CLAUDE_JSON" "~/.claude.json"; then
+            say "trusted $USAGE_MON_DIR + silenced onboarding prompts in ~/.claude.json"
+        fi
     else
         rm -f "${CLAUDE_JSON}.tmp"
         say "WARN: couldn't update ~/.claude.json — usage monitor may hit a trust/onboarding prompt"

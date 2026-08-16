@@ -22,6 +22,8 @@
   "menu.delete_session": "Удалить…",
   "menu.mark_read": "Отметить прочитанным",
   "menu.reveal_in_finder": "Показать в Finder",
+  "menu.session": "Сессия",
+  "menu.copy_session_id": "Скопировать ID",
   "menu.bookmarks": "Закладки",
   "menu.bookmark": "Закладка",
   "menu.tags": "Теги",

@@ -282,7 +282,8 @@ ClaudeAgentsBar/
 │   │   └── teardown.sh      ← reverses setup
 │   └── app/                 ← actions invoked from menu rows / Tools
 │       ├── open-session.sh, delete-session.sh, forget-*.sh, ack-*.sh
-│       ├── open-config.sh, reveal-session.sh, stats-today.sh
+│       ├── open-config.sh, reveal-session.sh, copy-session-id.sh
+│       ├── stats-today.sh
 │       └── (all executable, called by SwiftBar with session id, paths, etc.)
 ├── tests/                   ← unittest suite (stdlib only)
 ├── locales/                 ← i18n JSON per language

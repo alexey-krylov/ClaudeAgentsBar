@@ -114,6 +114,7 @@ from .sidecars import (
     gc_clicks,
     gc_forget,
     gc_sidecar,
+    gc_temp_files,
     last_tool_use_summary,
     last_usage_tokens,
     last_user_message_preview,

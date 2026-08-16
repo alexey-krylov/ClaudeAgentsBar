@@ -27,6 +27,7 @@ import datetime as _dt
 import functools
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -550,6 +551,92 @@ def gc_tags(stale: set[str]) -> None:
     ``docs/specs/0013-tags.md``.
     """
     _gc_two_col_sidecar(core.TAGS_PATH, stale, _tags_lock, "tags")
+
+
+#: Litter left by the shell writers' ``"$FILE".$$`` atomic-write pattern:
+#: ``agent-state.tsv.5312``, ``agent-state.subagents.tsv.90``,
+#: ``agent-state.usage.771.tmp``. Deliberately narrow — the suffix must be
+#: *digits* (optionally ``.tmp``), which keeps the live sidecars
+#: (``agent-state.tags``, ``agent-state.quiet-until``, …) and the
+#: ``agent-state.tsv.lock.d`` mutex directories out of the match.
+_TEMP_LITTER_RE = re.compile(r"^agent-state[.\w-]*\.(\d+)(?:\.tmp)?$")
+
+#: Don't touch a temp file younger than this. A dead PID is already strong
+#: evidence the writer is gone, but PIDs get recycled — pairing liveness with
+#: an age floor means a *fresh* file belonging to a recycled PID is left alone
+#: even in the unlucky case. Well above the worst-case duration of any write
+#: we do (all of them are one ``awk`` over a few-KB TSV).
+_TEMP_LITTER_MIN_AGE_SEC = 300
+
+#: macOS ``kern.maxproc`` upper bound. A suffix outside 1..99999 was never a
+#: PID, so the file isn't ours — a timestamp-suffixed backup someone dropped
+#: in the directory, say. Two reasons this matters beyond tidiness:
+#: ``os.kill`` raises ``OverflowError`` (*not* an ``OSError``, so nothing here
+#: would catch it) above 2^31-1, and any out-of-range value that did get
+#: through would read as a dead PID and be deleted.
+_MAX_PID = 99999
+
+
+def _pid_alive(pid: int) -> bool:
+    """``True`` if the PID exists, *including* one owned by another user.
+
+    Mirrors :func:`keep_awake._is_alive` but inverts the ``PermissionError``
+    verdict: there we're deciding whether to signal a process we spawned, here
+    we're deciding whether to delete someone's file. EPERM means the PID is
+    live, so we back off — as does anything else we don't understand.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError, ValueError):
+        return True
+    return True
+
+
+def gc_temp_files(now: int) -> None:
+    """Sweep orphaned ``agent-state*.<pid>`` temp files out of ``~/.claude``.
+
+    Every sidecar writer is a shell script doing ``awk … > "$FILE.$$" && mv``.
+    The ``&&`` is right — a failed awk must not clobber the sidecar — and the
+    EXIT traps now drop ``$TMP`` on the failure path, but nothing survives a
+    ``SIGKILL`` between the redirect creating the file and the ``mv``. That
+    path leaves a (usually 0-byte) orphan behind forever, and the state hook
+    runs on *every* tool-use event, so they accumulate: 82 files in three
+    weeks on the reporter's machine. See issue #3.
+
+    Cost is one ``scandir`` of ``~/.claude`` per tick — a flat directory of a
+    few dozen entries, no file reads — and ``kill(pid, 0)`` only for names that
+    already match the litter pattern, which is normally zero of them.
+
+    Fails soft: an unreadable directory or an undeletable file is skipped.
+    """
+    state_dir = core.HOME / ".claude"
+    try:
+        entries = list(os.scandir(state_dir))
+    except OSError:
+        return
+    for entry in entries:
+        match = _TEMP_LITTER_RE.match(entry.name)
+        if match is None:
+            continue
+        pid = int(match.group(1))
+        if not 1 <= pid <= _MAX_PID:
+            # Not a PID, so not one of our temps — leave it alone.
+            continue
+        try:
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            if now - int(entry.stat().st_mtime) < _TEMP_LITTER_MIN_AGE_SEC:
+                continue
+        except OSError:
+            continue
+        if _pid_alive(pid):
+            continue
+        try:
+            os.unlink(entry.path)
+        except OSError:
+            pass
 
 
 def gc_clicks(stale: set[str]) -> None:

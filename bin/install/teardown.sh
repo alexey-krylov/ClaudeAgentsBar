@@ -27,10 +27,45 @@ NOTIFY_WAIT_HOOK_DST="${HOME}/.claude/hooks/notify-wait.sh"
 SENSOR_DST="${HOME}/.claude/hooks/usage-sensor.sh"
 STATUSLINE_ORIG_FILE="${HOME}/.claude/agent-state.statusline.orig"
 SETTINGS="${HOME}/.claude/settings.json"
-SETTINGS_BACKUP="${SETTINGS}.bak.$(date +%Y%m%d-%H%M%S)"
 
 say()  { printf '  %s\n' "$*"; }
 step() { printf '\n→ %s\n' "$*"; }
+
+#: Kept in step with setup.sh — both write into the same ``.bak.*`` family,
+#: so both have to rotate it or the count still grows (issue #3).
+BACKUPS_KEPT=5
+
+rotate_backups() {
+    local prefix="$1" keep="$2" old
+    ls -t "${prefix}".bak.* 2>/dev/null | tail -n "+$((keep + 1))" | while IFS= read -r old; do
+        rm -f "$old"
+    done
+}
+
+# Publish "$1".tmp over "$1" only when it differs, taking a rotated backup
+# first. Returns 1 when the file was already identical. Mirrors setup.sh.
+publish_if_changed() {
+    local target="$1" label="${2:-$1}"
+    if [ ! -f "${target}.tmp" ]; then
+        # No candidate to publish — a caller whose jq failed. Refuse rather
+        # than letting `cmp` report "differs" and `mv` a file that isn't there.
+        say "WARN: $label — nothing staged to publish"
+        return 1
+    fi
+    if cmp -s "${target}.tmp" "$target"; then
+        rm -f "${target}.tmp"
+        say "$label already clean — not rewritten, no backup taken"
+        # Rotate anyway — see the note in setup.sh.
+        rotate_backups "$target" "$BACKUPS_KEPT"
+        return 1
+    fi
+    local backup="${target}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp "$target" "$backup"
+    say "backup: $backup"
+    mv "${target}.tmp" "$target"
+    rotate_backups "$target" "$BACKUPS_KEPT"
+    return 0
+}
 
 
 step "1. Stop background processes we own"
@@ -79,8 +114,6 @@ fi
 
 step "4. Strip our hook entries from settings.json"
 if [ -f "$SETTINGS" ]; then
-    cp "$SETTINGS" "$SETTINGS_BACKUP"
-    say "backup: $SETTINGS_BACKUP"
     # Walk the "hooks" map and drop any matcher whose command references
     # our agent-state.sh, then collapse the resulting empty arrays and
     # empty event entries so we don't leave dangling structure behind.
@@ -95,8 +128,12 @@ if [ -f "$SETTINGS" ]; then
             | .value |= map(select((.hooks // []) | length > 0))
         )
         | .hooks |= with_entries(select((.value | length) > 0))
-    ' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-    say "cleaned"
+    ' "$SETTINGS" > "${SETTINGS}.tmp" || { rm -f "${SETTINGS}.tmp"; echo "jq strip failed — settings.json left untouched"; exit 1; }
+    # A second teardown has nothing left to strip, so the result is identical
+    # and no backup is taken (issue #3).
+    if publish_if_changed "$SETTINGS" "settings.json"; then
+        say "cleaned"
+    fi
 
     # Restore the original statusLine (spec 0011). setup.sh saved whatever the
     # user had before we wrapped it. Only touch a statusLine that's still ours
@@ -108,14 +145,26 @@ if [ -f "$SETTINGS" ]; then
             if [ -f "$STATUSLINE_ORIG_FILE" ] && [ -s "$STATUSLINE_ORIG_FILE" ]; then
                 ORIG_STATUSLINE=$(cat "$STATUSLINE_ORIG_FILE")
                 # Restore the original command and drop our refreshInterval.
-                /usr/bin/jq --arg c "$ORIG_STATUSLINE" \
+                if /usr/bin/jq --arg c "$ORIG_STATUSLINE" \
                     '.statusLine.command = $c | del(.statusLine.refreshInterval)' \
-                    "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-                say "restored original statusLine"
+                    "$SETTINGS" > "${SETTINGS}.tmp"; then
+                    if publish_if_changed "$SETTINGS" "statusLine"; then
+                        say "restored original statusLine"
+                    fi
+                else
+                    rm -f "${SETTINGS}.tmp"
+                    say "WARN: couldn't restore statusLine — settings.json left untouched"
+                fi
             else
-                /usr/bin/jq 'del(.statusLine)' \
-                    "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-                say "removed sensor statusLine (no original to restore)"
+                if /usr/bin/jq 'del(.statusLine)' \
+                    "$SETTINGS" > "${SETTINGS}.tmp"; then
+                    if publish_if_changed "$SETTINGS" "statusLine"; then
+                        say "removed sensor statusLine (no original to restore)"
+                    fi
+                else
+                    rm -f "${SETTINGS}.tmp"
+                    say "WARN: couldn't remove statusLine — settings.json left untouched"
+                fi
             fi
             rm -f "$STATUSLINE_ORIG_FILE"
             ;;

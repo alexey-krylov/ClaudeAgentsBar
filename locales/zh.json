@@ -22,6 +22,8 @@
   "menu.delete_session": "删除…",
   "menu.mark_read": "标记为已读",
   "menu.reveal_in_finder": "在访达中显示",
+  "menu.session": "会话",
+  "menu.copy_session_id": "复制 ID",
   "menu.bookmarks": "书签",
   "menu.bookmark": "书签",
   "menu.tags": "标签",

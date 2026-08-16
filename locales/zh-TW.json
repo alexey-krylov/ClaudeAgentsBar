@@ -23,6 +23,8 @@
   "menu.delete_session": "刪除…",
   "menu.mark_read": "標示為已讀",
   "menu.reveal_in_finder": "在 Finder 中顯示",
+  "menu.session": "工作階段",
+  "menu.copy_session_id": "複製 ID",
   "menu.bookmarks": "書籤",
   "menu.bookmark": "書籤",
   "menu.tags": "標籤",

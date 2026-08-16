@@ -5,6 +5,94 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.4.2 — 2026-08-16
+
+### Added
+
+- **`Session ▸` submenu on every row, with *Copy ID*.** *Reveal in Finder* and
+  *Delete…* were flat items on the row; they now sit inside a `Session ▸`
+  submenu (*Reveal in Finder* → *Copy ID* → *Delete…*) around a new **Copy
+  ID**, which puts the session id on the clipboard with no trailing newline.
+  Grouping them costs one hop and buys two things: the row's top level is down
+  to the actions you actually reach for, and the destructive one is no longer
+  a mis-click away from *Bookmark*. That id is what you hand to another agent ("the session `<id>`
+  running in parallel") or to `claude --resume`, and reading it off the menu
+  beats digging it out of `~/.claude/projects/`. The id also rides as the
+  item's tooltip, so you can see what you're about to copy. Both items act on
+  the session as an object rather than on its state, which is why they're
+  grouped one level down. New action script `bin/app/copy-session-id.sh`,
+  invoked via `/bin/bash` so a lost executable bit can't kill the item.
+
+### Changed
+
+- **Fable now sorts with the Claude families in *Stats → Models*.** 1.4.0 gave
+  Fable its ⓕ badge but not a rank in the family-ordering table, so a Fable
+  session rendered its glyph and then sorted into the non-Claude tail
+  alongside OpenRouter strings. It now ranks after haiku. A test pins the two
+  tables together so the next family can't be added to one and not the other.
+
+### Fixed
+
+- **Temp files and settings backups no longer pile up in `~/.claude`**
+  (issue #3). Two independent leaks:
+
+  - *Orphaned `agent-state*.<pid>` temp files.* Every sidecar writer does
+    `awk … > "$FILE.$$" && mv`. The `&&` is correct — a failed `awk` must not
+    clobber the sidecar — but it meant the temp survived whenever `awk` exited
+    non-zero, and the EXIT trap only released the lock. The traps in
+    `agent-state.sh` (both write paths), `record-click.sh`, `ack-session.sh`,
+    `forget-session.sh`, `tag-set.sh` and `bookmark-set.sh` now drop `$TMP`
+    too. That closes the error path; a `SIGKILL` between the redirect and the
+    `mv` is beyond any trap, so the render tick also sweeps
+    `agent-state*.<pid>` files whose owning PID is dead **and** which are older
+    than five minutes (the age floor is the guard against PID recycling). The
+    state hook runs on every tool-use event, so this accumulated fast — 82
+    files in three weeks on the reporter's machine.
+
+  - *Unbounded `settings.json.bak.<timestamp>` copies.* `setup.sh` and
+    `teardown.sh` wrote one on every run, unconditionally and without
+    rotation — 33 files there, 15 of them from a single install session's
+    retry loop. Both merges are deterministic, so they now compare the result
+    against the current file and skip **both** the backup and the write when
+    nothing changed, then keep only the five newest backups. Rotation runs on
+    the unchanged path too, so a machine that already accumulated backups
+    clears them on its next `setup` rather than keeping them forever. The same
+    guard covers the `~/.claude.json` backup.
+
+- **A failed `awk` no longer publishes a half-written state sidecar.**
+  `delete-session.sh` paired `|| true` with an unconditional `mv`, so a
+  non-zero `awk` moved whatever landed in the temp file over
+  `agent-state.tsv`. It now commits only on a clean `awk` and drops the temp
+  otherwise — same shape as the bookmarks block below it.
+
+- **A non-PID numeric suffix no longer breaks the whole menu.** The litter
+  sweep passed whatever digits it matched straight to `os.kill`, which raises
+  `OverflowError` — *not* an `OSError`, so nothing caught it — above 2^31-1. A
+  single `~/.claude/agent-state.tsv.20260513184649` was enough to take the
+  exception out of `collect_sessions` and replace the entire menu with the red
+  error item on every tick. Suffixes are now screened against the macOS PID
+  range (1–99999) before the liveness check, which also stops an out-of-range
+  value from reading as "dead" and getting deleted.
+
+- **`setup` / `teardown` back up `settings.json` before *every* write.**
+  Routing the hook merge through the new skip-if-unchanged guard left the
+  statusLine steps (5b/5c in setup, the restore block in teardown) writing the
+  file with no backup at all whenever the merge itself was a no-op — exactly
+  the documented re-run-after-upgrade path. Every `settings.json` write now
+  goes through the same guard, and the guard refuses to publish when the
+  staged file is missing (a failed `jq`) instead of trying to `mv` it.
+
+- **The usage sensor no longer leaks a temp on a failed write.**
+  `usage-sensor.sh` removed its temp only when the `mv` failed, not when the
+  redirect did — and it runs every ~8 s off the statusLine, the highest write
+  frequency in the project.
+
+- **`doctor` reports state-directory litter.** A new `litter/` check counts
+  orphaned temp files and `settings.json` backups, warns above ten of either,
+  and prints the command to clear the backups. Existing litter predates the
+  fixes above and won't clean itself, so the check tells you it's there
+  instead of leaving you to notice by eye.
+
 ## 1.4.1 — 2026-07-06
 
 ### Changed

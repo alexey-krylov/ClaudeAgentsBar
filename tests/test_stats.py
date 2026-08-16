@@ -122,10 +122,11 @@ class TestStatsHelpers(unittest.TestCase):
         )
 
     def test_model_sort_key_orders_claude_families(self):
-        # Stable sort gives opus → sonnet → haiku → non-Claude.
+        # Stable sort gives opus → sonnet → haiku → fable → non-Claude.
         models = [
             "claude-haiku-4-5",
             "openrouter/gpt-4",
+            "claude-fable-5",
             "claude-opus-4-7",
             "claude-sonnet-4-6",
         ]
@@ -135,9 +136,35 @@ class TestStatsHelpers(unittest.TestCase):
                 "claude-opus-4-7",
                 "claude-sonnet-4-6",
                 "claude-haiku-4-5",
+                "claude-fable-5",
                 "openrouter/gpt-4",
             ],
         )
+
+    def test_every_badged_family_has_a_sort_rank(self):
+        # The two tables are read together in the Models block; a family with
+        # a badge but no rank renders its glyph and then sorts into the
+        # non-Claude tail, which is how Fable read before 1.4.2.
+        badged = {prefix for prefix, _ in plugin.core._MODEL_FAMILY_BADGES}
+        self.assertEqual(badged, set(plugin.actions._MODEL_FAMILY_RANK))
+
+    def test_fable_ranks_ahead_of_non_claude_providers(self):
+        with patch.object(plugin.core, "_lang", return_value="en"):
+            body = plugin._format_stats_dialog({
+                "sessions": 2, "turns": 9,
+                "total_tokens": 0, "prompt_tokens": 0, "cache_read_tokens": 0,
+                "top_projects": [],
+                "model_counts": {
+                    "openrouter/gpt-4": 5,
+                    "claude-fable-5": 1,
+                },
+                "subagents": 0,
+                "subagent_model_counts": {},
+            })
+        self.assertIn("ⓕ claude-fable-5: 1", body)
+        # Fable is a Claude family, so it sorts above the ⓜ tail despite the
+        # lower count.
+        self.assertLess(body.index("claude-fable-5"), body.index("openrouter/gpt-4"))
 
 
 if __name__ == "__main__":

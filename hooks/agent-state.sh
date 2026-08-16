@@ -142,7 +142,12 @@ if [ -n "${AGENT_ID:-}" ]; then
     mkdir -p "$(dirname "$SUBAGENT_STATE_FILE")"
     touch "$SUBAGENT_STATE_FILE"
 
-    trap 'release_lock "$SUBAGENT_LOCK_DIR"' EXIT
+    # The EXIT trap also drops the temp file: the write below is
+    # ``awk … > "$TMP" && mv``, so a non-zero awk — or a kill mid-write —
+    # would otherwise strand ``$TMP`` in ~/.claude forever (issue #3). ``${TMP:-}``
+    # because the trap is installed before TMP is assigned, and ``rm -f ""`` is a
+    # silent no-op; after a successful mv the path is gone and this is one too.
+    trap 'rm -f "${TMP:-}"; release_lock "$SUBAGENT_LOCK_DIR"' EXIT
     acquire_lock "$SUBAGENT_LOCK_DIR"
 
     TMP="${SUBAGENT_STATE_FILE}.$$"
@@ -187,7 +192,9 @@ fi
 mkdir -p "$(dirname "$PARENT_STATE_FILE")"
 touch "$PARENT_STATE_FILE"
 
-trap 'release_lock "$PARENT_LOCK_DIR"' EXIT
+# The trap also drops ``$TMP`` — ``awk … && mv`` strands it on a non-zero
+# awk or a kill mid-write (issue #3). ``rm -f ""`` is a silent no-op.
+trap 'rm -f "${TMP:-}"; release_lock "$PARENT_LOCK_DIR"' EXIT
 acquire_lock "$PARENT_LOCK_DIR"
 
 TMP="${PARENT_STATE_FILE}.$$"

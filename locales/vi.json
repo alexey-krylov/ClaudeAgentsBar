@@ -22,6 +22,8 @@
   "menu.delete_session": "Xóa…",
   "menu.mark_read": "Đánh dấu đã đọc",
   "menu.reveal_in_finder": "Hiện trong Finder",
+  "menu.session": "Phiên",
+  "menu.copy_session_id": "Sao chép ID",
   "menu.bookmarks": "Dấu trang",
   "menu.bookmark": "Dấu trang",
   "menu.tags": "Thẻ",

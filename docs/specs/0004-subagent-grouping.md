@@ -154,7 +154,12 @@ Every parent row picks up an inline badge right of the title
 | ⓞ | `claude-opus-*` |
 | ⓢ | `claude-sonnet-*` |
 | ⓗ | `claude-haiku-*` |
+| ⓕ | `claude-fable-*` (added in 1.4.0, after this spec was written) |
 | ⓜ | anything else (OpenRouter, custom endpoint, …) |
+
+Families rank in that order in the *Stats → Models* block too; a family
+with a badge but no rank sorts into the non-Claude tail, which is what
+Fable did until 1.4.2.
 
 The submenu picks up a non-clickable info row carrying the full
 model string, sitting between the existing branch line and the

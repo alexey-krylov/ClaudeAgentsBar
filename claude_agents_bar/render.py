@@ -232,6 +232,11 @@ def collect_sessions(now: int) -> list[Session]:
     stripped. Cheap when there's nothing to drop; we only take the lock
     + rewrite when stale rows exist.
     """
+    # Orphaned ``agent-state*.<pid>`` temp files are the one piece of litter no
+    # EXIT trap can clean up (the writer was SIGKILLed), so the render path
+    # sweeps them — one scandir of a flat directory, same opportunistic stance
+    # as the sidecar row GC below. Issue #3.
+    sidecars.gc_temp_files(now)
     sidecar = sidecars.read_sidecar()
     clicks = sidecars.read_clicks()
     forget = sidecars.read_forget()
@@ -786,22 +791,7 @@ def _print_session_row(
         "terminal=false refresh=true "
         "sfimage=bookmark.fill sfcolor=systemYellow"
     )
-    delete_script = bin_dir / "delete-session.sh"
-    print(
-        f"{indent}--{_t('menu.delete_session')} | "
-        f"shell={_swiftbar_quote(str(delete_script))} "
-        f"param1={_swiftbar_quote(session.id)} "
-        "terminal=false refresh=true "
-        "sfimage=trash.fill sfcolor=systemRed"
-    )
-    reveal_script = bin_dir / "reveal-session.sh"
-    print(
-        f"{indent}--{_t('menu.reveal_in_finder')} | "
-        f"shell={_swiftbar_quote(str(reveal_script))} "
-        f"param1={_swiftbar_quote(session.id)} "
-        "terminal=false refresh=false "
-        "sfimage=doc.text.magnifyingglass sfcolor=systemGray"
-    )
+    _print_session_picker(session, indent, bin_dir)
     _print_tags_picker(session, indent, bin_dir)
     if session.git_branch:
         # Project + branch are split across two submenu lines so each
@@ -873,6 +863,61 @@ def _print_session_row(
             print(context_line)
     if session.subagents:
         _print_subagent_block(session, indent=indent)
+
+
+def _print_session_picker(session: Session, indent: str, bin_dir: Path) -> None:
+    """Emit the ``Session ▸`` submenu — the actions on a row's *session object*.
+
+    All three act on the session as a thing on disk rather than on its state:
+    *Reveal in Finder* opens the raw JSONL transcript, *Copy ID* puts the
+    session id on the clipboard so it can be handed to another agent ("work
+    with the session <id> running in parallel") or to ``claude --resume``, and
+    *Delete…* removes the transcript and its sidecar rows. Grouping them one
+    level down keeps the row's top-level list to the actions the user reaches
+    for often, and puts the destructive one behind an extra hop. *Reveal in
+    Finder* and *Delete…* both used to sit flat on the row.
+
+    Threaded through the same ``indent`` as the rest of the row, so the
+    items land at ``----`` in the live list and ``------`` inside a
+    Bookmarks entry.
+    """
+    print(f"{indent}--{_t('menu.session')} | sfimage=doc.badge.gearshape")
+    reveal_script = bin_dir / "reveal-session.sh"
+    print(
+        f"{indent}----{_t('menu.reveal_in_finder')} | "
+        f"shell={_swiftbar_quote(str(reveal_script))} "
+        f"param1={_swiftbar_quote(session.id)} "
+        "terminal=false refresh=false "
+        "sfimage=doc.text.magnifyingglass sfcolor=systemGray"
+    )
+    # Run through /bin/bash rather than the script path so the item keeps
+    # working if the executable bit is lost in packaging — same guard as
+    # bookmark-set.sh / tag-set.sh. The id itself rides as a tooltip: it's
+    # the thing being copied, and seeing it before clicking beats pasting
+    # to find out which session you grabbed.
+    copy_script = bin_dir / "copy-session-id.sh"
+    print(
+        f"{indent}----{_t('menu.copy_session_id')} | "
+        "shell=/bin/bash "
+        f"param1={_swiftbar_quote(str(copy_script))} "
+        f"param2={_swiftbar_quote(session.id)} "
+        f"tooltip={_swiftbar_quote(session.id)} "
+        "terminal=false refresh=false "
+        "sfimage=doc.on.doc sfcolor=systemGray"
+    )
+    # Delete… lives here rather than flat on the row: it acts on the session
+    # object (transcript + tool-results + sidecar rows), same as its two
+    # neighbours, and burying a destructive action one level down is the
+    # point. It keeps refresh=true — unlike the read-only items above, the
+    # row it belongs to disappears.
+    delete_script = bin_dir / "delete-session.sh"
+    print(
+        f"{indent}----{_t('menu.delete_session')} | "
+        f"shell={_swiftbar_quote(str(delete_script))} "
+        f"param1={_swiftbar_quote(session.id)} "
+        "terminal=false refresh=true "
+        "sfimage=trash.fill sfcolor=systemRed"
+    )
 
 
 def _print_tags_picker(session: Session, indent: str, bin_dir: Path) -> None:

@@ -22,6 +22,8 @@
   "menu.delete_session": "Delete…",
   "menu.mark_read": "Mark as read",
   "menu.reveal_in_finder": "Reveal in Finder",
+  "menu.session": "Session",
+  "menu.copy_session_id": "Copy ID",
   "menu.bookmarks": "Bookmarks",
   "menu.bookmark": "Bookmark",
   "menu.tags": "Tags",

@@ -239,8 +239,15 @@ fi
 # to reason about and immune to future schema changes.
 if [ -f "$STATE_FILE" ]; then
     TMP="${STATE_FILE}.$$"
-    /usr/bin/awk -F'\t' -v sid="$SID" '$1 != sid' "$STATE_FILE" > "$TMP" || true
-    mv "$TMP" "$STATE_FILE"
+    # Commit only on a clean awk, and drop the temp otherwise — same shape as
+    # the bookmarks block below. The previous ``|| true`` + unconditional mv
+    # published a half-written sidecar when awk failed, and a kill between the
+    # redirect and the mv stranded ``$TMP`` in ~/.claude (issue #3).
+    if /usr/bin/awk -F'\t' -v sid="$SID" '$1 != sid' "$STATE_FILE" > "$TMP"; then
+        mv "$TMP" "$STATE_FILE"
+    else
+        rm -f "$TMP"
+    fi
 fi
 
 # Drop the session's bookmark too, if it was pinned — deleting a session
