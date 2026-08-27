@@ -4,18 +4,20 @@ See which Claude Code session needs you, without ⌘-tabbing through
 windows. A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin for
 macOS.
 
+**[Screenshots and a live demo of the dropdown →](https://alexey-krylov.github.io/ClaudeAgentsBar/)**
+
 ```
    ◐ 🟡1 🟢2 🔵1        ← menu bar: icon + colour counters
    ┌───────────────────────────────────────────────────────────┐
-   │ 🟡 Refactor authentication middleware · working           │
+   │ 🟡 backend · Refactor authentication middleware · working │
    ├───────────────────────────────────────────────────────────┤
    │ 🟢 Add unit tests for the parser · 7m ago                 │
-   │ 🟢 Investigate failing CI run · 18m ago                   │
+   │ 🟢 ❯ Investigate failing CI run · 18m ago                 │
    ├───────────────────────────────────────────────────────────┤
-   │ 🔵 Wire up the new settings page · 32m ago                │
+   │ 🔵 ⓦ Wire up the new settings page · 32m ago              │
    ├───────────────────────────────────────────────────────────┤
    │ ⚪ Migrate config to TOML · 2h 14m ago                    │
-   │ …                                                          │
+   │ …                                                         │
    └───────────────────────────────────────────────────────────┘
 ```
 
@@ -93,6 +95,12 @@ subagent (description, model chip, current tool, runtime). The
 parent row stays 🟡 while any subagent is in flight, so a long
 `Task` doesn't drift the parent into a misleading 🟢.
 
+**Subscription limits** — *Statistics* carries your 5-hour and
+weekly windows as two bars, yellow past 60 %, red past 85 %, so you
+know how much runway is left before you start a big refactor. Read
+through Claude Code's own `get_usage`: no inference, no quota spent,
+nothing running in the background.
+
 **Tools submenu** — bulk actions (acknowledge all / forget all),
 today's activity summary (sessions, turns, tokens, breakdown by
 model and subagent), a *Notifications* block with one-click pause /
@@ -139,6 +147,13 @@ Sessions started **after** setup populate the sidecar TSV and show
 live state. Sessions started before will appear (from JSONL mtime)
 but as plain `idle` until they emit their next hook event.
 
+Upgrading works the same way — `brew upgrade` ships code, `setup`
+re-does the wiring:
+
+```bash
+brew upgrade claude-agents-bar && claude-agents-bar setup
+```
+
 Verify everything is wired up:
 
 ```bash
@@ -154,8 +169,8 @@ brew uninstall claude-agents-bar
 ```
 
 Symlinks and hook entries are removed (a fresh `settings.json` backup
-is taken first). The four sidecar files under `~/.claude/` are left
-in place — they may contain forget/dismiss cutoffs you want to keep.
+is taken first). The sidecar files under `~/.claude/` are left in
+place — they hold your bookmarks, tags, and forget/dismiss cutoffs.
 
 > **No Homebrew?** See [docs/install-manual.md](./docs/install-manual.md)
 > for a git-clone install path.
@@ -220,3 +235,5 @@ change, fork the repo and send a PR. [PLUGIN.md](./PLUGIN.md) covers
 the architecture and dev workflow. User-visible changes go in
 [CHANGELOG.md](./CHANGELOG.md). For installing or upgrading via a
 Claude Code agent, see [CLAUDE.md](./CLAUDE.md).
+
+MIT — see [LICENSE](./LICENSE).
