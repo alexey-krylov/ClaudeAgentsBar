@@ -4,7 +4,6 @@
     "name": "Deutsch (German)",
     "fallback": "en"
   },
-
   "menu.refresh": "Aktualisieren",
   "menu.tools": "Werkzeuge",
   "menu.ack_all": "Alle bestätigen",
@@ -35,21 +34,16 @@
   "tag.purple": "Lila",
   "tag.white": "Weiß",
   "menu.no_sessions": "Keine Sitzungen in den letzten {duration}",
-
   "title.no_title": "(ohne Titel)",
-
   "error.plugin": "Plug-in-Fehler: {exc}",
-
   "age.seconds": "{n}s",
   "age.minutes": "{n}m",
   "age.hours": "{n}h",
   "age.days": "{n}T",
   "age.hours_minutes": "{h}h {m}m",
-
   "label.blocked": "wartet {duration}",
   "tooltip.cwd_collision": "Ein anderer Agent arbeitet in diesem Ordner!",
   "tooltip.worktree": "Agent-Änderungen im Worktree isoliert",
-
   "dialog.delete.title": "Diese Claude-Code-Sitzung löschen?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nSchließe zuerst den Tab der Sitzung in deiner IDE — sonst legt die Erweiterung beim nächsten Tippen eine neue Sitzung an.",
   "dialog.delete.label.transcript": "Transkript:",
@@ -60,7 +54,6 @@
   "dialog.not_found.body": "Kein Transkript für Sitzung {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "Keine Sitzungs-ID an delete-session.sh übergeben.",
-
   "stats.title": "Claude Code — heute",
   "stats.sessions": "Sitzungen heute: {n}",
   "stats.turns": "Anfragen: {n}",
@@ -70,14 +63,12 @@
   "stats.top_projects": "Top-Projekte:",
   "stats.models": "Modelle:",
   "stats.subagents": "Subagents heute: {n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "Subagents ({n}/{total})",
   "menu.subagent_working": "läuft · {duration}",
   "menu.subagent_done": "fertig · vor {age}",
   "menu.subagent_age_ago": "vor {age}",
   "menu.subagent_ran": "in {duration}",
-
   "menu.notifications": "Benachrichtigungen",
   "quiet.status_off": "Stille Stunden: aus",
   "quiet.status_scheduled_active": "Stille Stunden: {start} — {end} (aktiv, noch {remaining})",
@@ -91,7 +82,6 @@
   "quiet.bypass_cancel": "Umgehung abbrechen",
   "notify.mode_voice": "Banner und Sprache",
   "notify.mode_banner": "Nur Banner",
-
   "menu.keep_awake": "Wachhalten",
   "keep_awake.status_off": "Wachhalten: aus",
   "keep_awake.status_auto_holding": "Wachhalten: auto · hält, während {n} arbeiten",
@@ -99,5 +89,9 @@
   "keep_awake.status_always": "Wachhalten: immer · hält bis deaktiviert",
   "keep_awake.mode_off": "Aus",
   "keep_awake.mode_auto": "Auto (wachhalten, solange Sitzungen laufen)",
-  "keep_awake.mode_always": "Immer (wachhalten bis deaktiviert)"
+  "keep_awake.mode_always": "Immer (wachhalten bis deaktiviert)",
+  "menu.ide_groups": "Gruppierung",
+  "ide_groups.mode_submenu": "Wie in der Erweiterung",
+  "ide_groups.mode_inline": "Nur Name",
+  "ide_groups.mode_off": "Aus"
 }

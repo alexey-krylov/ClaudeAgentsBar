@@ -215,6 +215,23 @@ plugin knows. If the editor CLI can't be resolved or a custom
 `editor_url_scheme` is set, it falls back to opening the deeplink
 directly (which lands in the frontmost window).
 
+## Clicking a terminal session does nothing
+
+Rows marked with a grey `>` symbol run in a terminal, not in the editor, so clicking
+one drives Terminal.app or iTerm2 over AppleScript to raise the tab that owns
+the session. macOS gates that behind **Automation** permission and asks once,
+on the first click. If the prompt was dismissed or denied, the click quietly
+does nothing afterwards.
+
+Fix: *System Settings → Privacy & Security → Automation → SwiftBar*, and
+enable the entry for Terminal (or iTerm). Then click the row again.
+
+Related: if you use a terminal other than those two, there's no tty-to-tab
+lookup available, so the click falls through to opening a **new** window with
+`claude --resume <id>` instead of raising the running one. Same outcome if the
+session's process has exited or is detached under `screen`/`tmux` with no
+window attached.
+
 ## "Configuration…" opens TextEdit, not my editor
 
 `open -t` follows the system *Default text editor* binding. To change

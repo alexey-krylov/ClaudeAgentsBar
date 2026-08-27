@@ -36,7 +36,7 @@ If you only want to *install* and use it, see [README.md](./README.md).
 ```
 
 The plugin is **stateless** — every 5 s it rebuilds the entire menu from
-six sources:
+these sources:
 
 1. The JSONL transcripts Claude Code already writes (titles, cwd).
    - **Session title sourcing** (priority order):
@@ -59,6 +59,21 @@ six sources:
    sessions* under Tools.
 6. `agent-state.forget`, a `{sid → forget_ts}` map written by the per-row
    *Forget* action — same cutoff semantics as dismiss, scoped to one row.
+7. The **editor's own globalState** — the one source outside `~/.claude`
+   and the only one we don't write. `~/Library/Application Support/<Editor>/
+   User/globalStorage/state.vscdb` (SQLite; table `ItemTable`, key
+   `Anthropic.claude-code`) holds the session **groups** the user made in the
+   IDE sidebar, under one `sessionGroups:<workspace>` key per workspace.
+   `sidecars.read_ide_groups()` opens it `mode=ro`, folds every workspace into
+   one `{sid → group name}` map, and validates each field against the
+   extension's own limits. Gated by `show_ide_groups` (default on, and the
+   knob gates the *lookup*, not just the rendering); fail-soft to `{}` on
+   anything unexpected. Read-only by design — see
+   [ADR-0019](./docs/adr/0019-ide-groups-read-only-globalstate.md) and
+   [spec 0015](./docs/specs/0015-ide-session-groups.md).
+
+Plus the local classifiers written by menu actions —
+`agent-state.bookmarks` (spec 0012) and `agent-state.tags` (spec 0013).
 
 There is no daemon, no IPC, no shared in-memory state. This makes the
 plugin trivial to test (just run the script) and trivial to reason about.
@@ -289,6 +304,22 @@ A few signals ride on top of the bucket colour:
   the branch glyph is suppressed, so the row never carries two red markers. The
   worktree marker is always on (no config knob), mirroring the collision
   fork; `is_worktree` is already computed each tick, so it adds no cost.
+* **The folder line is a click target.** The project / cwd line in a row's
+  submenu carries `shell=/usr/bin/open param1=<cwd>` (`render._reveal_cwd_params`),
+  opening the working directory in Finder, and always carries the full path as
+  its tooltip. Not to be confused with *Session ▸ Reveal in Finder*, which
+  reveals the JSONL transcript instead.
+* **Prefixes before the title.** Two more markers ride *ahead* of the title
+  rather than after it, dimmed (`_ANSI_STALE`) so it reads as provenance
+  rather than status: the IDE group name plus a middle dot
+  (`Session.ide_group`, spec 0015, in `inline` mode). A session running in a
+  terminal (`Session.is_terminal`, spec 0016) is marked instead by the
+  `greaterthan.square` SF Symbol in grey — an `sfimage`, so SwiftBar draws it
+  at the head of the row, ahead of the state circle. That marker also changes where the
+  row's click goes — `bin/app/open-terminal-session.sh` instead of
+  `open-session.sh`, because the editor deeplink would resume the transcript
+  in a second, parallel session. Both survive `show_state=False` (the
+  Bookmarks submenu): they classify the session, they don't report its state.
 
 ## Touching the hook
 
@@ -540,6 +571,20 @@ because SwiftBar's lexer parses param values before the shell sees
 them. Use `_swiftbar_quote()`.
 
 ### Tips that bit us
+
+* **A submenu parent needs a `| params` block — and `sfimage=` alone isn't
+  enough.** Live-menu findings, in order: no params → doesn't expand;
+  `font=Menlo` → expands, no icon; `sfimage=…` alone → icon, doesn't expand;
+  `font=Menlo sfimage=…` → both. So a parent that wants an icon must carry a
+  text parameter alongside it. Note the working examples elsewhere in the menu
+  (*Session ▸*, *Tags ▸*) sit one level down from a *row*, not from *Tools*,
+  which may be why `sfimage=` alone is enough for them.
+* **A submenu parent needs a `| params` block.** SwiftBar only expands an
+  item into a submenu when it parses a parameter section, so a bare
+  `🟡1 · Backend` line renders as inert text and its `--` children never
+  attach — the arrow may still draw, but the submenu opens empty. Any
+  parameter will do; the IDE-group headers carry `font=Menlo` because they
+  want no icon. Cost us a round of "the groups don't expand" (spec 0015).
 
 * The menu-bar title (first line) silently truncates when too long;
   keep base64 images out of it. SF Symbols + emoji are crisp at every

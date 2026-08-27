@@ -4,7 +4,6 @@
     "name": "中文 (Chinese, Simplified)",
     "fallback": "en"
   },
-
   "menu.refresh": "刷新",
   "menu.tools": "工具",
   "menu.ack_all": "全部确认",
@@ -35,21 +34,16 @@
   "tag.purple": "紫色",
   "tag.white": "白色",
   "menu.no_sessions": "最近 {duration} 内没有会话",
-
   "title.no_title": "(无标题)",
-
   "error.plugin": "插件错误：{exc}",
-
   "age.seconds": "{n} 秒",
   "age.minutes": "{n} 分",
   "age.hours": "{n} 小时",
   "age.days": "{n} 天",
   "age.hours_minutes": "{h} 小时 {m} 分",
-
   "label.blocked": "等待 {duration}",
   "tooltip.cwd_collision": "另一个代理正在此文件夹中工作！",
   "tooltip.worktree": "代理改动已隔离在 worktree 中",
-
   "dialog.delete.title": "删除此 Claude Code 会话？",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\n请先在 IDE 中关闭该会话的标签页 — 否则在已删除会话中输入会创建一个新会话。",
   "dialog.delete.label.transcript": "转录文件：",
@@ -60,7 +54,6 @@
   "dialog.not_found.body": "未找到会话 {sid} 的转录",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "delete-session.sh 未收到会话 ID。",
-
   "stats.title": "Claude Code — 今日",
   "stats.sessions": "今日会话：{n}",
   "stats.turns": "轮次：{n}",
@@ -70,14 +63,12 @@
   "stats.top_projects": "活跃项目：",
   "stats.models": "模型：",
   "stats.subagents": "今日子代理：{n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "子代理（{n}/{total}）",
   "menu.subagent_working": "运行中 · {duration}",
   "menu.subagent_done": "已完成 · {age} 前",
   "menu.subagent_age_ago": "{age} 前",
   "menu.subagent_ran": "用时 {duration}",
-
   "menu.notifications": "通知",
   "quiet.status_off": "勿扰时段：关闭",
   "quiet.status_scheduled_active": "勿扰时段：{start} — {end}（生效中，剩余 {remaining}）",
@@ -91,7 +82,6 @@
   "quiet.bypass_cancel": "取消忽略",
   "notify.mode_voice": "横幅和语音",
   "notify.mode_banner": "仅横幅",
-
   "menu.keep_awake": "保持唤醒",
   "keep_awake.status_off": "保持唤醒：关闭",
   "keep_awake.status_auto_holding": "保持唤醒：自动 · 有 {n} 个会话运行中，正在保持",
@@ -99,5 +89,9 @@
   "keep_awake.status_always": "保持唤醒：始终 · 保持至关闭",
   "keep_awake.mode_off": "关闭",
   "keep_awake.mode_auto": "自动（有会话运行时保持唤醒）",
-  "keep_awake.mode_always": "始终（保持唤醒直至关闭）"
+  "keep_awake.mode_always": "始终（保持唤醒直至关闭）",
+  "menu.ide_groups": "分组",
+  "ide_groups.mode_submenu": "与扩展一致",
+  "ide_groups.mode_inline": "仅名称",
+  "ide_groups.mode_off": "关闭"
 }

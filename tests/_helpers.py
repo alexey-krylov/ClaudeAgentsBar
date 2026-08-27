@@ -35,3 +35,25 @@ def _make_session(**overrides):
     )
     defaults.update(overrides)
     return plugin.Session(**defaults)
+
+
+def isolate_mode_sidecars(testcase):
+    """Point the live-mode sidecars at an empty temp dir for one test.
+
+    ``core.ide_groups_mode()`` folds the ``agent-state.ide-groups.mode``
+    sidecar over the config knob, so a test that sets the knob would
+    otherwise be overridden by whatever mode the developer's own menu is in
+    — making the suite pass or fail depending on the machine. Redirect the
+    path to a file that doesn't exist and the reader falls back to config,
+    which is what these tests are about.
+    """
+    import tempfile
+    from pathlib import Path
+
+    tmp = tempfile.TemporaryDirectory()
+    testcase.addCleanup(tmp.cleanup)
+    original = plugin.core.IDE_GROUPS_MODE_PATH
+    plugin.core.IDE_GROUPS_MODE_PATH = Path(tmp.name) / "absent.mode"
+    testcase.addCleanup(
+        lambda: setattr(plugin.core, "IDE_GROUPS_MODE_PATH", original)
+    )

@@ -4,7 +4,6 @@
     "name": "English",
     "note": "Source-of-truth locale. Every other file falls back here for missing keys. Placeholders use Python str.format syntax — keep {n}, {h}, {m}, {title}, {sid}, {duration}, {exc}, {transcript_label}, {transcript_path}, {artifacts_section}, {sess}, {until}, {wk}, {target} identical across locales."
   },
-
   "menu.refresh": "Refresh",
   "menu.tools": "Tools",
   "menu.ack_all": "Acknowledge all",
@@ -35,21 +34,16 @@
   "tag.purple": "Purple",
   "tag.white": "White",
   "menu.no_sessions": "No sessions in the last {duration}",
-
   "title.no_title": "(no title)",
-
   "error.plugin": "Plugin error: {exc}",
-
   "age.seconds": "{n}s",
   "age.minutes": "{n}m",
   "age.hours": "{n}h",
   "age.days": "{n}d",
   "age.hours_minutes": "{h}h {m}m",
-
   "label.blocked": "waiting {duration}",
   "tooltip.cwd_collision": "Another agent is working in this folder!",
   "tooltip.worktree": "Agent changes isolated under worktree",
-
   "dialog.delete.title": "Delete this Claude Code session?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nClose this session's tab in your IDE first — typing into a deleted session creates a new one.",
   "dialog.delete.label.transcript": "Transcript:",
@@ -60,7 +54,6 @@
   "dialog.not_found.body": "No transcript for session {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "No session id passed to delete-session.sh.",
-
   "stats.title": "Claude Code — today",
   "stats.sessions": "Sessions today: {n}",
   "stats.turns": "Turns: {n}",
@@ -70,14 +63,12 @@
   "stats.top_projects": "Top projects:",
   "stats.models": "Models:",
   "stats.subagents": "Subagents today: {n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "Subagents ({n}/{total})",
   "menu.subagent_working": "working · {duration}",
   "menu.subagent_done": "done · {age} ago",
   "menu.subagent_age_ago": "{age} ago",
   "menu.subagent_ran": "ran {duration}",
-
   "menu.notifications": "Notifications",
   "quiet.status_off": "Quiet hours: off",
   "quiet.status_scheduled_active": "Quiet hours: {start} — {end} (active, {remaining} left)",
@@ -91,7 +82,6 @@
   "quiet.bypass_cancel": "Cancel bypass",
   "notify.mode_voice": "Banner and voice",
   "notify.mode_banner": "Banner only",
-
   "menu.keep_awake": "Keep awake",
   "keep_awake.status_off": "Keep awake: off",
   "keep_awake.status_auto_holding": "Keep awake: auto · holding while {n} working",
@@ -99,5 +89,9 @@
   "keep_awake.status_always": "Keep awake: always · holding until disabled",
   "keep_awake.mode_off": "Off",
   "keep_awake.mode_auto": "Auto (keep awake while sessions are running)",
-  "keep_awake.mode_always": "Always (keep awake until disabled)"
+  "keep_awake.mode_always": "Always (keep awake until disabled)",
+  "menu.ide_groups": "Grouping",
+  "ide_groups.mode_submenu": "As in the extension",
+  "ide_groups.mode_inline": "Name only",
+  "ide_groups.mode_off": "Off"
 }

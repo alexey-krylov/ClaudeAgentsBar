@@ -4,7 +4,6 @@
     "name": "Tiếng Việt (Vietnamese)",
     "fallback": "en"
   },
-
   "menu.refresh": "Làm mới",
   "menu.tools": "Công cụ",
   "menu.ack_all": "Đánh dấu tất cả đã đọc",
@@ -35,21 +34,16 @@
   "tag.purple": "Tím",
   "tag.white": "Trắng",
   "menu.no_sessions": "Không có phiên trong {duration} qua",
-
   "title.no_title": "(không có tiêu đề)",
-
   "error.plugin": "Lỗi plugin: {exc}",
-
   "age.seconds": "{n}s",
   "age.minutes": "{n}p",
   "age.hours": "{n}h",
   "age.days": "{n}d",
   "age.hours_minutes": "{h}h {m}p",
-
   "label.blocked": "đang chờ {duration}",
   "tooltip.cwd_collision": "Một agent khác đang làm việc trong thư mục này!",
   "tooltip.worktree": "Thay đổi của agent được cô lập trong worktree",
-
   "dialog.delete.title": "Xóa phiên Claude Code này?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nĐóng tab phiên trong IDE trước — nếu không, tiện ích sẽ tạo phiên mới khi bạn nhập tin nhắn tiếp theo.",
   "dialog.delete.label.transcript": "Bản ghi:",
@@ -60,7 +54,6 @@
   "dialog.not_found.body": "Không có bản ghi cho phiên {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "Không có id phiên được truyền cho delete-session.sh.",
-
   "stats.title": "Claude Code — hôm nay",
   "stats.sessions": "Phiên hôm nay: {n}",
   "stats.turns": "Lượt: {n}",
@@ -70,14 +63,12 @@
   "stats.top_projects": "Dự án hàng đầu:",
   "stats.models": "Mô hình:",
   "stats.subagents": "Tác nhân con hôm nay: {n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "Tác nhân con ({n}/{total})",
   "menu.subagent_working": "đang chạy · {duration}",
   "menu.subagent_done": "xong · {age} trước",
   "menu.subagent_age_ago": "{age} trước",
   "menu.subagent_ran": "trong {duration}",
-
   "menu.notifications": "Thông báo",
   "quiet.status_off": "Giờ yên tĩnh: tắt",
   "quiet.status_scheduled_active": "Giờ yên tĩnh: {start} — {end} (đang bật, còn {remaining})",
@@ -91,7 +82,6 @@
   "quiet.bypass_cancel": "Hủy bỏ qua",
   "notify.mode_voice": "Biểu ngữ và giọng nói",
   "notify.mode_banner": "Chỉ biểu ngữ",
-
   "menu.keep_awake": "Giữ thức",
   "keep_awake.status_off": "Giữ thức: tắt",
   "keep_awake.status_auto_holding": "Giữ thức: tự động · đang giữ trong khi {n} đang chạy",
@@ -99,5 +89,9 @@
   "keep_awake.status_always": "Giữ thức: luôn · giữ đến khi tắt",
   "keep_awake.mode_off": "Tắt",
   "keep_awake.mode_auto": "Tự động (giữ thức khi có phiên đang chạy)",
-  "keep_awake.mode_always": "Luôn (giữ thức đến khi tắt)"
+  "keep_awake.mode_always": "Luôn (giữ thức đến khi tắt)",
+  "menu.ide_groups": "Nhóm",
+  "ide_groups.mode_submenu": "Như trong tiện ích",
+  "ide_groups.mode_inline": "Chỉ tên",
+  "ide_groups.mode_off": "Tắt"
 }

@@ -161,5 +161,14 @@
   "multi_workspace_mode": true,
 
   "// editor_focus_settle_sec": "Only used when multi_workspace_mode is true. Seconds to wait after raising the window before firing the deeplink, so the anchor tab finishes rendering and the resumed chat lands on top of it instead of under it. Default 0.1. Lower trims latency but risks landing on the file under load; 0 skips the wait. Range 0..5.",
-  "editor_focus_settle_sec": 0.3
+  "editor_focus_settle_sec": 0.3,
+
+  "// ide_groups_mode": "How the session groups you made in the Claude Code IDE sidebar (extension 2.1.241+) are shown. \"submenu\": one top-level entry per group, in the sidebar's own order, each with per-state counters (Backend · 🟡1 🟢2) and its sessions inside; ungrouped sessions follow below a separator. \"inline\" (default): flat list with the group name prefixing the row title (group · title, dimmed and truncated) plus a submenu line under Tags. \"off\": no grouping, and the editor database is not opened at all. Read-only in every mode — create, rename, and move groups in the editor; the bar picks the change up on the next tick. Switchable live from Tools → Grouping, whose pick overrides this knob.",
+  "ide_groups_mode": "inline",
+
+  "// ide_state_db_paths": "Explicit paths to the editors' globalState databases (…/User/globalStorage/state.vscdb), overriding autodetection. Empty (default) probes the known editors — Code, VSCodium, Cursor, Windsurf, Positron and their Insiders variants — leading with the one matching editor_url_scheme. Set this only for a non-standard install location, or to pin the lookup to a single editor.",
+  "ide_state_db_paths": [],
+
+  "// terminal_app": "Terminal emulator used when clicking a session that runs in a terminal (the rows marked with a dim ❯). auto (default) drives iTerm2 when it is installed and macOS Terminal otherwise; force one with \"Terminal\" or \"iTerm\". Only these two are supported — they are the ones exposing a tab's tty to AppleScript, which is what lets the bar raise the window that already runs the session. Editor sessions are unaffected: they still open through the deeplink.",
+  "terminal_app": "auto"
 }

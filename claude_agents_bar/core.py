@@ -318,6 +318,52 @@ EDITOR_SCHEME_APP = {
     "positron://": "/Applications/Positron.app",
 }
 
+#: Session **groups** (spec 0015) live in the editor's own globalState, not
+#: under ``~/.claude``: ``~/Library/Application Support/<dir>/User/
+#: globalStorage/state.vscdb`` — a SQLite database whose ``ItemTable`` holds
+#: one JSON blob per extension. ``<dir>`` per URL scheme, so the editor the
+#: user actually clicks into (``Config.editor_url_scheme``) is searched first.
+#: Keep the keys in lockstep with :data:`EDITOR_SCHEME_APP`.
+IDE_SUPPORT_DIR_BY_SCHEME = {
+    "vscode://": "Code",
+    "vscodium://": "VSCodium",
+    "cursor://": "Cursor",
+    "windsurf://": "Windsurf",
+    "positron://": "Positron",
+}
+
+#: Editors with no URL scheme of their own in the allow-list, searched after
+#: the mapped ones so a side-by-side Insiders install still contributes groups.
+IDE_EXTRA_SUPPORT_DIRS = ("Code - Insiders", "VSCodium - Insiders")
+
+#: Path of a globalState database relative to its Application Support dir.
+IDE_STATE_DB_RELPATH = ("User", "globalStorage", "state.vscdb")
+
+#: ``ItemTable`` key holding the Claude Code extension's globalState blob.
+#: Publisher case matters — the extension writes ``Anthropic``, capitalised.
+IDE_GLOBALSTATE_KEY = "Anthropic.claude-code"
+
+#: Prefix of the per-workspace group keys inside that blob. The suffix is the
+#: workspace's realpath, which we never need: session ids are unique, so the
+#: groups from every workspace fold into one ``id → name`` map.
+IDE_SESSION_GROUPS_PREFIX = "sessionGroups:"
+
+#: Accepted values of :attr:`Config.ide_groups_mode` — see its docstring.
+IDE_GROUPS_MODES = frozenset({"submenu", "inline", "off"})
+
+#: Live grouping mode picked from *Tools → Grouping*, overriding
+#: :attr:`Config.ide_groups_mode`. Same sidecar-beats-config pattern as
+#: :data:`KEEP_AWAKE_MODE_PATH` / :data:`MULTI_WORKSPACE_MODE_PATH`.
+IDE_GROUPS_MODE_PATH = HOME / ".claude" / "agent-state.ide-groups.mode"
+
+#: Limits mirrored from the extension's own validator (2.1.241) so a corrupt
+#: or hostile blob can't blow up the render tick: at most this many groups,
+#: this many session ids in total, and this many characters per id / name.
+IDE_GROUPS_MAX = 100
+IDE_GROUP_SESSION_IDS_MAX = 1000
+IDE_GROUP_ID_MAX = 200
+IDE_GROUP_NAME_MAX = 100
+
 
 #: Strict 24h ``HH:MM-HH:MM`` matcher for ``Config.quiet_hours``. Mirrors
 #: the same regex in ``hooks/_notify-common.sh`` — keep them in lockstep
@@ -435,6 +481,17 @@ INTERACTIVE_ENTRYPOINTS = frozenset({
     "claude-vscode",
     "cli",
 })
+
+#: Entrypoints belonging to a session a human started in a **terminal**, not
+#: in the editor. They get a ``❯`` marker on the row and a different click
+#: target — the editor deeplink would resume the transcript in a second,
+#: parallel session instead of taking the user to the one that's running.
+#: See ``docs/specs/0016-terminal-sessions.md``.
+TERMINAL_ENTRYPOINTS = frozenset({"cli"})
+
+#: Terminal emulators we know how to drive over AppleScript. ``"auto"`` picks
+#: iTerm when it's installed, else macOS Terminal.
+_TERMINAL_APPS = frozenset({"auto", "Terminal", "iTerm"})
 
 #: Default search order for the user config. Override either entry by setting
 #: ``CLAUDE_AGENTS_BAR_CONFIG`` to an explicit path. XDG semantics apply: an
@@ -724,6 +781,34 @@ class Config:
     #: Model the background ``claude`` session runs under (so pings are cheap).
     #: Default Haiku. Overridable in case the model id changes.
     usage_ping_model: str = "claude-haiku-4-5-20251001"
+    #: How to surface the session **groups** the user made in the IDE sidebar
+    #: (spec 0015). One of :data:`IDE_GROUPS_MODES`:
+    #:
+    #: * ``"inline"`` (default) — flat list, with the group name prefixing the
+    #:   row title (``group · title``) and a submenu line carrying it in full.
+    #:   The menu keeps its live-state ordering, and the group reads as one
+    #:   more label on the row.
+    #: * ``"submenu"`` — one top-level entry per group, in the sidebar's own
+    #:   order, carrying per-state counters; its sessions live inside.
+    #:   Ungrouped sessions follow, below a separator.
+    #: * ``"off"`` — no grouping, and the *lookup* is skipped too: no editor
+    #:   database is opened at all.
+    #:
+    #: Groups are read-only either way — renaming and moving stay in the IDE
+    #: (see ``docs/adr/0019-*``). The lookup costs one SQLite read per tick
+    #: (<1 ms measured), so the two visible modes are equally cheap.
+    ide_groups_mode: str = "inline"
+    #: Terminal emulator used when clicking a **terminal** session's row
+    #: (spec 0016). ``"auto"`` (default) drives iTerm when it's installed and
+    #: macOS Terminal otherwise; force one with ``"Terminal"`` / ``"iTerm"``.
+    #: Only consulted for sessions whose entrypoint is in
+    #: :data:`TERMINAL_ENTRYPOINTS` — editor sessions still open by deeplink.
+    terminal_app: str = "auto"
+    #: Explicit globalState database paths, overriding autodetection. Empty
+    #: (default) means "probe the known editors, the one matching
+    #: :attr:`editor_url_scheme` first". Set it when the editor lives
+    #: somewhere non-standard, or to pin the lookup to a single install.
+    ide_state_db_paths: tuple[str, ...] = ()
 
     # --- Loader ------------------------------------------------------------ #
 
@@ -849,6 +934,44 @@ class Config:
             data["notify_on_usage"], bool
         ):
             coerced["notify_on_usage"] = data["notify_on_usage"]
+        # Grouping mode — a mode string like keep_awake / usage_monitor:
+        # it selects a rendering shape, so an unknown value is refused rather
+        # than guessed at.
+        if "ide_groups_mode" in data:
+            raw_mode = data["ide_groups_mode"]
+            if isinstance(raw_mode, str) and raw_mode in IDE_GROUPS_MODES:
+                coerced["ide_groups_mode"] = raw_mode
+            else:
+                _warn(
+                    f"config: ignoring invalid ide_groups_mode={raw_mode!r}; "
+                    f"allowed: {sorted(IDE_GROUPS_MODES)}"
+                )
+
+        # Terminal emulator for terminal-session clicks. Restricted to the two
+        # we can actually drive — the value selects an AppleScript branch, so
+        # an unknown name would just make clicks do nothing.
+        def _require_terminal_app(value: str) -> str:
+            if value not in _TERMINAL_APPS:
+                raise ValueError(f"must be one of {sorted(_TERMINAL_APPS)}")
+            return value
+
+        take("terminal_app", "terminal_app", str, _require_terminal_app)
+
+        # Explicit database paths — a list of non-empty strings. Anything else
+        # in the list is dropped individually (one bad entry shouldn't cost the
+        # user the others); a non-list value drops the whole knob with a warning
+        # and autodetection stays in charge.
+        if "ide_state_db_paths" in data:
+            raw_paths = data["ide_state_db_paths"]
+            if isinstance(raw_paths, list):
+                coerced["ide_state_db_paths"] = tuple(
+                    p for p in raw_paths if isinstance(p, str) and p.strip()
+                )
+            else:
+                _warn(
+                    f"config: ignoring invalid ide_state_db_paths={raw_paths!r}; "
+                    "expected a list of paths"
+                )
 
         # Usage-monitor master switch (spec 0011) — a mode string like
         # keep_awake (it controls a process lifecycle, so refuse rather than
@@ -1042,6 +1165,48 @@ def write_multi_workspace_mode(on: bool) -> int:
         )
     except OSError as exc:
         _warn(f"multi_workspace: write failed: {exc}")
+        return 1
+    return 0
+
+
+def ide_groups_mode() -> str:
+    """Current grouping mode (``"submenu"`` / ``"inline"`` / ``"off"``).
+
+    Sidecar (:data:`IDE_GROUPS_MODE_PATH`) takes precedence over
+    :attr:`Config.ide_groups_mode` — once the user picks an option under
+    *Tools → Grouping* that's the runtime truth; the config knob is only the
+    first-launch default. Same pattern as :func:`usage_monitor_mode`. An
+    absent / unreadable / unrecognised sidecar falls back to config.
+
+    Call this rather than reading the config field: it's what gates both the
+    rendering *and* the database lookup in
+    :func:`sidecars.read_ide_groups`.
+    """
+    try:
+        raw = IDE_GROUPS_MODE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        raw = ""
+    if raw in IDE_GROUPS_MODES:
+        return raw
+    return CONFIG.ide_groups_mode
+
+
+def write_ide_groups_mode(mode: str) -> int:
+    """Persist the grouping mode to the sidecar; 0 on success, 1 on failure.
+
+    Written by *Tools → Grouping* via ``bin/app/ide-groups-set.sh`` →
+    ``--ide-groups <mode>``. An unknown mode is refused rather than written:
+    a garbage sidecar would silently fall back to config on every tick, which
+    reads to the user as "the menu item does nothing".
+    """
+    if mode not in IDE_GROUPS_MODES:
+        _warn(f"ide_groups: refusing invalid mode {mode!r}")
+        return 1
+    try:
+        IDE_GROUPS_MODE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        IDE_GROUPS_MODE_PATH.write_text(mode + "\n", encoding="utf-8")
+    except OSError as exc:
+        _warn(f"ide_groups: write failed: {exc}")
         return 1
     return 0
 
@@ -1512,6 +1677,36 @@ class Session:
     #: for the Bookmarks submenu, so the flag renders wherever the row does.
     #: See ``docs/specs/0013-tags.md``.
     tag: str | None = None
+    #: Name of the IDE sidebar group this session was dragged into, or
+    #: ``None`` when it's ungrouped (or the feature is off / unreadable).
+    #: Unlike :attr:`tag` this is *not* ours: it's mirrored read-only out of
+    #: the editor's globalState by :func:`sidecars.read_ide_groups`, so it
+    #: changes only when the user regroups in the IDE. Set by
+    #: :func:`render.collect_sessions`. See ``docs/specs/0015-ide-session-groups.md``.
+    ide_group: str | None = None
+    #: Folder the *project* line points at: the owning repository for a
+    #: worktree checkout, else the session's own ``cwd``. Kept separate from
+    #: :attr:`cwd` because the two diverge exactly for worktrees, where the
+    #: project line must name (and open) the repo while the branch line names
+    #: (and opens) the worktree. Empty only for a session with no cwd.
+    project_dir: str = ""
+    #: Position of :attr:`ide_group` in the sidebar's own ordering, or ``None``
+    #: when ungrouped. Carried on the session so ``submenu`` mode can list
+    #: groups the way the IDE lists them without re-reading the database.
+    ide_group_order: int | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when this session was started in a terminal, not in the editor.
+
+        Drives the ``❯`` marker on the row and the click target: a terminal
+        session opens *in its terminal* (spec 0016), because the editor
+        deeplink would resume the same transcript in a second, parallel
+        session rather than take the user to the one already running. An unset
+        entrypoint (older transcripts) is not treated as a terminal session —
+        the editor deeplink is the safer default there.
+        """
+        return self.entrypoint in TERMINAL_ENTRYPOINTS
 
     @property
     def live_subagent_count(self) -> int:

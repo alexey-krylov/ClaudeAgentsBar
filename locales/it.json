@@ -4,7 +4,6 @@
     "name": "Italiano (Italian)",
     "fallback": "en"
   },
-
   "menu.refresh": "Aggiorna",
   "menu.tools": "Strumenti",
   "menu.ack_all": "Conferma tutto",
@@ -35,21 +34,16 @@
   "tag.purple": "Viola",
   "tag.white": "Bianco",
   "menu.no_sessions": "Nessuna sessione negli ultimi {duration}",
-
   "title.no_title": "(senza titolo)",
-
   "error.plugin": "Errore del plug-in: {exc}",
-
   "age.seconds": "{n}s",
   "age.minutes": "{n}m",
   "age.hours": "{n}h",
   "age.days": "{n}g",
   "age.hours_minutes": "{h}h {m}m",
-
   "label.blocked": "in attesa {duration}",
   "tooltip.cwd_collision": "Un altro agente sta lavorando in questa cartella!",
   "tooltip.worktree": "Modifiche dell'agente isolate nel worktree",
-
   "dialog.delete.title": "Eliminare questa sessione Claude Code?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nChiudi prima la scheda della sessione nel tuo IDE — altrimenti l’estensione ne creerà una nuova al prossimo messaggio.",
   "dialog.delete.label.transcript": "Trascrizione:",
@@ -60,7 +54,6 @@
   "dialog.not_found.body": "Nessuna trascrizione per la sessione {sid}",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "Nessun ID di sessione passato a delete-session.sh.",
-
   "stats.title": "Claude Code — oggi",
   "stats.sessions": "Sessioni oggi: {n}",
   "stats.turns": "Turni: {n}",
@@ -70,14 +63,12 @@
   "stats.top_projects": "Progetti principali:",
   "stats.models": "Modelli:",
   "stats.subagents": "Subagent oggi: {n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "Subagent ({n}/{total})",
   "menu.subagent_working": "in corso · {duration}",
   "menu.subagent_done": "completato · {age} fa",
   "menu.subagent_age_ago": "{age} fa",
   "menu.subagent_ran": "in {duration}",
-
   "menu.notifications": "Notifiche",
   "quiet.status_off": "Ore silenziose: disattivate",
   "quiet.status_scheduled_active": "Ore silenziose: {start} — {end} (attive, mancano {remaining})",
@@ -91,7 +82,6 @@
   "quiet.bypass_cancel": "Annulla bypass",
   "notify.mode_voice": "Banner e voce",
   "notify.mode_banner": "Solo banner",
-
   "menu.keep_awake": "Mantieni attivo",
   "keep_awake.status_off": "Mantieni attivo: disattivato",
   "keep_awake.status_auto_holding": "Mantieni attivo: auto · attivo mentre {n} lavorano",
@@ -99,5 +89,9 @@
   "keep_awake.status_always": "Mantieni attivo: sempre · attivo fino a disattivazione",
   "keep_awake.mode_off": "Disattivato",
   "keep_awake.mode_auto": "Auto (mantieni attivo mentre le sessioni lavorano)",
-  "keep_awake.mode_always": "Sempre (mantieni attivo fino a disattivazione)"
+  "keep_awake.mode_always": "Sempre (mantieni attivo fino a disattivazione)",
+  "menu.ide_groups": "Raggruppamento",
+  "ide_groups.mode_submenu": "Come nell'estensione",
+  "ide_groups.mode_inline": "Solo nome",
+  "ide_groups.mode_off": "Disattivato"
 }

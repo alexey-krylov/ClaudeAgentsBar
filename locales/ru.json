@@ -4,7 +4,6 @@
     "name": "Русский (Russian)",
     "fallback": "en"
   },
-
   "menu.refresh": "Обновить",
   "menu.tools": "Инструменты",
   "menu.ack_all": "Отметить всё прочитанным",
@@ -35,21 +34,16 @@
   "tag.purple": "Лиловый",
   "tag.white": "Белый",
   "menu.no_sessions": "Нет сессий за последние {duration}",
-
   "title.no_title": "(без названия)",
-
   "error.plugin": "Ошибка плагина: {exc}",
-
   "age.seconds": "{n}с",
   "age.minutes": "{n}м",
   "age.hours": "{n}ч",
   "age.days": "{n}д",
   "age.hours_minutes": "{h}ч {m}м",
-
   "label.blocked": "ждёт {duration}",
   "tooltip.cwd_collision": "Другой агент работает в этой же папке!",
   "tooltip.worktree": "Изменения агента изолированы в worktree",
-
   "dialog.delete.title": "Удалить эту сессию Claude Code?",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\nСначала закрой вкладку сессии в IDE — иначе при следующем сообщении расширение создаст новую.",
   "dialog.delete.label.transcript": "Транскрипт:",
@@ -60,7 +54,6 @@
   "dialog.not_found.body": "Транскрипт для сессии {sid} не найден",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "В delete-session.sh не передан id сессии.",
-
   "stats.title": "Claude Code — сегодня",
   "stats.sessions": "Сессий за сегодня: {n}",
   "stats.turns": "Реплик: {n}",
@@ -70,14 +63,12 @@
   "stats.top_projects": "Самые активные проекты:",
   "stats.models": "Модели:",
   "stats.subagents": "Субагентов за сегодня: {n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "Субагенты ({n}/{total})",
   "menu.subagent_working": "работает · {duration}",
   "menu.subagent_done": "готов · {age} назад",
   "menu.subagent_age_ago": "{age} назад",
   "menu.subagent_ran": "за {duration}",
-
   "menu.notifications": "Уведомления",
   "quiet.status_off": "Тихий режим: выкл",
   "quiet.status_scheduled_active": "Тихий режим: {start} — {end} (активен, осталось {remaining})",
@@ -91,7 +82,6 @@
   "quiet.bypass_cancel": "Отменить обход",
   "notify.mode_voice": "Баннер и озвучивание",
   "notify.mode_banner": "Только баннер",
-
   "menu.keep_awake": "Не давать заснуть",
   "keep_awake.status_off": "Не давать заснуть: выкл",
   "keep_awake.status_auto_holding": "Не давать заснуть: авто · держит, пока работают {n}",
@@ -99,5 +89,9 @@
   "keep_awake.status_always": "Не давать заснуть: всегда · держит, пока не выключите",
   "keep_awake.mode_off": "Выкл",
   "keep_awake.mode_auto": "Авто (пока работают сессии)",
-  "keep_awake.mode_always": "Всегда (пока не выключите)"
+  "keep_awake.mode_always": "Всегда (пока не выключите)",
+  "menu.ide_groups": "Группировка",
+  "ide_groups.mode_submenu": "Как в расширении",
+  "ide_groups.mode_inline": "Только название",
+  "ide_groups.mode_off": "Выключена"
 }

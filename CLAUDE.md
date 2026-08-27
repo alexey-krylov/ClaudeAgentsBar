@@ -282,6 +282,8 @@ ClaudeAgentsBar/
 │   │   └── teardown.sh      ← reverses setup
 │   └── app/                 ← actions invoked from menu rows / Tools
 │       ├── open-session.sh, delete-session.sh, forget-*.sh, ack-*.sh
+│       ├── open-terminal-session.sh  ← click target for terminal rows
+│       ├── ide-groups-set.sh   ← Tools → Grouping mode selector
 │       ├── open-config.sh, reveal-session.sh, copy-session-id.sh
 │       ├── stats-today.sh
 │       └── (all executable, called by SwiftBar with session id, paths, etc.)

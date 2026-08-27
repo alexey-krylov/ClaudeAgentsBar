@@ -74,6 +74,9 @@ restart needed.
 | `keep_awake` | `"off"` | First-launch keep-awake mode. `"off"` (default), `"auto"` (`caffeinate -i` while any session is *working*), `"always"` (until disabled). Once you click a mode in *Tools → Keep awake* the sidecar takes precedence — this knob is only consulted on a clean install. See *Keep awake* below for limits. |
 | `multi_workspace_mode` | `true` | Raise the editor window that owns a clicked session before firing the deeplink, so it lands in the right window even with several windows / a multi-root workspace open. Set to `false` for the snappy single-window path: clicks fire the deeplink directly (instant, no extra tab) but land in whatever window is frontmost. See *Multi-workspace focus* below. |
 | `editor_focus_settle_sec` | `0.1` | Only used when `multi_workspace_mode` is `true`. Seconds to wait after raising the window before firing the deeplink, so the anchor tab renders and the resumed chat lands on top of it. Lower trims latency but risks landing on the file under load; `0` skips the wait. Range `0..5`. |
+| `ide_groups_mode` | `"inline"` | How the session **groups** made in the IDE sidebar (Claude Code extension 2.1.241+) are shown. `"submenu"`: one entry per group, in the sidebar's order, with per-state counters (`🟡 🟢2 · Backend`); its sessions live inside, ungrouped ones follow below. `"inline"` (default): flat list with the group name prefixing the row title. `"off"`: no grouping, and the editor database isn't opened at all. Read-only in every mode — renaming and moving stay in the editor. See *IDE session groups* below. |
+| `ide_state_db_paths` | `[]` | Explicit paths to the editors' `state.vscdb` files, overriding autodetection. Empty (default) probes the known editors, leading with the one matching `editor_url_scheme`. Set it when your editor lives somewhere non-standard, or to pin the lookup to a single install. Ignored when `ide_groups_mode` is `"off"`. |
+| `terminal_app` | `"auto"` | Terminal emulator used when you click a session that runs **in a terminal** (marked `❯` on the row). `"auto"` drives iTerm2 when it's installed and macOS Terminal otherwise; force one with `"Terminal"` or `"iTerm"`. Editor sessions are unaffected — they still open by deeplink. See *Terminal sessions* below. |
 
 Fractional values are accepted where they make sense — e.g.
 `"window_minutes": 30` for a half-hour window, or `"fresh_minutes": 0.5`
@@ -619,6 +622,112 @@ precedence over the config knob — the knob is just the first-launch
 default, exactly like *Keep awake*). The checkmark reflects the current
 effective state, and the change applies to both dropdown rows and
 notification-banner clicks on the next tick.
+
+## IDE session groups
+
+Claude Code's IDE extension (**2.1.241** and newer) lets you file sessions
+into named groups in its sidebar. The bar mirrors that grouping, in one of
+three shapes set by `ide_groups_mode`:
+
+**`"submenu"`** — one entry per group, in the sidebar's own order,
+each carrying a counter per live state (a lone session shows just its
+circle), with its sessions inside:
+
+```
+🟡 🟢2 · Backend                     ▸
+🔵 · New group                       ▸
+──────────────────────────────────
+Ungrouped
+⚪ Something else · 1h
+```
+
+The counters exist so a folded group still answers "does anything in here
+need me". Sessions that aren't in any group follow below the separator, under
+an *Ungrouped* label — the same layout the extension's sidebar uses.
+
+**`"inline"`** (default) — a flat list, with the group name prefixing the row
+title, dimmed and truncated:
+
+```
+🟡 backend · Release 1.4.2 · 3m
+```
+
+The full name also gets its own submenu line under *Tags*.
+
+**`"off"`** — no grouping at all, and the lookup is skipped: the editor's
+database is never opened.
+
+**Switch it live from the menu**: *Tools → Grouping* offers the same three
+options ("As in the extension" / "Name only" / "Off"). Your pick is written to
+`~/.claude/agent-state.ide-groups.mode` and wins over this knob, which then
+only serves as the first-launch default — the same arrangement as *Keep awake*
+and *Multi-workspace mode*.
+
+**Read-only in every mode.** Groups are created, renamed, moved, and
+collapsed in the IDE; the bar only reflects them, picking up a rename on the
+next tick. The reason is not laziness: the data lives in the editor's own
+globalState database, which VS Code keeps in memory and rewrites wholesale,
+so anything the bar wrote there would be silently clobbered — see
+[ADR-0019](./adr/0019-ide-groups-read-only-globalstate.md).
+
+Where it reads from:
+
+```
+~/Library/Application Support/<Editor>/User/globalStorage/state.vscdb
+```
+
+`<Editor>` is `Code`, `VSCodium`, `Cursor`, `Windsurf`, `Positron`, or an
+Insiders variant. Every install is probed, starting with the one that owns
+your `editor_url_scheme` — that's where your row clicks land, so its
+grouping wins if two editors disagree about a session. Override the whole
+search with `ide_state_db_paths`.
+
+Nothing to configure for the common case. If groups don't show up:
+
+* the editor's extension is older than 2.1.241, or it hasn't been launched
+  since the update — the storage key only appears once you make a group;
+* the session is grouped in a *different* editor than the one you click
+  into, and both claim it;
+* `ide_groups_mode` is `"off"`.
+
+A missing, locked, or corrupt database is not an error condition: rows just
+render as they did before the feature existed.
+
+Worktree sessions inherit their main repo's groups — the extension strips
+the `/.claude/worktrees/<name>` suffix before storing, and the bar follows.
+
+## Terminal sessions
+
+A session you started in a terminal (`claude` in a shell, as opposed to the
+editor's sidebar) carries a dim `❯` before its title:
+
+```
+🟡 ❯ Fixing the flaky test · 3m
+```
+
+Clicking it takes you **to that terminal**, not into the editor. This isn't
+cosmetic: the editor deeplink resumes the transcript in a *new* editor-side
+session, and the terminal process keeps running — two live sessions writing
+one transcript. So terminal rows get their own click path:
+
+1. the tab that owns the process is raised (matched by tty);
+2. failing that, `tmux attach` when the session runs inside tmux;
+3. failing that, `screen -r` when it runs inside GNU screen;
+4. failing that — the session is dead or detached with no window —
+   a new window running `claude --resume <id>` in the session's folder.
+
+Nothing to configure beyond `terminal_app`, and no way to turn the routing
+off: the bar knows which sessions are terminal ones, so it always sends them
+where they actually live.
+
+**First click asks for permission.** Raising a tab means driving Terminal.app
+or iTerm2 over AppleScript, so macOS shows its Automation prompt once. Deny
+it and the click quietly does nothing — grant it in *System Settings →
+Privacy & Security → Automation → SwiftBar*.
+
+Only Terminal.app and iTerm2 are supported: they're the two emulators that
+expose a tab's tty to AppleScript, which is what makes "go to the running
+session" possible at all. In anything else, clicks land on step 4.
 
 ## Changing the refresh rate
 

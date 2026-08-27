@@ -187,6 +187,7 @@ def main() -> int:
     * ``--stats-today`` shows today's activity summary in a modal dialog.
     * ``--keep-awake <mode>`` sets the keep-awake mode (off/auto/always).
     * ``--keep-awake-shutdown`` kills any caffeinate we own (used by teardown).
+    * ``--ide-groups <mode>`` sets the grouping mode (submenu/inline/off).
     * ``--multi-workspace <on|off>`` toggles the window-focus behaviour
       (writes the :data:`core.MULTI_WORKSPACE_MODE_PATH` sidecar).
 
@@ -221,6 +222,10 @@ def main() -> int:
             core._warn(f"multi_workspace: refusing invalid value {arg!r}")
             return 1
         return core.write_multi_workspace_mode(arg == "on")
+    if len(sys.argv) > 1 and sys.argv[1] == "--ide-groups":
+        # Tools → Grouping. write_ide_groups_mode validates the mode itself,
+        # so an unknown value is refused there rather than written through.
+        return core.write_ide_groups_mode(sys.argv[2] if len(sys.argv) > 2 else "")
     if len(sys.argv) > 1 and sys.argv[1] == "--notify-audio":
         arg = sys.argv[2] if len(sys.argv) > 2 else ""
         if arg not in ("on", "off"):

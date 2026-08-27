@@ -62,6 +62,22 @@ tells you which sessions are close to auto-compact.
 
 **Session titles** — by default the row shows Claude's auto-generated `ai-title`, the same label VSCode displays, so the menu stays consistent with the editor. Set `use_session_titles_for_menubar: true` to instead use the **name** from Claude's response marker (`*-- Session name - Summary*`) — your own wording in place of the English auto-title. Either way that marker drives the spoken notifications (its primary purpose) — see [docs/configuration.md § Spoken summary](./docs/configuration.md#spoken-summary). Claude agents are instructed to end each reply with this line; you set that up once in your CLAUDE.md.
 
+**Session groups** — file sessions into named groups in the editor's
+Claude Code sidebar (extension 2.1.241+) and the menu mirrors them. By
+default the group name prefixes the row title; switch *Tools → Grouping*
+to *As in the extension* and each group folds into its own top-level
+entry, its header carrying a counter per live state (`🟡 🟢2 · Backend`)
+so a collapsed group still says whether anything inside needs you.
+Read-only — creating, renaming and moving stay in the sidebar.
+
+**Terminal sessions** — a session started in a shell rather than in the
+editor is marked with a grey `>` symbol, and clicking it raises the
+terminal tab that owns the process (Terminal.app / iTerm2, then `tmux`,
+then `screen`) instead of firing the editor deeplink, which would have
+resumed the same transcript a second time. Falls back to
+`claude --resume` in a fresh window when there's nothing live to raise.
+No opt-in.
+
 **Submenu per row** — *Mark as read*, *Forget*, *Bookmark*, a *Session ▸*
 submenu (*Reveal in Finder*, *Copy ID* — the id you hand to another agent or
 to `claude --resume` — and *Delete…*) and a *Tags ▸* color picker, plus git
@@ -80,9 +96,10 @@ parent row stays 🟡 while any subagent is in flight, so a long
 **Tools submenu** — bulk actions (acknowledge all / forget all),
 today's activity summary (sessions, turns, tokens, breakdown by
 model and subagent), a *Notifications* block with one-click pause /
-resume / bypass for quiet hours, *Keep awake* (off / auto /
-always — wraps `caffeinate -i`), a feedback link, and one-click
-jump to your `config.json`.
+resume / bypass for quiet hours, *Grouping* (how IDE session groups
+are laid out), *Keep awake* (off / auto / always — wraps
+`caffeinate -i`), a feedback link, and one-click jump to your
+`config.json`.
 
 **Audible nudges** — when a session finishes (`Stop`) or stalls on a
 permission prompt (`PermissionRequest`), the plugin plays a short
@@ -160,7 +177,7 @@ The three fields you're most likely to touch:
 | `ack_minutes` | `60` | How long an acknowledged 🔵 session stays before fading to ⚪. |
 | `menubar_icon` | Claude.app glyph | Plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>`. |
 
-Full reference (~22 fields incl. notification chimes / voice /
+Full reference (~29 fields incl. notification chimes / voice /
 quiet hours / keep-awake, icon formats, compact mode for notched
 MacBooks, refresh cadence, sidecar files on disk):
 [docs/configuration.md](./docs/configuration.md).

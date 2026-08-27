@@ -5,7 +5,6 @@
     "fallback": "zh, en",
     "note": "Taiwan terminology: 工作階段 (session), 重新整理 (refresh), 設定 (configuration), 外掛 (plugin), 文字記錄 (transcript) — diverges from zh.json (mainland)."
   },
-
   "menu.refresh": "重新整理",
   "menu.tools": "工具",
   "menu.ack_all": "全部標示為已讀",
@@ -36,21 +35,16 @@
   "tag.purple": "紫色",
   "tag.white": "白色",
   "menu.no_sessions": "最近 {duration} 內沒有工作階段",
-
   "title.no_title": "（無標題）",
-
   "error.plugin": "外掛錯誤：{exc}",
-
   "age.seconds": "{n} 秒",
   "age.minutes": "{n} 分",
   "age.hours": "{n} 小時",
   "age.days": "{n} 天",
   "age.hours_minutes": "{h} 小時 {m} 分",
-
   "label.blocked": "等待 {duration}",
   "tooltip.cwd_collision": "另一個代理正在此資料夾中工作！",
   "tooltip.worktree": "代理變更已隔離在 worktree 中",
-
   "dialog.delete.title": "刪除此 Claude Code 工作階段？",
   "dialog.delete.body": "{title}\n\n{transcript_label}\n  {transcript_path}{artifacts_section}\n\n請先在 IDE 中關閉該工作階段的分頁 — 否則在已刪除的工作階段中輸入會建立新的工作階段。",
   "dialog.delete.label.transcript": "文字記錄：",
@@ -61,7 +55,6 @@
   "dialog.not_found.body": "找不到工作階段 {sid} 的文字記錄",
   "dialog.no_sid.title": "ClaudeAgentsBar",
   "dialog.no_sid.body": "delete-session.sh 未收到工作階段 ID。",
-
   "stats.title": "Claude Code — 今日",
   "stats.sessions": "今日工作階段：{n}",
   "stats.turns": "輪次：{n}",
@@ -71,14 +64,12 @@
   "stats.top_projects": "熱門專案：",
   "stats.models": "模型：",
   "stats.subagents": "今日子代理：{n}",
-
   "row.subagent_badge": "🤖×{n}",
   "menu.subagents_header": "子代理（{n}/{total}）",
   "menu.subagent_working": "執行中 · {duration}",
   "menu.subagent_done": "已完成 · {age} 前",
   "menu.subagent_age_ago": "{age} 前",
   "menu.subagent_ran": "用時 {duration}",
-
   "menu.notifications": "通知",
   "quiet.status_off": "勿擾時段：關閉",
   "quiet.status_scheduled_active": "勿擾時段：{start} — {end}（進行中，剩餘 {remaining}）",
@@ -92,7 +83,6 @@
   "quiet.bypass_cancel": "取消略過",
   "notify.mode_voice": "橫幅與語音",
   "notify.mode_banner": "僅橫幅",
-
   "menu.keep_awake": "保持喚醒",
   "keep_awake.status_off": "保持喚醒：關閉",
   "keep_awake.status_auto_holding": "保持喚醒：自動 · 有 {n} 個工作階段執行中，持續保持",
@@ -100,5 +90,9 @@
   "keep_awake.status_always": "保持喚醒：始終 · 保持直到關閉",
   "keep_awake.mode_off": "關閉",
   "keep_awake.mode_auto": "自動（有工作階段執行時保持喚醒）",
-  "keep_awake.mode_always": "始終（保持喚醒直到關閉）"
+  "keep_awake.mode_always": "始終（保持喚醒直到關閉）",
+  "menu.ide_groups": "分組",
+  "ide_groups.mode_submenu": "與擴充功能一致",
+  "ide_groups.mode_inline": "僅名稱",
+  "ide_groups.mode_off": "關閉"
 }

@@ -28,10 +28,12 @@ import functools
 import json
 import os
 import re
+import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote
 
 from . import core
 from .core import (
@@ -748,6 +750,174 @@ def _parse_tags(raw: str) -> dict[str, str]:
     return out
 
 
+#: Characters stripped from an IDE group name before it reaches the menu.
+#: The name is free text the user typed in the editor, and it lands in a
+#: SwiftBar row where ``|`` starts the parameter list and a newline starts a
+#: new item — so both, plus any other control byte, are collapsed to a space.
+_IDE_GROUP_UNSAFE_RE = re.compile(r"[|\x00-\x1f\x7f]+")
+
+
+def _ide_state_db_paths() -> list[Path]:
+    """Candidate globalState databases, most likely editor first.
+
+    An explicit :attr:`core.Config.ide_state_db_paths` wins outright — the
+    escape hatch for a non-standard install. Otherwise we probe the known
+    editors, leading with the one that owns
+    :attr:`core.Config.editor_url_scheme`: that's where the user's clicks
+    land, so its grouping is the one to trust when two editors disagree.
+    Paths are returned unchecked; the reader skips what doesn't exist.
+    """
+    if core.CONFIG.ide_state_db_paths:
+        return [Path(p).expanduser() for p in core.CONFIG.ide_state_db_paths]
+    support = core.HOME / "Library" / "Application Support"
+    dirs: list[str] = []
+    own = core.IDE_SUPPORT_DIR_BY_SCHEME.get(core.CONFIG.editor_url_scheme)
+    if own:
+        dirs.append(own)
+    for name in (
+        *core.IDE_SUPPORT_DIR_BY_SCHEME.values(),
+        *core.IDE_EXTRA_SUPPORT_DIRS,
+    ):
+        if name not in dirs:
+            dirs.append(name)
+    return [support.joinpath(d, *core.IDE_STATE_DB_RELPATH) for d in dirs]
+
+
+def read_ide_groups() -> dict[str, str]:
+    """Mirror the IDE sidebar's session groups as ``{session_id: group_name}``.
+
+    Read-only, and off entirely when :attr:`core.Config.ide_groups_mode` is
+    ``"off"`` — the knob gates the database access itself, not just the
+    rendering, so a user who doesn't want the feature pays nothing for it.
+
+    Insertion order is meaningful: groups are walked in the order the sidebar
+    stores them, so the caller can recover the sidebar's own ordering from the
+    order names first appear (see :func:`render._ide_group_order`).
+
+    The data belongs to the editor, not to us: it lives in the Claude Code
+    extension's globalState (a JSON blob in a SQLite ``ItemTable``), keyed per
+    workspace. Session ids are unique, so every workspace's groups fold into
+    one flat map and we never have to match a session's cwd against a
+    workspace path. When several editors are installed the first one to claim
+    a session wins — see :func:`_ide_state_db_paths` for the order.
+
+    Fail-soft at every step (missing file, locked or corrupt database, alien
+    schema, non-JSON value): the worst case is ``{}`` and rows that render
+    exactly as they did before groups existed. Never raises.
+    """
+    if core.ide_groups_mode() == "off":
+        return {}
+    out: dict[str, str] = {}
+    for db in _ide_state_db_paths():
+        blob = _read_ide_globalstate(db)
+        if not blob:
+            continue
+        for sid, name in _parse_ide_groups(blob).items():
+            # setdefault, not assignment: the editor probed first owns the
+            # session, later ones only fill gaps.
+            out.setdefault(sid, name)
+    return out
+
+
+def _read_ide_globalstate(db: Path) -> dict:
+    """Return the extension's globalState blob from one database, or ``{}``.
+
+    Opened read-only (``mode=ro``) with a short timeout: the editor may hold
+    the file while running, and the menu can't afford to block on someone
+    else's writer. A missing table or a value that isn't a JSON object is
+    treated the same as a missing file.
+    """
+    if not db.is_file():
+        return {}
+    # Percent-encode the path: "Application Support" has a space, and a "?"
+    # or "#" anywhere in the path would otherwise be parsed as URI syntax.
+    uri = "file:" + quote(str(db)) + "?mode=ro"
+    try:
+        con = sqlite3.connect(uri, uri=True, timeout=0.2)
+        try:
+            row = con.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                (core.IDE_GLOBALSTATE_KEY,),
+            ).fetchone()
+        finally:
+            con.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return {}
+    if not row or not row[0]:
+        return {}
+    raw = row[0]
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="replace")
+    if not isinstance(raw, str):
+        return {}
+    try:
+        blob = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return blob if isinstance(blob, dict) else {}
+
+
+def _parse_ide_groups(blob: dict) -> dict[str, str]:
+    """Decode ``sessionGroups:*`` entries into ``{sid: group_name}``. Pure helper.
+
+    Mirrors the extension's own validator (2.1.241): every field is type-checked,
+    duplicate group ids are dropped, names are trimmed and truncated, and the
+    per-blob totals are capped (:data:`core.IDE_GROUPS_MAX`,
+    :data:`core.IDE_GROUP_SESSION_IDS_MAX`) so a huge or hostile blob can't
+    stretch the render tick.
+
+    Two deviations, both deliberate:
+
+    * ids that don't match :data:`core._SESSION_ID_RE` are dropped — this is
+      what discards the ``remote:`` prefixed cloud sessions (no transcript on
+      this machine, so nothing to attach them to) along with any junk;
+    * names are stripped of ``|`` and control bytes, which would otherwise
+      corrupt the SwiftBar row they end up in.
+
+    First writer wins on a duplicate session id — a session can only appear in
+    one group per workspace, and across workspaces the earlier key is as good
+    a pick as any.
+    """
+    out: dict[str, str] = {}
+    for key, value in blob.items():
+        if not key.startswith(core.IDE_SESSION_GROUPS_PREFIX):
+            continue
+        if not isinstance(value, list):
+            continue
+        seen_gids: set[str] = set()
+        for entry in value:
+            if len(seen_gids) >= core.IDE_GROUPS_MAX:
+                break
+            if not isinstance(entry, dict):
+                continue
+            gid = entry.get("id")
+            if (
+                not isinstance(gid, str)
+                or not gid
+                or len(gid) > core.IDE_GROUP_ID_MAX
+                or gid in seen_gids
+            ):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str):
+                continue
+            name = _IDE_GROUP_UNSAFE_RE.sub(" ", name).strip()
+            name = name[: core.IDE_GROUP_NAME_MAX].strip()
+            if not name:
+                continue
+            seen_gids.add(gid)
+            sids = entry.get("sessionIds")
+            if not isinstance(sids, list):
+                continue
+            for sid in sids:
+                if len(out) >= core.IDE_GROUP_SESSION_IDS_MAX:
+                    return out
+                if not isinstance(sid, str) or not core._SESSION_ID_RE.match(sid):
+                    continue
+                out.setdefault(sid, name)
+    return out
+
+
 def read_idle_reminders() -> dict[str, tuple[int, int]]:
     """Load the idle-reminders sidecar into ``{sid: (stop_ts, fired_count)}``.
 
@@ -1323,6 +1493,39 @@ def is_worktree_checkout(cwd: str) -> bool:
     except OSError:
         return False
     return head.lstrip().startswith("gitdir:")
+
+
+def worktree_main_repo(cwd: str) -> str:
+    """Path of the repository a worktree checkout belongs to, or ``""``.
+
+    A linked worktree's ``.git`` file points at the owning repo's gitdir::
+
+        gitdir: /Users/me/Projects/Repo/.git/worktrees/my-branch
+
+    Everything from ``/.git/worktrees/`` onwards is stripped, leaving the main
+    checkout. Used for the project label: a worktree's own directory name is
+    usually the branch name, which the submenu already shows on its own line —
+    so labelling the row with it says the same thing twice and hides which
+    project this actually is. Fail-soft: not a worktree, an unexpected marker
+    shape, or any ``OSError`` yields ``""`` and the caller keeps its default.
+    """
+    if not cwd:
+        return ""
+    try:
+        marker = Path(cwd) / ".git"
+        if not marker.is_file():
+            return ""
+        head = marker.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    if not head.startswith("gitdir:"):
+        return ""
+    gitdir = head[len("gitdir:"):].strip()
+    needle = "/.git/worktrees/"
+    idx = gitdir.find(needle)
+    if idx <= 0:
+        return ""
+    return gitdir[:idx]
 
 
 def fallback_git_branch_from_jsonl(jsonl_path: Path) -> str:

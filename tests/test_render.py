@@ -7,6 +7,8 @@ Stdlib only — run with ``/usr/bin/python3 -m unittest discover -s tests``.
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -414,3 +416,160 @@ class TestWorktreeRowMarker(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWorktreeMainRepo(unittest.TestCase):
+    """A worktree row is labelled with its owning repo, not its own folder.
+
+    The worktree directory is named after the branch, which the submenu's
+    branch line already shows — labelling the row with it says the same thing
+    twice and hides which project the session actually belongs to.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+
+    def _write_git(self, content):
+        with open(os.path.join(self.tmp, ".git"), "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+    def test_resolves_the_owning_repository(self):
+        self._write_git("gitdir: /Users/me/Projects/Repo/.git/worktrees/my-branch\n")
+        self.assertEqual(
+            plugin.sidecars.worktree_main_repo(self.tmp), "/Users/me/Projects/Repo"
+        )
+
+    def test_project_name_becomes_the_repo_name(self):
+        self._write_git("gitdir: /Users/me/Projects/Repo/.git/worktrees/my-branch\n")
+        main = plugin.sidecars.worktree_main_repo(self.tmp)
+        self.assertEqual(plugin.core._project_name(main or self.tmp, ""), "Repo")
+
+    def test_plain_checkout_yields_empty(self):
+        os.mkdir(os.path.join(self.tmp, ".git"))
+        self.assertEqual(plugin.sidecars.worktree_main_repo(self.tmp), "")
+
+    def test_unexpected_marker_shape_yields_empty(self):
+        self._write_git("gitdir: /some/place/without/the/needle\n")
+        self.assertEqual(plugin.sidecars.worktree_main_repo(self.tmp), "")
+
+    def test_missing_repo_and_empty_cwd_yield_empty(self):
+        self.assertEqual(plugin.sidecars.worktree_main_repo(self.tmp), "")
+        self.assertEqual(plugin.sidecars.worktree_main_repo(""), "")
+
+    def test_gitdir_at_filesystem_root_yields_empty(self):
+        # idx == 0 would leave an empty repo path; guard against it.
+        self._write_git("gitdir: /.git/worktrees/wt\n")
+        self.assertEqual(plugin.sidecars.worktree_main_repo(self.tmp), "")
+
+
+class TestFolderLineOpensFinder(unittest.TestCase):
+    """The submenu's folder line is a click target: it reveals cwd in Finder."""
+
+    def _rows(self, **overrides):
+        session = _make_session(**overrides)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            plugin.render._print_session_row(session)
+        return buf.getvalue().splitlines()
+
+    def _folder_line(self, **overrides):
+        return next(r for r in self._rows(**overrides) if "sfimage=folder" in r)
+
+    def test_project_line_opens_cwd(self):
+        line = self._folder_line(
+            project="Repo", cwd="/tmp/repo", git_branch="main"
+        )
+        self.assertIn("shell=/usr/bin/open", line)
+        self.assertIn('param1="/tmp/repo"', line)
+        # Opening a Finder window changes nothing the menu shows.
+        self.assertIn("refresh=false", line)
+
+    def test_project_line_always_carries_the_path_as_tooltip(self):
+        # It's clickable now, so it has to say where the click lands — even
+        # for a worktree, whose branch line carries a status tooltip.
+        line = self._folder_line(
+            project="Repo", cwd="/tmp/repo", git_branch="main", is_worktree=True
+        )
+        self.assertIn('tooltip="/tmp/repo"', line)
+
+    def test_bare_cwd_line_opens_too(self):
+        # No git branch: the line carries the full path instead of a name.
+        line = self._folder_line(project="", cwd="/tmp/plain", git_branch="")
+        self.assertIn("sfimage=folder.fill", line)
+        self.assertIn('param1="/tmp/plain"', line)
+
+    def test_no_cwd_means_no_click(self):
+        rows = self._rows(project="Repo", cwd="", git_branch="main")
+        folder_lines = [r for r in rows if "sfimage=folder" in r]
+        for line in folder_lines:
+            self.assertNotIn("shell=", line)
+
+    def test_path_with_spaces_is_quoted(self):
+        line = self._folder_line(
+            project="Repo", cwd="/tmp/my repo", git_branch="main"
+        )
+        self.assertIn('param1="/tmp/my repo"', line)
+
+
+class TestWorktreeClickTargets(unittest.TestCase):
+    """Project line opens the repo; the branch line opens the worktree."""
+
+    def _lines(self, **overrides):
+        session = _make_session(**overrides)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            plugin.render._print_session_row(session)
+        rows = buf.getvalue().splitlines()
+        project = next(r for r in rows if "sfimage=folder" in r)
+        branch = next(r for r in rows if "arrow.triangle.branch" in r)
+        return project, branch
+
+    def _worktree_session(self, **extra):
+        return dict(
+            project="ClaudeAgentsBar",
+            project_dir="/Users/me/Projects/ClaudeAgentsBar",
+            cwd="/Users/me/Projects/ClaudeAgentsBar/.claude/worktrees/feature",
+            git_branch="worktree-feature",
+            is_worktree=True,
+            **extra,
+        )
+
+    def test_project_line_opens_the_repository_not_the_worktree(self):
+        project, _ = self._lines(**self._worktree_session())
+        self.assertIn('param1="/Users/me/Projects/ClaudeAgentsBar"', project)
+        self.assertNotIn("worktrees/feature", project.split("tooltip=")[0])
+
+    def test_project_tooltip_states_the_repository_path(self):
+        project, _ = self._lines(**self._worktree_session())
+        self.assertIn('tooltip="/Users/me/Projects/ClaudeAgentsBar"', project)
+
+    def test_branch_line_opens_the_worktree(self):
+        _, branch = self._lines(**self._worktree_session())
+        self.assertIn("shell=/usr/bin/open", branch)
+        self.assertIn(
+            'param1="/Users/me/Projects/ClaudeAgentsBar/.claude/worktrees/feature"',
+            branch,
+        )
+
+    def test_branch_tooltip_keeps_the_status_note_and_adds_the_path(self):
+        _, branch = self._lines(**self._worktree_session())
+        tooltip = branch.split("tooltip=")[1]
+        self.assertIn("worktrees/feature", tooltip)
+        self.assertIn(plugin.core._t("tooltip.worktree"), tooltip)
+
+    def test_plain_checkout_branch_line_is_not_clickable(self):
+        project, branch = self._lines(
+            project="Repo", project_dir="/tmp/repo", cwd="/tmp/repo",
+            git_branch="main", is_worktree=False,
+        )
+        self.assertIn('param1="/tmp/repo"', project)
+        self.assertNotIn("shell=", branch)
+
+    def test_project_dir_falls_back_to_cwd(self):
+        # Sessions built before the field existed, or a worktree we couldn't
+        # resolve: the project line still opens something sensible.
+        project, _ = self._lines(
+            project="Repo", project_dir="", cwd="/tmp/repo", git_branch="main"
+        )
+        self.assertIn('param1="/tmp/repo"', project)

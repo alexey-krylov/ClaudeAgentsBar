@@ -38,6 +38,7 @@ from .core import (
     _ANSI_ACTIVE_BAR,
     _ANSI_FRESH_BAR,
     _ANSI_RESET,
+    _ANSI_STALE,
     _ANSI_WAITING,
     _classify,
     _format_context_left,
@@ -203,6 +204,7 @@ def build_session(
         max(0, now - state_since) if hook_state in ACTIVE_HOOK_STATES else 0
     )
 
+    project_dir = sidecars.worktree_main_repo(cwd)
     return Session(
         id=jsonl.stem,
         hook_state=hook_state,
@@ -210,7 +212,13 @@ def build_session(
         last_event_ts=interaction_ts,
         age_sec=age,
         title=meta.display_title or _t("title.no_title"),
-        project=_project_name(cwd, jsonl.parent.name),
+        # A worktree checkout is labelled with the *owning* repository, not
+        # with its own directory — that directory is named after the branch,
+        # which the submenu's branch line already shows, so using it here
+        # would repeat the branch and hide the project. Falls back to the
+        # plain cwd for a worktree we can't resolve.
+        project=_project_name(project_dir or cwd, jsonl.parent.name),
+        project_dir=project_dir or cwd,
         git_branch=branch,
         cwd=cwd,
         entrypoint=meta.entrypoint,
@@ -329,6 +337,21 @@ def collect_sessions(now: int) -> list[Session]:
                 s.is_bookmarked = True
             if s.id in tags:
                 s.tag = tags[s.id]
+    # IDE sidebar groups (spec 0015) — read once per tick, straight out of the
+    # editor's globalState. No GC pass like the sidecars above: the data isn't
+    # ours to prune, and a group naming a session we no longer render simply
+    # goes unused.
+    if ide_groups := sidecars.read_ide_groups():
+        # The reader walks groups in the order the sidebar stores them, so the
+        # order names first appear *is* the sidebar's order — recovered here
+        # and pinned onto the session, which is all ``submenu`` mode needs.
+        order: dict[str, int] = {}
+        for name in ide_groups.values():
+            order.setdefault(name, len(order))
+        for s in sessions:
+            if name := ide_groups.get(s.id):
+                s.ide_group = name
+                s.ide_group_order = order[name]
     sessions.sort(key=lambda s: (s.group.order, -s.last_event_ts))
     return sessions
 
@@ -387,6 +410,19 @@ def render(sessions: list[Session]) -> None:
         _print_footer(sessions)
         return
 
+    if core.ide_groups_mode() == "submenu" and any(
+        s.ide_group for s in sessions
+    ):
+        _print_ide_group_blocks(sessions)
+    else:
+        _print_flat_list(sessions)
+
+    print("---")
+    _print_footer(sessions)
+
+
+def _print_flat_list(sessions: list[Session]) -> None:
+    """One row per session, separated where the state bucket changes."""
     last_group: RenderGroup | None = None
     for session in sessions:
         if last_group is not None and last_group is not session.group:
@@ -394,8 +430,80 @@ def render(sessions: list[Session]) -> None:
         last_group = session.group
         _print_session_row(session)
 
-    print("---")
-    _print_footer(sessions)
+
+def _print_ide_group_blocks(sessions: list[Session]) -> None:
+    """``submenu`` mode: one top-level entry per IDE group, sessions inside.
+
+    Groups come in the sidebar's own order (:attr:`Session.ide_group_order`),
+    each header carrying per-state counters — ``Backend · 🟡1 🟢2`` — so the
+    "who needs me" signal survives being folded away. Ungrouped sessions
+    follow below a plain separator — no label, for the reason spelled out
+    where it's printed. See spec 0015.
+    """
+    grouped: dict[str, list[Session]] = {}
+    ungrouped: list[Session] = []
+    for session in sessions:
+        if session.ide_group:
+            grouped.setdefault(session.ide_group, []).append(session)
+        else:
+            ungrouped.append(session)
+
+    def _sidebar_position(name: str) -> int:
+        order = grouped[name][0].ide_group_order
+        return order if order is not None else len(grouped)
+
+    for name in sorted(grouped, key=_sidebar_position):
+        members = grouped[name]
+        # The header MUST carry a ``| params`` block (SwiftBar renders a
+        # bare line as inert text) *and* an action, even a no-op one.
+        # Without ``shell=``, SwiftBar builds the header as a plain
+        # container and leaves it to AppKit's menu validation to enable —
+        # which only runs when the menu opens. The header's label changes
+        # whenever a member switches state (the ``🟡 🔵`` counters), so a
+        # group holding a live session gets rebuilt *inside the already
+        # open menu*, lands there unvalidated, and goes dead: no
+        # highlight, no submenu. An item carrying an action is enabled by
+        # SwiftBar itself and survives the rebuild. ``/usr/bin/true`` is
+        # never actually run — AppKit routes a click on a parent item to
+        # its submenu — it exists so the item is born enabled.
+        # ``font=Menlo`` keeps the counters aligned; no SF Symbol reads as
+        # "group" without looking like debris at menu size.
+        print(
+            f"{_group_header_label(name, members)} | "
+            "shell=/usr/bin/true terminal=false refresh=false font=Menlo"
+        )
+        for session in members:
+            _print_session_row(session, indent="--")
+
+    if ungrouped:
+        # A plain separator, with no "Ungrouped" label: SwiftBar has no
+        # parameter that makes a menu item non-selectable, so a label would
+        # highlight under the cursor as if it were clickable. The gap already
+        # says these sessions belong to no group.
+        if grouped:
+            print("---")
+        _print_flat_list(ungrouped)
+
+
+def _group_header_label(name: str, members: list[Session]) -> str:
+    """``🟡 🟢2 · Backend`` — state counters first, then the group name.
+
+    Counters lead because they're the signal: scanning a column of groups,
+    the eye needs "is anything in here waiting on me" before it needs which
+    group it is. Order matches the menu-bar counters (most urgent first).
+
+    A count of **one is left off** — the circle already says "there's one of
+    these", and a row of ``🟡1 🟢1 🔵1`` is noise where ``🟡 🟢 🔵`` reads at a
+    glance. Numbers appear only where they carry information (2 and up).
+    """
+    counts: dict[RenderGroup, int] = {}
+    for session in members:
+        counts[session.group] = counts.get(session.group, 0) + 1
+    counters = " ".join(
+        group.icon if counts[group] == 1 else f"{group.icon}{counts[group]}"
+        for group in sorted(counts, key=lambda g: g.order)
+    )
+    return f"{counters} · {name}" if counters else name
 
 
 #: Order of counters in the menu-bar title — most-urgent first. STALE is
@@ -684,6 +792,20 @@ def _print_session_row(
     # neutral.
     state_segment = f"{session.group.icon} " if show_state else ""
     tag_segment = f"{core.TAG_GLYPH[session.tag]} " if session.tag else ""
+    # IDE group prefix — reads "group · title" (spec 0015), separated by the
+    # same middle dot every other segment on the row uses. Dimmed so the title
+    # still wins the glance, and truncated so a long group name can't push the
+    # state duration off the right edge; the full name has its own submenu
+    # line below. Unlike the state circle this survives ``show_state=False``
+    # (Bookmarks): the group is a classification, not a live state.
+    # Only ``inline`` mode puts the group on the row: in ``submenu`` mode the
+    # row already sits inside its group's entry, so repeating the name there
+    # would be noise.
+    group_segment = ""
+    if session.ide_group and core.ide_groups_mode() == "inline":
+        group_segment = (
+            f"{_ANSI_STALE}{_shorten_group(session.ide_group)} · {_ANSI_RESET}"
+        )
     # The right label. On the live list it's the state duration, state-coloured.
     # Under Bookmarks (bookmark_age set) it's the bare, pre-humanized pin age
     # instead — the row answers "how long ago I pinned this", neutral (no status
@@ -694,38 +816,67 @@ def _print_session_row(
         right_label = session.right_label_ansi
     else:
         right_label = session.right_label
+    # Terminal marker — the ``greaterthan.square`` SF Symbol, saying "this one
+    # lives in a terminal, not in the editor", and matching where the click
+    # will take you (spec 0016). A shell prompt reads as a terminal at a
+    # glance in a way no letter does; it replaced a dim ``ⓣ``, which in turn
+    # replaced a bare ``❯`` that was mistaken for a separator. Grey, because
+    # it's provenance rather than status. Unlike the other markers this one
+    # can't ride in the label: SwiftBar always draws ``sfimage`` at the head
+    # of the row, ahead of the state circle, so a terminal row sits slightly
+    # indented against its neighbours.
     label = (
-        f"{state_segment}{tag_segment}{session.title} · "
+        f"{state_segment}{tag_segment}{group_segment}{session.title} · "
         f"{collision_segment}{worktree_segment}{subagent_segment}{waiting_segment}{warning_segment}{right_label}"
     )
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
     bin_dir = core.PLUGIN_DIR / "bin" / "app"
-    open_script = bin_dir / "open-session.sh"
-    # The session deeplink lands in whichever editor window is frontmost —
-    # the extension doesn't route by workspace. When multi-workspace mode
-    # is on we hand open-session.sh the session's cwd, the .app that owns
-    # the scheme, and the settle delay so it can raise the matching window
-    # first; when off we pass only id + url, so open-session.sh falls back
-    # to firing the deeplink directly (the snappy single-window path). The
-    # live toggle (sidecar) wins over the config default.
-    main_params = [
-        f"shell={_swiftbar_quote(str(open_script))}",
-        f"param1={_swiftbar_quote(session.id)}",
-        f"param2={_swiftbar_quote(href)}",
-    ]
-    if core.multi_workspace_enabled():
-        editor_app = core.EDITOR_SCHEME_APP.get(core.CONFIG.editor_url_scheme, "")
-        main_params += [
+    if session.is_terminal:
+        # A terminal session is already running *somewhere* — a tab, a tmux or
+        # screen window. Firing the editor deeplink at it would resume the same
+        # transcript in a second, parallel session instead of taking the user to
+        # the live one, so terminal rows get their own action: raise the window
+        # that owns the process, or fall back to `claude --resume` in a fresh
+        # one. See ``bin/app/open-terminal-session.sh`` and spec 0016.
+        # Invoked via ``/bin/bash`` rather than as a bare shell= target, so a
+        # lost executable bit can't silently kill the row's click (the 1.1.1
+        # *Multi-workspace mode* failure — see CLAUDE.md § Before publishing).
+        main_params = [
+            "shell=/bin/bash",
+            f"param1={_swiftbar_quote(str(bin_dir / 'open-terminal-session.sh'))}",
+            f"param2={_swiftbar_quote(session.id)}",
             f"param3={_swiftbar_quote(session.cwd)}",
-            f"param4={_swiftbar_quote(editor_app)}",
-            f"param5={_swiftbar_quote(str(core.CONFIG.editor_focus_settle_sec))}",
+            f"param4={_swiftbar_quote(core.CONFIG.terminal_app)}",
         ]
+    else:
+        open_script = bin_dir / "open-session.sh"
+        # The session deeplink lands in whichever editor window is frontmost —
+        # the extension doesn't route by workspace. When multi-workspace mode
+        # is on we hand open-session.sh the session's cwd, the .app that owns
+        # the scheme, and the settle delay so it can raise the matching window
+        # first; when off we pass only id + url, so open-session.sh falls back
+        # to firing the deeplink directly (the snappy single-window path). The
+        # live toggle (sidecar) wins over the config default.
+        main_params = [
+            f"shell={_swiftbar_quote(str(open_script))}",
+            f"param1={_swiftbar_quote(session.id)}",
+            f"param2={_swiftbar_quote(href)}",
+        ]
+        if core.multi_workspace_enabled():
+            editor_app = core.EDITOR_SCHEME_APP.get(core.CONFIG.editor_url_scheme, "")
+            main_params += [
+                f"param3={_swiftbar_quote(session.cwd)}",
+                f"param4={_swiftbar_quote(editor_app)}",
+                f"param5={_swiftbar_quote(str(core.CONFIG.editor_focus_settle_sec))}",
+            ]
     main_params += ["terminal=false", "refresh=true"]
     # State colour on the row is itself a status signal, so drop it under
     # Bookmarks (show_state=False) — the row stays the default menu colour.
     if show_state:
         main_params.append(f"color={session.group.color}")
     main_params += ["font=Menlo", "ansi=true"]
+    if session.is_terminal:
+        main_params += ["sfimage=greaterthan.square", "sfcolor=systemGray"]
     # No bookmark marker on the row itself. An ``sfimage`` always leads, so a
     # bookmark icon couldn't sit after the state circle (SwiftBar can't place an
     # image after text), and an inline emoji was rejected — so a pinned session
@@ -793,6 +944,17 @@ def _print_session_row(
     )
     _print_session_picker(session, indent, bin_dir)
     _print_tags_picker(session, indent, bin_dir)
+    if session.ide_group and core.ide_groups_mode() == "inline":
+        # The group's full name, directly under *Tags* — same read-only
+        # ``font=Menlo color=#999999`` style as the project / branch / model
+        # lines further down. Only in ``inline`` mode: under ``submenu`` the
+        # enclosing entry already names the group. Read-only on purpose:
+        # grouping is owned by the IDE sidebar, the bar only mirrors it
+        # (spec 0015, ADR-0019).
+        print(
+            f"{indent}--{session.ide_group} | "
+            "font=Menlo color=#999999 sfimage=tray.full"
+        )
     if session.git_branch:
         # Project + branch are split across two submenu lines so each
         # gets its own SF Symbol (SwiftBar allows one ``sfimage=`` per
@@ -801,29 +963,39 @@ def _print_session_row(
         # minimal. When the project name is missing we collapse back to
         # a single branch line so the cwd tooltip still surfaces.
         branch_color, branch_text, branch_tooltip = _branch_decoration(session)
+        # The two lines point at two different folders, which only diverge for
+        # a worktree: the project line names and opens the owning repository,
+        # the branch line names and opens the worktree checkout itself. Each
+        # tooltip states the path its own click will open, so neither is a
+        # guess.
+        project_dir = session.project_dir or session.cwd
         if session.project:
             project_line = (
                 f"{indent}--{session.project} | "
-                "font=Menlo color=#999999 sfimage=folder"
+                f"font=Menlo color=#999999 sfimage=folder{_reveal_params(project_dir)}"
             )
-            # The cwd tooltip rides on the project line by default, but a
-            # collision / worktree status tooltip takes precedence and lives
-            # on the branch line — so only attach the plain cwd here when the
-            # branch line isn't already carrying a status tooltip.
-            if session.cwd and not branch_tooltip:
-                project_line += f" tooltip={_swiftbar_quote(session.cwd)}"
+            if project_dir:
+                project_line += f" tooltip={_swiftbar_quote(project_dir)}"
             print(project_line)
             branch_line = (
                 f"{indent}--{branch_text} | "
                 f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
             )
-            if branch_tooltip:
+            if session.is_worktree and session.cwd:
+                branch_line += _reveal_params(session.cwd)
+                # Status note *and* destination — the click opens the worktree,
+                # which is a different folder from the one above it.
+                note = f"{branch_tooltip} · {session.cwd}" if branch_tooltip else session.cwd
+                branch_line += f" tooltip={_swiftbar_quote(note)}"
+            elif branch_tooltip:
                 branch_line += f" tooltip={_swiftbar_quote(branch_tooltip)}"
         else:
             branch_line = (
                 f"{indent}--{branch_text} | "
                 f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
             )
+            if session.is_worktree and session.cwd:
+                branch_line += _reveal_params(session.cwd)
             tooltip = branch_tooltip or session.cwd
             if tooltip:
                 branch_line += f" tooltip={_swiftbar_quote(tooltip)}"
@@ -831,9 +1003,10 @@ def _print_session_row(
     elif session.cwd:
         # No git branch (cwd isn't a repo, or .git was removed) — surface
         # the full path directly so the menu still tells the user which
-        # project the session belongs to.
+        # project the session belongs to. Clickable like the project line.
         print(
-            f"{indent}--{session.cwd} | font=Menlo color=#999999 sfimage=folder.fill"
+            f"{indent}--{session.cwd} | font=Menlo color=#999999 "
+            f"sfimage=folder.fill{_reveal_params(session.cwd)}"
         )
     if core.CONFIG.model_badge and session.model:
         # Full model string between branch and context — same read-only
@@ -1128,6 +1301,42 @@ def _subagent_row_parts(
     return main_label, sub_rows
 
 
+#: Longest IDE group name rendered inline as the ``group / title`` prefix.
+#: The full name (up to 100 characters) sits on its own submenu line, so the
+#: inline copy only has to stay recognisable — 16 characters is a word and a
+#: half, and leaves the right-hand duration in view on a narrow menu.
+_IDE_GROUP_ROW_MAX = 16
+
+
+def _reveal_params(path: str) -> str:
+    """SwiftBar params making a menu line open ``path`` in Finder.
+
+    Empty string for an empty path, leaving the line read-only. ``/usr/bin/
+    open <dir>`` is Finder's own entry point, so no wrapper script is needed;
+    ``refresh=false`` because opening a window changes nothing the menu shows.
+    A path that has since been deleted or renamed just makes ``open`` fail
+    silently — the same non-event as a stale row.
+
+    Two lines use this, and they deliberately point at *different* folders for
+    a worktree session: the project line opens the owning repository
+    (:attr:`Session.project_dir`), the branch line opens the worktree checkout
+    (:attr:`Session.cwd`).
+    """
+    if not path:
+        return ""
+    return (
+        f" shell=/usr/bin/open param1={_swiftbar_quote(path)} "
+        "terminal=false refresh=false"
+    )
+
+
+def _shorten_group(name: str) -> str:
+    """Truncate a group name for the inline row prefix. Pure helper."""
+    if len(name) <= _IDE_GROUP_ROW_MAX:
+        return name
+    return name[: _IDE_GROUP_ROW_MAX - 1].rstrip() + "…"
+
+
 def _swiftbar_quote(value: str) -> str:
     """Quote a SwiftBar ``paramN=`` value so paths with spaces survive parsing.
 
@@ -1334,6 +1543,7 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
         "terminal=false refresh=true "
         "sfimage=macwindow.on.rectangle"
     )
+    _print_ide_groups_block(bin_dir)
 
     # Resolve the config path Python-side so the open-config.sh wrapper
     # stays a thin shell script and doesn't duplicate the env-var → XDG
@@ -1529,6 +1739,42 @@ def _print_notifications_block(bin_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # Tools → Keep awake block (spec 0003)                                         #
 # --------------------------------------------------------------------------- #
+
+
+def _print_ide_groups_block(bin_dir: Path) -> None:
+    """Tools → Grouping: the three IDE-groups display modes (spec 0015).
+
+    A radio-style selector like *Keep awake*: SwiftBar's ``checked=true``
+    marks the live mode, and clicking an option writes the sidecar (which
+    overrides ``ide_groups_mode`` in the config, so the config knob stays the
+    first-launch default). ``off`` also stops the editor database from being
+    opened at all — the mode gates the lookup, not just the rendering.
+    """
+    mode = core.ide_groups_mode()
+    set_script = bin_dir / "ide-groups-set.sh"
+    # A real submenu (``----`` children under a ``--`` parent), like the row's
+    # *Session ▸* / *Tags ▸* pickers — not the indented flat list *Keep awake*
+    # uses. Three mutually exclusive modes are a picker, and folding them away
+    # keeps Tools scannable.
+    # ``font=`` alongside the icon: with ``sfimage=`` alone this parent stopped
+    # expanding (verified in the live menu), while a plain ``font=Menlo`` header
+    # expanded fine. Carrying both is the combination under test.
+    print(f"--{_t('menu.ide_groups')} | font=Menlo sfimage=tray.full")
+    for value, key, icon in (
+        ("submenu", "ide_groups.mode_submenu", "list.bullet.indent"),
+        ("inline", "ide_groups.mode_inline", "list.dash"),
+        ("off", "ide_groups.mode_off", "xmark.circle"),
+    ):
+        checked = "checked=true " if value == mode else ""
+        print(
+            f"----{_t(key)} | "
+            "shell=/bin/bash "
+            f"param1={_swiftbar_quote(str(set_script))} "
+            f"param2={value} "
+            f"{checked}"
+            "terminal=false refresh=true "
+            f"sfimage={icon}"
+        )
 
 
 def _print_keep_awake_block(bin_dir: Path, sessions: list[Session]) -> None:

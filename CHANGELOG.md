@@ -5,6 +5,106 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.5.0 — 2026-08-27
+
+### Added
+
+- **IDE session groups in the menu.** Claude Code's editor extension
+  (2.1.241+) lets you file sessions into named groups in its sidebar; the bar
+  now mirrors that grouping, in one of three shapes set by the new
+  **`ide_groups_mode`** knob:
+
+  * `"submenu"` — one top-level entry per group, in the sidebar's
+    own order, each header carrying a counter per live state
+    (`🟡 🟢2 · Backend`) so a folded group still says whether anything in it
+    needs you; a count of one is left off, since the circle already says it.
+    Its sessions sit inside as ordinary rows, with every row action intact.
+    Ungrouped sessions follow below a plain separator — no label, since
+    SwiftBar has no way to make one non-selectable and it would highlight
+    under the cursor as if it were clickable.
+  * `"inline"` (default) — the flat list, with the group name prefixing the row
+    title
+    (`backend · Release 1.4.2`, dimmed and truncated to 16 characters) plus a
+    submenu line carrying it in full under *Tags*.
+  * `"off"` — no grouping, and the lookup is skipped entirely: no editor
+    database is opened at all.
+
+  **Read-only.** Creating, renaming, moving, and collapsing stay in the IDE —
+  the data lives in the editor's own globalState database, which VS Code keeps
+  in memory and rewrites wholesale, so anything the bar wrote there would be
+  silently clobbered. A rename in the sidebar lands in the menu on the next
+  tick. See [ADR-0019](./docs/adr/0019-ide-groups-read-only-globalstate.md) and
+  [spec 0015](./docs/specs/0015-ide-session-groups.md).
+
+  The mode is switchable live from **Tools → Grouping** ("As in the
+  extension" / "Name only" / "Off"), which writes
+  `~/.claude/agent-state.ide-groups.mode`; that sidecar wins over the config
+  knob, leaving `ide_groups_mode` as the first-launch default — the same
+  arrangement *Keep awake* and *Multi-workspace mode* use. New action script
+  `bin/app/ide-groups-set.sh` and a `--ide-groups <mode>` CLI flag behind it.
+
+  Also new: **`ide_state_db_paths`** (default `[]`) for a non-standard install,
+  replacing the autodetection that otherwise probes Code, VSCodium, Cursor,
+  Windsurf, Positron and their Insiders variants, leading with whichever owns
+  your `editor_url_scheme`. A missing, locked, or corrupt database isn't an
+  error condition — rows render exactly as they did before the feature existed.
+
+- **Terminal sessions are marked, and clicking one goes to the terminal.** A
+  session started in a shell rather than in the editor now carries a grey
+  `greaterthan.square` symbol at the head of its row, and its row click no
+  longer fires the editor deeplink.
+  That deeplink resumed the transcript *in the editor* while the terminal
+  process kept running — two live sessions appending to one transcript. The
+  row now raises the tab that owns the process (matched by tty through
+  Terminal.app / iTerm2 AppleScript), falling back to `tmux attach`, then
+  `screen -r`, then a fresh window running `claude --resume <id>` in the
+  session's folder when there's nothing live to raise. The process is located
+  through the session registry Claude Code 2.1.228+ keeps in
+  `~/.claude/sessions/<pid>.json`; without it (or without `jq`) the click goes
+  straight to the `claude --resume` fallback.
+
+  No opt-in: the bar knows exactly which sessions are terminal ones, so it
+  always routes them correctly, and editor sessions are untouched. One new
+  knob, **`terminal_app`** (`"auto"` — iTerm when installed, else Terminal —
+  or `"Terminal"` / `"iTerm"`). New action script
+  `bin/app/open-terminal-session.sh`, invoked via `/bin/bash` so a lost
+  executable bit can't kill the row. First click triggers the macOS Automation
+  permission prompt; see [spec 0016](./docs/specs/0016-terminal-sessions.md)
+  and [troubleshooting](./docs/troubleshooting.md).
+
+### Fixed
+
+- **A group holding a live session wouldn't open its submenu.** In
+  `submenu` mode the group header went dead — no highlight under the
+  cursor, no submenu — for as long as something inside it was running,
+  and came back once everything went idle. SwiftBar rebuilds a menu item
+  whenever its label changes, including while the menu is open, and the
+  header's label carries the state counters, which a working session
+  flips every few seconds. An item with no action of its own is left to
+  AppKit's menu validation to enable, and that only runs when the menu
+  opens — so the rebuilt header landed in the open menu unvalidated and
+  disabled. The header now carries a no-op action, which SwiftBar enables
+  itself; it never runs, since AppKit routes a click on a parent item to
+  its submenu.
+
+- **The folder line in a session's submenu opens Finder.** It was read-only
+  text; clicking it now opens the session's working directory
+  (`/usr/bin/open <cwd>`), which is what the line already looked like it
+  should do. Applies both to the project-name line of a git checkout and to
+  the bare-path line shown when the cwd isn't a repo. The full path is now
+  always attached as that line's tooltip — previously it was dropped whenever
+  the branch line carried a worktree or collision tooltip, which is exactly
+  the case where you can't tell where the click would land. Distinct from
+  *Session ▸ Reveal in Finder*, which points at the JSONL transcript.
+
+- **A worktree session's row named the branch, not the project.** The project
+  line took the last path segment of the session's cwd — for a worktree that's
+  the worktree directory, named after the branch, which the submenu's branch
+  line already shows one row below. The row now resolves the owning repository
+  through the worktree's `.git` marker and labels it with that instead, so a
+  session in `.claude/worktrees/my-branch` reads `ClaudeAgentsBar` with
+  `my-branch` beneath it rather than saying the same thing twice.
+
 ## 1.4.2 — 2026-08-16
 
 ### Added
