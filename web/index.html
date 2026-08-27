@@ -157,7 +157,7 @@
   <!-- ─── Features ────────────────────────────────────────────────── -->
   <section id="features" class="mx-auto max-w-6xl px-5 py-14">
     <h2 class="text-2xl font-bold tracking-tight">What it shows</h2>
-    <p class="text-mute mt-2 max-w-2xl">Everything answers one question — <em>which agent needs me right now?</em> — without pulling focus. And <span class="text-text">nearly everything here is highly customizable</span>: ~22 config knobs, so it bends to your workflow, not the other way around.</p>
+    <p class="text-mute mt-2 max-w-2xl">Everything answers one question — <em>which agent needs me right now?</em> — without pulling focus. And <span class="text-text">nearly everything here is highly customizable</span>: ~29 config knobs, so it bends to your workflow, not the other way around.</p>
 
     <div class="mt-8 grid md:grid-cols-3 gap-4">
       <article class="rounded-xl border border-line bg-panel/60 p-5">
@@ -169,6 +169,21 @@
         <div class="text-xl">🗂️</div>
         <h3 class="mt-2 font-semibold">Urgency-sorted dropdown</h3>
         <p class="text-sm text-mute mt-1">Every session active in the last 3h, sorted active → fresh → acked → stale. Click a row to jump to it in your editor.</p>
+      </article>
+      <article class="rounded-xl border border-line bg-panel/60 p-5">
+        <div class="text-xl">🗃️</div>
+        <h3 class="mt-2 font-semibold">Session groups <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <p class="text-sm text-mute mt-1">File sessions into groups in the Claude Code sidebar and the menu mirrors them — either the group name prefixing each row, or one folded entry per group whose header counts the live states inside. Read-only: grouping stays in the IDE.</p>
+      </article>
+      <article class="rounded-xl border border-line bg-panel/60 p-5">
+        <div class="text-xl">❯</div>
+        <h3 class="mt-2 font-semibold">Terminal sessions <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <p class="text-sm text-mute mt-1">A session started in a shell is marked <code class="text-mute">❯</code>, and its row raises the terminal tab that owns it — Terminal.app or iTerm2 by tty, then <code>tmux</code>, then <code>screen</code>, then <code>claude --resume</code>. No more resuming the same transcript twice.</p>
+      </article>
+      <article class="rounded-xl border border-line bg-panel/60 p-5">
+        <div class="text-xl">⏳</div>
+        <h3 class="mt-2 font-semibold">Subscription usage <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <p class="text-sm text-mute mt-1">Your 5-hour and weekly windows as two bars under <em>Statistics</em> — yellow past 60%, red past 85%. Read straight from Claude Code's own <code>get_usage</code>: no inference, no quota spent, nothing left running.</p>
       </article>
       <article class="rounded-xl border border-brand/40 bg-brand/5 p-5">
         <div class="text-xl">🔔</div>
@@ -218,7 +233,7 @@
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">⚙️</div>
         <h3 class="mt-2 font-semibold">Highly customizable</h3>
-        <p class="text-sm text-mute mt-1">~22 config knobs: phrases, voice, sounds, quiet hours, thresholds, the menu-bar icon, fresh/ack windows, compact mode, editor. Defaults work — change only what you want.</p>
+        <p class="text-sm text-mute mt-1">~29 config knobs: phrases, voice, sounds, quiet hours, thresholds, the menu-bar icon, fresh/ack windows, compact mode, editor. Defaults work — change only what you want.</p>
       </article>
     </div>
   </section>

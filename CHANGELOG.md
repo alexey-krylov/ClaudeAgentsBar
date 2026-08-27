@@ -7,171 +7,95 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## 1.5.0 — 2026-08-27
 
-### Changed
-
-- **Read-only menu rows no longer highlight under the cursor.** Branch,
-  model, context-left, IDE group, subagent trails, the usage lines under
-  *Statistics* and the *Notifications* / *Keep awake* status headers were
-  selectable and took keyboard focus even though clicking them did nothing.
-  Cause: SwiftBar attaches a click action to every row carrying `color=` (it
-  needs one to repaint a custom colour against the selection highlight), so
-  the grey was buying the highlight. They now get their grey from ANSI
-  instead, which costs no action — same colour, no phantom selection. Rows
-  that actually do something (project, cwd, session rows) are unchanged, as
-  are the status colours that mean something: a cwd collision, a worktree
-  checkout, a subagent in flight.
-
 ### Added
 
 - **IDE session groups in the menu.** Claude Code's editor extension
-  (2.1.241+) lets you file sessions into named groups in its sidebar; the bar
-  now mirrors that grouping, in one of three shapes set by the new
-  **`ide_groups_mode`** knob:
+  (2.1.241+) files sessions into named groups in its sidebar; the bar now
+  mirrors them. **`ide_groups_mode`** picks the shape: `"submenu"` folds each
+  group into a top-level entry whose header counts its live states
+  (`🟡 🟢2 · Backend`), `"inline"` (default) prefixes the row title with the
+  group name, `"off"` skips the lookup entirely. Switchable live from
+  **Tools → Grouping**.
 
-  * `"submenu"` — one top-level entry per group, in the sidebar's
-    own order, each header carrying a counter per live state
-    (`🟡 🟢2 · Backend`) so a folded group still says whether anything in it
-    needs you; a count of one is left off, since the circle already says it.
-    Its sessions sit inside as ordinary rows, with every row action intact.
-    Ungrouped sessions follow below a plain separator — no label, since
-    the gap already says they belong to no group.
-  * `"inline"` (default) — the flat list, with the group name prefixing the row
-    title
-    (`backend · Release 1.4.2`, dimmed and truncated to 16 characters) plus a
-    submenu line carrying it in full under *Tags*.
-  * `"off"` — no grouping, and the lookup is skipped entirely: no editor
-    database is opened at all.
-
-  **Read-only.** Creating, renaming, moving, and collapsing stay in the IDE —
-  the data lives in the editor's own globalState database, which VS Code keeps
-  in memory and rewrites wholesale, so anything the bar wrote there would be
-  silently clobbered. A rename in the sidebar lands in the menu on the next
-  tick. See [ADR-0019](./docs/adr/0019-ide-groups-read-only-globalstate.md) and
+  Read-only — creating, renaming and moving stay in the IDE, because the data
+  lives in the editor's own globalState database, which VS Code rewrites
+  wholesale. A missing, locked or corrupt database is not an error: rows
+  render as they did before the feature existed. **`ide_state_db_paths`**
+  overrides autodetection for a non-standard install. See
+  [ADR-0019](./docs/adr/0019-ide-groups-read-only-globalstate.md) and
   [spec 0015](./docs/specs/0015-ide-session-groups.md).
 
-  The mode is switchable live from **Tools → Grouping** ("As in the
-  extension" / "Name only" / "Off"), which writes
-  `~/.claude/agent-state.ide-groups.mode`; that sidecar wins over the config
-  knob, leaving `ide_groups_mode` as the first-launch default — the same
-  arrangement *Keep awake* and *Multi-workspace mode* use. New action script
-  `bin/app/ide-groups-set.sh` and a `--ide-groups <mode>` CLI flag behind it.
-
-  Also new: **`ide_state_db_paths`** (default `[]`) for a non-standard install,
-  replacing the autodetection that otherwise probes Code, VSCodium, Cursor,
-  Windsurf, Positron and their Insiders variants, leading with whichever owns
-  your `editor_url_scheme`. A missing, locked, or corrupt database isn't an
-  error condition — rows render exactly as they did before the feature existed.
-
 - **Terminal sessions are marked, and clicking one goes to the terminal.** A
-  session started in a shell rather than in the editor now carries a grey
-  dim `❯` right after its state circle, and its row click no longer fires
-  the editor deeplink.
-  That deeplink resumed the transcript *in the editor* while the terminal
-  process kept running — two live sessions appending to one transcript. The
-  row now raises the tab that owns the process (matched by tty through
-  Terminal.app / iTerm2 AppleScript), falling back to `tmux attach`, then
-  `screen -r`, then a fresh window running `claude --resume <id>` in the
-  session's folder when there's nothing live to raise. The process is located
-  through the session registry Claude Code 2.1.228+ keeps in
-  `~/.claude/sessions/<pid>.json`; without it (or without `jq`) the click goes
-  straight to the `claude --resume` fallback.
-
-  No opt-in: the bar knows exactly which sessions are terminal ones, so it
-  always routes them correctly, and editor sessions are untouched. One new
-  knob, **`terminal_app`** (`"auto"` — iTerm when installed, else Terminal —
-  or `"Terminal"` / `"iTerm"`). New action script
-  `bin/app/open-terminal-session.sh`, invoked via `/bin/bash` so a lost
-  executable bit can't kill the row. First click triggers the macOS Automation
-  permission prompt; see [spec 0016](./docs/specs/0016-terminal-sessions.md)
-  and [troubleshooting](./docs/troubleshooting.md).
+  session started in a shell carries a dim `❯` after its state circle, and its
+  row raises the tab that owns the process (Terminal.app / iTerm2 by tty, then
+  `tmux attach`, then `screen -r`, then a fresh window running
+  `claude --resume`). The editor deeplink used to resume the transcript in the
+  editor while the terminal process kept running — two live sessions appending
+  to one file. No opt-in; one new knob, **`terminal_app`**. First click
+  triggers the macOS Automation prompt. See
+  [spec 0016](./docs/specs/0016-terminal-sessions.md).
 
 ### Changed
 
+- **Upgrading: re-run `claude-agents-bar setup`.** `brew upgrade` ships code,
+  not wiring. Until `setup` runs, your `statusLine` still points at the 1.4
+  usage sensor this version no longer ships, and every session runs it.
+  `doctor` now warns about exactly that.
+
 - **Subscription usage no longer needs a background `claude` session.** The
-  5-hour and weekly numbers used to come off the `statusLine` of a hidden
-  `claude` TUI parked in a detached `screen`, recycled every 10 minutes because
-  a long-lived session's `rate_limits` go stale — the only way to read them at
-  the time. Claude Code now answers a **`get_usage` control request** over the
-  SDK control protocol, so the plugin just asks: a ~1.7 s `claude -p` call
-  every few minutes that runs **no inference**, spends **no quota**, writes no
-  transcript and fires no hooks. Before spawning anything it checks Claude
-  Code's own cache of the same response in `~/.claude.json`; when that's
-  fresher than the interval, nothing is spawned at all.
+  numbers came off the `statusLine` of a hidden TUI parked in a detached
+  `screen`; Claude Code now answers a **`get_usage`** control request, so the
+  plugin just asks — a ~1.7 s call that runs no inference, spends no quota and
+  writes no transcript, skipped entirely when Claude Code's own cache in
+  `~/.claude.json` is fresh enough. Gone with it: the background process, the
+  `statusLine` wrapper, the trusted work folder and the first-run-prompt hang
+  that was this feature's most common failure. `usage_ping_interval_min` and
+  `usage_ping_model` are replaced by **`usage_fetch_interval_min`** (default
+  3). See [ADR-0020](./docs/adr/0020-usage-via-sdk-get-usage.md).
 
-  What goes away with it: the background process, the `statusLine` wrapper in
-  your `settings.json` (and its save/restore dance), the trusted work folder,
-  the pre-seeded onboarding keys, and the whole "the session hung on a
-  first-run prompt" failure mode that was the single most common way this
-  feature broke. Running `claude-agents-bar setup` after the upgrade retires
-  all of it — your original status line is restored and any leftover session
-  killed. See [ADR-0020](./docs/adr/0020-usage-via-sdk-get-usage.md).
-
-  `usage_ping_interval_min` and `usage_ping_model` are gone; the replacement is
-  **`usage_fetch_interval_min`** (default 3, floored at 1). `usage_monitor`
-  still switches the whole feature off.
-
-- **The usage line became two lines, with bars.** One row per window, laid out
-  like the usage panel in the Claude Code editor extension:
+- **The usage line became two lines, with bars** — one per window, laid out
+  like the editor extension's usage panel:
 
   ```
   Session  ▓▓░░░░░░░░   22% · 3h
   Week     ▓▓▓▓░░░░░░   41% · 1d
   ```
 
-  Ten cells, percentage and time-to-reset, aligned in fixed columns; bar and
-  number turn yellow at ≥60 % and red at ≥85 %, as the single line's numbers
-  already did. A non-zero percentage always fills at least one cell, so 4 %
-  reads differently from 0 %. A plan with no weekly window gets the session row
-  alone.
+  Yellow at ≥60 %, red at ≥85 %. A non-zero percentage always fills a cell, so
+  4 % reads differently from 0 %.
 
 - **Removed the *Statistics → Usage monitor* checkbox.** It existed to stop a
-  background process that spent quota; there is no such process any more, so
-  the feature is simply on. If you want it gone entirely, `"usage_monitor":
-  "off"` in the config still does that. The `agent-state.usage-monitor.mode`
-  sidecar is no longer read (left on disk, like every other sidecar) — so if
-  you had the checkbox **off** in 1.4, usage comes back on after the upgrade.
-  That's deliberate: what you turned off was the quota cost, and it's gone.
+  process that spent quota; there is no such process now. If you had it off in
+  1.4, usage comes back on after the upgrade — what you switched off was the
+  cost, and the cost is gone. `"usage_monitor": "off"` still disables it.
 
-- **Upgrading: re-run `claude-agents-bar setup`.** A `brew upgrade` ships code,
-  not wiring — the 1.4 sensor stays wired as your `statusLine` until `setup`
-  unwires it, and every session then runs a script this version no longer
-  ships. `doctor` now says so explicitly (`[warn] usage/ … still runs the
-  retired 1.4 usage sensor`). The background session doesn't wait for you: the
-  first usage fetch after the upgrade quits any leftover `cab-usage-mon`
-  session and removes its marker, whether or not you ever run `setup`.
+- **Read-only menu rows no longer highlight under the cursor.** Branch, model,
+  context, group and usage lines took selection and keyboard focus while doing
+  nothing on click: SwiftBar attaches an action to every row carrying `color=`.
+  They take their grey from ANSI instead, which costs no action. Rows that do
+  something are unchanged, as are colours that mean something — a cwd
+  collision, a worktree, a subagent in flight. See
+  [ADR-0021](./docs/adr/0021-passive-rows-ansi-grey.md).
 
 ### Fixed
 
-- **A group holding a live session wouldn't open its submenu.** In
-  `submenu` mode the group header went dead — no highlight under the
-  cursor, no submenu — for as long as something inside it was running,
-  and came back once everything went idle. SwiftBar rebuilds a menu item
-  whenever its label changes, including while the menu is open, and the
-  header's label carries the state counters, which a working session
-  flips every few seconds. An item with no action of its own is left to
-  AppKit's menu validation to enable, and that only runs when the menu
-  opens — so the rebuilt header landed in the open menu unvalidated and
-  disabled. The header now carries a no-op action, which SwiftBar enables
-  itself; it never runs, since AppKit routes a click on a parent item to
-  its submenu.
+- **A group holding a live session wouldn't open its submenu.** In `submenu`
+  mode the header went dead — no highlight, no submenu — while anything inside
+  it was running, and recovered once everything went idle. SwiftBar rebuilds an
+  item whenever its label changes, including inside an open menu, and the
+  header's state counters change every few seconds; an item with no action of
+  its own is enabled by AppKit's validation, which only runs when the menu
+  opens. The header now carries a no-op action, which SwiftBar enables itself.
 
 - **The folder line in a session's submenu opens Finder.** It was read-only
-  text; clicking it now opens the session's working directory
-  (`/usr/bin/open <cwd>`), which is what the line already looked like it
-  should do. Applies both to the project-name line of a git checkout and to
-  the bare-path line shown when the cwd isn't a repo. The full path is now
-  always attached as that line's tooltip — previously it was dropped whenever
-  the branch line carried a worktree or collision tooltip, which is exactly
-  the case where you can't tell where the click would land. Distinct from
-  *Session ▸ Reveal in Finder*, which points at the JSONL transcript.
+  text. The full path now always rides as its tooltip — it used to be dropped
+  exactly when the branch line carried one of its own. Distinct from
+  *Session ▸ Reveal in Finder*, which points at the transcript.
 
-- **A worktree session's row named the branch, not the project.** The project
-  line took the last path segment of the session's cwd — for a worktree that's
-  the worktree directory, named after the branch, which the submenu's branch
-  line already shows one row below. The row now resolves the owning repository
-  through the worktree's `.git` marker and labels it with that instead, so a
-  session in `.claude/worktrees/my-branch` reads `ClaudeAgentsBar` with
-  `my-branch` beneath it rather than saying the same thing twice.
+- **A worktree session's row named the branch, not the project.** It took the
+  last path segment of the cwd, which for a worktree is the branch name the
+  submenu already shows one line below. The row now resolves the owning
+  repository through the worktree's `.git` marker.
 
 ## 1.4.2 — 2026-08-16
 
