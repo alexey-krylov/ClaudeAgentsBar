@@ -189,28 +189,17 @@ class TestConfigLoad(unittest.TestCase):
         config = plugin.Config._from_mapping({"usage_monitor": "maybe"})
         self.assertEqual(config.usage_monitor, "on")
 
-    def test_usage_ping_interval_default(self):
-        self.assertEqual(plugin.Config().usage_ping_interval_sec, 600)
+    def test_usage_fetch_interval_default(self):
+        self.assertEqual(plugin.Config().usage_fetch_interval_sec, 180)
 
-    def test_usage_ping_interval_minutes_to_seconds(self):
-        config = plugin.Config._from_mapping({"usage_ping_interval_min": 10})
-        self.assertEqual(config.usage_ping_interval_sec, 600)
+    def test_usage_fetch_interval_minutes_to_seconds(self):
+        config = plugin.Config._from_mapping({"usage_fetch_interval_min": 5})
+        self.assertEqual(config.usage_fetch_interval_sec, 300)
 
-    def test_usage_ping_interval_sub_five_dropped(self):
-        # Below the 5-minute floor → keep default (10 min) with a warning.
-        config = plugin.Config._from_mapping({"usage_ping_interval_min": 2})
-        self.assertEqual(config.usage_ping_interval_sec, 600)
-
-    def test_usage_ping_model_default(self):
-        self.assertEqual(
-            plugin.Config().usage_ping_model, "claude-haiku-4-5-20251001"
-        )
-
-    def test_usage_ping_model_rejects_metacharacters(self):
-        # Goes into a shell command → a value with shell metacharacters drops
-        # to the default rather than risking injection.
-        config = plugin.Config._from_mapping({"usage_ping_model": "x; rm -rf /"})
-        self.assertEqual(config.usage_ping_model, "claude-haiku-4-5-20251001")
+    def test_usage_fetch_interval_sub_minute_dropped(self):
+        # Below the 1-minute floor → keep the default with a warning.
+        config = plugin.Config._from_mapping({"usage_fetch_interval_min": 0.2})
+        self.assertEqual(config.usage_fetch_interval_sec, 180)
 
     def test_notify_summary_marker_default(self):
         self.assertEqual(plugin.Config().notify_summary_marker, "-- ")

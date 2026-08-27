@@ -69,9 +69,10 @@ publish_if_changed() {
 
 
 step "1. Stop background processes we own"
-# spec 0003 — kill any caffeinate holding the machine awake. spec 0011 — quit
-# the background claude usage-monitor session. Both before we strip the
-# symlink, so the menu's off-switches don't vanish out from under the user.
+# spec 0003 — kill any caffeinate holding the machine awake. ADR-0020 — quit a
+# leftover pre-1.5.0 background claude usage session, if one is somehow still
+# up. Both before we strip the symlink, so the menu's off-switches don't vanish
+# out from under the user.
 if [ -f "${REPO_DIR}/claude-agents.5s.py" ]; then
     /usr/bin/python3 "${REPO_DIR}/claude-agents.5s.py" --keep-awake-shutdown \
         2>/dev/null || true
@@ -135,10 +136,12 @@ if [ -f "$SETTINGS" ]; then
         say "cleaned"
     fi
 
-    # Restore the original statusLine (spec 0011). setup.sh saved whatever the
-    # user had before we wrapped it. Only touch a statusLine that's still ours
-    # (chains usage-sensor.sh); a non-empty saved original is put back, an empty
-    # one means there was no statusLine, so we drop the key entirely.
+    # Restore the original statusLine. Only relevant when tearing down an
+    # install that predates ADR-0020 (setup.sh now unwires this on upgrade):
+    # the old setup saved whatever the user had before it wrapped them. Only
+    # touch a statusLine that's still ours (chains usage-sensor.sh); a non-empty
+    # saved original is put back, an empty one means there was no statusLine,
+    # so we drop the key entirely.
     CUR_STATUSLINE=$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || echo "")
     case "$CUR_STATUSLINE" in
         *usage-sensor.sh*)
@@ -194,7 +197,8 @@ echo "  ~/.claude/agent-state.keep-awake.mode"
 echo "  ~/.claude/agent-state.caffeinate"
 echo "  ~/.claude/agent-state.usage"
 echo "  ~/.claude/agent-state.usage-alerts"
-echo "  ~/.claude/agent-state.usage-monitor.mode"
-echo "  ~/.claude/agent-state.usage-monitor.ping"
-echo "  ~/.claude/cab-usage-monitor/        (usage-monitor workdir)"
+echo "  ~/.claude/agent-state.usage.fetch"
+echo "  ~/.claude/agent-state.usage-monitor.mode   (pre-1.5.0)"
+echo "  ~/.claude/agent-state.usage-monitor.ping   (pre-1.5.0)"
+echo "  ~/.claude/cab-usage-monitor/               (pre-1.5.0 workdir)"
 echo "  ~/.claude.json projects entry for cab-usage-monitor (trust flag — left in place)"

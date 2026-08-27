@@ -1,7 +1,12 @@
 # 0018. Source subscription usage from a hidden background `claude` session
 
-* Status: Accepted
+* Status: Superseded by [ADR-0020](./0020-usage-via-sdk-get-usage.md)
 * Date: 2026-06-29
+
+> **Superseded (1.5.0).** Claude Code now exposes the same `rate_limits` over
+> the SDK control protocol (`get_usage`), so the background session and the
+> `statusLine` wrapper described below are gone. Kept for the constraint
+> analysis and the rejected alternatives, which still hold.
 
 ## Context
 

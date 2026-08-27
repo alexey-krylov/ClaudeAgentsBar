@@ -9,6 +9,7 @@
 #   setup      Wire the plugin + hook into SwiftBar / ~/.claude/.
 #   teardown   Undo setup. Sidecar files under ~/.claude/ are preserved.
 #   doctor     Check runtime deps (jq, python3, SwiftBar.app).
+#   usage      Refresh the subscription-usage snapshot now (debugging).
 #   version    Print version.
 #   help       This message.
 
@@ -35,6 +36,22 @@ case "${1:-help}" in
     teardown)
         shift
         exec bash "$HERE/install/teardown.sh" "$@"
+        ;;
+    usage|usage-fetch|--usage-fetch)
+        # Run the get_usage fetch in the foreground and show what landed.
+        # The plugin does this detached every few minutes; this is the
+        # by-hand version for "why are the usage lines empty?".
+        # `set -e` would abort before we could report a failed fetch, so
+        # capture the code instead of letting it propagate.
+        rc=0
+        /usr/bin/python3 "$HERE/../claude-agents.5s.py" --usage-fetch || rc=$?
+        if [ -f "${HOME}/.claude/agent-state.usage" ]; then
+            echo "snapshot: $(cat "${HOME}/.claude/agent-state.usage")"
+            echo "(record_ts  five_used  five_resets_at  seven_used  seven_resets_at)"
+        else
+            echo "no snapshot written — see docs/troubleshooting.md" >&2
+        fi
+        exit $rc
         ;;
     version|--version|-v)
         echo "claude-agents-bar $VERSION"
@@ -78,6 +95,7 @@ Commands:
   setup     Symlink plugin + hook, merge ~/.claude/settings.json (backup first)
   teardown  Undo setup. Sidecar files under ~/.claude/ are preserved.
   doctor    Check runtime deps (jq, python3, SwiftBar.app).
+  usage     Refresh the subscription-usage snapshot now (debugging).
   version   Print version.
   help      This message.
 

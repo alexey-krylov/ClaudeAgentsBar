@@ -72,6 +72,61 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   permission prompt; see [spec 0016](./docs/specs/0016-terminal-sessions.md)
   and [troubleshooting](./docs/troubleshooting.md).
 
+### Changed
+
+- **Subscription usage no longer needs a background `claude` session.** The
+  5-hour and weekly numbers used to come off the `statusLine` of a hidden
+  `claude` TUI parked in a detached `screen`, recycled every 10 minutes because
+  a long-lived session's `rate_limits` go stale — the only way to read them at
+  the time. Claude Code now answers a **`get_usage` control request** over the
+  SDK control protocol, so the plugin just asks: a ~1.7 s `claude -p` call
+  every few minutes that runs **no inference**, spends **no quota**, writes no
+  transcript and fires no hooks. Before spawning anything it checks Claude
+  Code's own cache of the same response in `~/.claude.json`; when that's
+  fresher than the interval, nothing is spawned at all.
+
+  What goes away with it: the background process, the `statusLine` wrapper in
+  your `settings.json` (and its save/restore dance), the trusted work folder,
+  the pre-seeded onboarding keys, and the whole "the session hung on a
+  first-run prompt" failure mode that was the single most common way this
+  feature broke. Running `claude-agents-bar setup` after the upgrade retires
+  all of it — your original status line is restored and any leftover session
+  killed. See [ADR-0020](./docs/adr/0020-usage-via-sdk-get-usage.md).
+
+  `usage_ping_interval_min` and `usage_ping_model` are gone; the replacement is
+  **`usage_fetch_interval_min`** (default 3, floored at 1). `usage_monitor`
+  still switches the whole feature off.
+
+- **The usage line became two lines, with bars.** One row per window, laid out
+  like the usage panel in the Claude Code editor extension:
+
+  ```
+  Session  ▓▓░░░░░░░░   22% · 3h
+  Week     ▓▓▓▓░░░░░░   41% · 1d
+  ```
+
+  Ten cells, percentage and time-to-reset, aligned in fixed columns; bar and
+  number turn yellow at ≥60 % and red at ≥85 %, as the single line's numbers
+  already did. A non-zero percentage always fills at least one cell, so 4 %
+  reads differently from 0 %. A plan with no weekly window gets the session row
+  alone.
+
+- **Removed the *Statistics → Usage monitor* checkbox.** It existed to stop a
+  background process that spent quota; there is no such process any more, so
+  the feature is simply on. If you want it gone entirely, `"usage_monitor":
+  "off"` in the config still does that. The `agent-state.usage-monitor.mode`
+  sidecar is no longer read (left on disk, like every other sidecar) — so if
+  you had the checkbox **off** in 1.4, usage comes back on after the upgrade.
+  That's deliberate: what you turned off was the quota cost, and it's gone.
+
+- **Upgrading: re-run `claude-agents-bar setup`.** A `brew upgrade` ships code,
+  not wiring — the 1.4 sensor stays wired as your `statusLine` until `setup`
+  unwires it, and every session then runs a script this version no longer
+  ships. `doctor` now says so explicitly (`[warn] usage/ … still runs the
+  retired 1.4 usage sensor`). The background session doesn't wait for you: the
+  first usage fetch after the upgrade quits any leftover `cab-usage-mon`
+  session and removes its marker, whether or not you ever run `setup`.
+
 ### Fixed
 
 - **A group holding a live session wouldn't open its submenu.** In

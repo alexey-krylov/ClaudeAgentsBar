@@ -52,33 +52,34 @@ class TestDoctorChecks(unittest.TestCase):
             status, _ = plugin._doctor_check_tsv_freshness(int(time.time()))
         self.assertEqual(status, "warn")
 
-    # --- usage-monitor health (problem A: onboarding hang) --------------- #
+    # --- usage health (no daemon since ADR-0020) ------------------------ #
 
-    def _check_usage(self, *, enabled=True, sessions=None, usage=None,
-                     preseeded=True, now=None):
+    def _check_usage(self, *, enabled=True, usage=None, binary="/usr/local/bin/claude",
+                     now=None):
         if now is None:
             now = int(time.time())
-        if sessions is None:
-            sessions = ["1.cab-usage-mon"]
         with patch.object(plugin.core, "usage_monitor_enabled", return_value=enabled), \
-             patch.object(plugin.usage_monitor, "_live_sessions", return_value=sessions), \
              patch.object(plugin.sidecars, "read_usage", return_value=usage), \
-             patch.object(plugin.doctor, "_onboarding_preseeded", return_value=preseeded):
-            return plugin._doctor_check_usage_monitor(now)
+             patch.object(plugin.usage_monitor, "_claude_bin", return_value=binary):
+            return plugin._doctor_check_usage(now)
+
+    def test_usage_orphaned_statusline_is_warn(self):
+        # 1.4.x wiring left behind by an upgrade that skipped `setup`.
+        settings = self.tmpdir / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(
+            '{"statusLine":{"type":"command",'
+            '"command":"bash \\"/opt/hb/hooks/usage-sensor.sh\\""}}',
+            encoding="utf-8",
+        )
+        with patch.object(Path, "home", return_value=self.tmpdir):
+            status, msg = self._check_usage(usage=None)
+        self.assertEqual(status, "warn")
+        self.assertIn("setup", msg)
 
     def test_usage_off_is_ok(self):
         status, _ = self._check_usage(enabled=False)
         self.assertEqual(status, "ok")
-
-    def test_usage_no_daemon_is_warn(self):
-        status, _ = self._check_usage(sessions=[])
-        self.assertEqual(status, "warn")
-
-    def test_usage_duplicates_is_warn(self):
-        status, msg = self._check_usage(
-            sessions=["1.cab-usage-mon", "2.cab-usage-mon"])
-        self.assertEqual(status, "warn")
-        self.assertIn("duplicate", msg)
 
     def test_usage_live_is_ok(self):
         now = int(time.time())
@@ -87,41 +88,24 @@ class TestDoctorChecks(unittest.TestCase):
         self.assertEqual(status, "ok")
         self.assertIn("42", msg)
 
-    def test_usage_daemon_up_no_data_unseeded_points_at_setup(self):
-        # The onboarding-hang signature → hard error naming the fix.
-        status, msg = self._check_usage(usage=None, preseeded=False)
+    def test_usage_no_claude_binary_is_error(self):
+        # The one failure the user has to act on: SwiftBar's stripped PATH.
+        status, msg = self._check_usage(usage=None, binary=None)
         self.assertEqual(status, "err")
-        self.assertIn("setup", msg)
+        self.assertIn("PATH", msg)
 
-    def test_usage_daemon_up_no_data_seeded_is_warn(self):
-        status, msg = self._check_usage(usage=None, preseeded=True)
+    def test_usage_no_snapshot_yet_is_warn(self):
+        status, msg = self._check_usage(usage=None)
         self.assertEqual(status, "warn")
-        self.assertIn("screen -r", msg)
+        self.assertIn("/usr/local/bin/claude", msg)
 
     def test_usage_stale_snapshot_treated_as_no_data(self):
         now = int(time.time())
         stale = plugin.core.Usage(now - 10_000, 42, now, 7, now)  # > 2*interval
-        with patch.object(plugin.core, "CONFIG", plugin.Config(usage_ping_interval_sec=300)):
-            status, _ = self._check_usage(usage=stale, preseeded=False, now=now)
-        self.assertEqual(status, "err")
-
-    def test_onboarding_preseeded_true_when_keys_set(self):
-        j = self.tmpdir / ".claude.json"
-        j.write_text('{"fullscreenUpsellSeenCount":99,"hasCompletedOnboarding":true}',
-                     encoding="utf-8")
-        with patch.object(plugin.doctor.Path, "home", return_value=self.tmpdir):
-            self.assertTrue(plugin._onboarding_preseeded())
-
-    def test_onboarding_preseeded_false_when_count_low(self):
-        j = self.tmpdir / ".claude.json"
-        j.write_text('{"fullscreenUpsellSeenCount":1,"hasCompletedOnboarding":true}',
-                     encoding="utf-8")
-        with patch.object(plugin.doctor.Path, "home", return_value=self.tmpdir):
-            self.assertFalse(plugin._onboarding_preseeded())
-
-    def test_onboarding_preseeded_false_when_file_absent(self):
-        with patch.object(plugin.doctor.Path, "home", return_value=self.tmpdir):
-            self.assertFalse(plugin._onboarding_preseeded())
+        with patch.object(plugin.core, "CONFIG",
+                          plugin.Config(usage_fetch_interval_sec=180)):
+            status, _ = self._check_usage(usage=stale, now=now)
+        self.assertEqual(status, "warn")
 
     def test_hook_registration_all_present_ok(self):
         settings = self.tmpdir / ".claude" / "settings.json"

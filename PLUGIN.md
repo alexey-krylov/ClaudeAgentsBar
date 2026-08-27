@@ -414,36 +414,52 @@ happens off the tick). Progress is tracked in `agent-state.idle-reminders`
 green window (`fresh_sec`) because `reconcile` only ever considers
 `RenderGroup.FRESH` sessions.
 
-### The usage monitor — a hidden background `claude` session
+### Subscription usage — a periodic `get_usage` fetch
 
-Subscription usage (spec 0011) needs `rate_limits`, which Claude Code exposes
-**only** on a `statusLine` stdin **and only inside a real interactive TUI** —
-`claude -p` / headless / the VSCode extension never invoke it (verified). So
-`claude_agents_bar/usage_monitor.py` holds a **hidden background `claude`
-session** in a detached `screen` (no window, but a real TTY), and the bundled
-`hooks/usage-sensor.sh` — wired in as *that session's* `statusLine` by `setup` —
-parses `rate_limits` and writes the one-row `agent-state.usage` snapshot
-(`record_ts  five_used  five_resets_at  seven_used  seven_resets_at`), chaining
-any pre-existing user statusLine. See
-[ADR-0018](./docs/adr/0018-usage-sensor-statusline-chain.md).
+Subscription usage (spec 0011) needs the account's `rate_limits`. The `claude`
+CLI exposes them over the **SDK control protocol**: feed one
+`{"type":"control_request","request":{"subtype":"get_usage"}}` line into
+`claude -p --input-format stream-json --output-format stream-json` and it
+answers with the live limits, then exits. ~1.7 s, no inference, no quota, no
+transcript, no hooks, no folder trust. See
+[ADR-0020](./docs/adr/0020-usage-via-sdk-get-usage.md) — it replaced the
+background-`claude`-in-a-`screen` arrangement of ADR-0018 in 1.5.0.
 
-`usage_monitor.reconcile(now)` rides the tick exactly like `keep_awake` (no
-launchd): off → kill the session; on → spawn it when absent and **recycle** it
-(kill + fresh spawn) every `usage_ping_interval_sec` (a fresh session's first
-response is what refreshes `used_percentage` server-side; stuff-pinging a live
-TUI proved unreliable). Tracked by the unique `screen` name, not a PID.
-The master `usage_monitor` switch (config + `agent-state.usage-monitor.mode`
-sidecar + *Tools* toggle, via `core.usage_monitor_enabled()`) gates the session,
-the line, and the alerts together.
+`usage_monitor.reconcile(now)` rides the tick like `keep_awake` (no launchd),
+but owns no process: when `usage_fetch_interval_sec` has elapsed it stamps
+`agent-state.usage.fetch` and spawns `claude-agents.5s.py --usage-fetch`
+**detached**, so the 5 s tick never waits on the call. The marker is written
+*before* the spawn — a hung fetch can't make the next tick start a second one.
+
+`usage_monitor.fetch(now)` picks the cheapest source that works:
+
+1. `cachedUsageUtilization` in `~/.claude.json` (Claude Code's own cache of the
+   same `/api/oauth/usage` response, refreshed by any native `claude`) when
+   it's fresher than the fetch interval — spawns nothing;
+2. the live `get_usage` call;
+3. the same cache up to an hour old, if the call failed.
+
+Either way it writes the one-row `agent-state.usage` snapshot
+(`record_ts  five_used  five_resets_at  seven_used  seven_resets_at`) — the
+format predates ADR-0020 and survived it, so `sidecars.read_usage`, the alert
+escalation and the menu lines were untouched by the switch. `record_ts` is when
+the data was *fetched* (a cached payload keeps Claude Code's timestamp, not
+ours), which is what the staleness gate keys on. Nothing is written when every
+source fails: the old snapshot ages out and the lines disappear.
+
+Config-only master switch (`core.usage_monitor_enabled()` → `CONFIG.usage_monitor`)
+gates the fetch, the lines and the alerts together. There's no menu toggle since
+ADR-0020 — nothing runs in the background to switch off.
 
 The data is **account-wide** (one row). `usage_alerts.reconcile(now)` reads the
 snapshot and fires `hooks/notify-usage.sh` (a non-registered, plugin-fired
 notifier like `notify-idle.sh`) when `five_used` first crosses 50/60/70/80/90 %
-/ 95 %, tracking progress in `agent-state.usage-alerts`. The passive usage line
-(`render._print_usage_line`, a ``--`` sub-item under *Statistics*, colour-coded
-yellow ≥60 / red ≥85, mirroring Claude Code's USAGE view) and the alerts both
-gate on the master switch plus `now < five_resets_at` and a `record_ts`
-staleness check, so a dead session hides the line rather than freezing it.
+/ 95 %, tracking progress in `agent-state.usage-alerts`. The two passive usage
+lines (`render._print_usage_lines`, `--` sub-items under *Statistics*: a
+ten-cell bar plus percentage and reset, colour-coded yellow ≥60 / red ≥85,
+mirroring the IDE extension's usage panel) and the alerts both gate on the
+master switch plus `now < five_resets_at` and a `record_ts` staleness check, so
+a stalled fetch hides the lines rather than freezing them.
 
 [cc-hooks]: https://code.claude.com/docs/en/hooks.md
 

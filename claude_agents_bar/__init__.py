@@ -156,9 +156,8 @@ from .doctor import (
     _doctor_check_swiftbar_plugin,
     _doctor_check_terminal_notifier,
     _doctor_check_tsv_freshness,
-    _doctor_check_usage_monitor,
+    _doctor_check_usage,
     _has_agent_state_hook,
-    _onboarding_preseeded,
     _run_doctor,
 )
 
@@ -232,20 +231,11 @@ def main() -> int:
             core._warn(f"notify_audio: refusing invalid value {arg!r}")
             return 1
         return core.write_notify_audio_mode(arg == "on")
-    if len(sys.argv) > 1 and sys.argv[1] == "--usage-monitor":
-        arg = sys.argv[2] if len(sys.argv) > 2 else ""
-        if arg not in ("on", "off"):
-            core._warn(f"usage_monitor: refusing invalid value {arg!r}")
-            return 1
-        rc = core.write_usage_monitor_mode(arg)
-        if rc == 0:
-            # Reconcile immediately so toggling *on* spawns the background
-            # session (and *off* kills it) without waiting for the next tick.
-            try:
-                usage_monitor.reconcile(int(time.time()))
-            except Exception as exc:
-                core._warn(f"usage_monitor: post-set reconcile failed: {exc}")
-        return rc
+    if len(sys.argv) > 1 and sys.argv[1] == "--usage-fetch":
+        # Out-of-band refresh of the usage snapshot, spawned detached by the
+        # tick (and runnable by hand to debug). Takes ~1.7 s, which is why it
+        # never runs inline. See :mod:`usage_monitor`.
+        return usage_monitor.fetch(int(time.time()))
     if len(sys.argv) > 1 and sys.argv[1] == "--usage-monitor-shutdown":
         usage_monitor.shutdown()
         return 0
@@ -269,15 +259,15 @@ def main() -> int:
         except Exception as exc:
             core._warn(f"idle_reminders: reconcile failed: {exc}")
         # Subscription usage alerts ride the same tick. Account-wide, so no
-        # session list needed — just the usage snapshot the statusLine sensor
-        # wrote. Same crash-isolation. See :mod:`usage_alerts`.
+        # session list needed — just the snapshot the usage fetch wrote.
+        # Same crash-isolation. See :mod:`usage_alerts`.
         try:
             usage_alerts.reconcile(now)
         except Exception as exc:
             core._warn(f"usage_alerts: reconcile failed: {exc}")
-        # Usage monitor rides the same tick: keep the background claude session
-        # in line with the master switch and ping it on schedule. Same
-        # crash-isolation. See :mod:`usage_monitor`.
+        # Usage monitor rides the same tick: spawn a detached `get_usage`
+        # fetch whenever one is due. Same crash-isolation.
+        # See :mod:`usage_monitor`.
         try:
             usage_monitor.reconcile(now)
         except Exception as exc:

@@ -251,8 +251,6 @@ class TestShellTrapsCoverTempFiles(unittest.TestCase):
     * ``TRAP_WRITERS`` — lock-holding ``awk … > "$TMP" && mv`` writers. The
       ``&&`` skips the ``mv`` on a non-zero awk, so ``$TMP`` has to be in the
       EXIT trap.
-    * ``usage-sensor.sh`` — no lock, no trap, writes on both branches of an
-      ``if``; both branches have to drop the temp.
     * ``forget-sessions.sh`` — ``: > tmp; mv`` with commands that can't
       realistically fail, so it leaks only on a kill and relies on the
       render-tick GC. Asserted here so the omission is deliberate, not
@@ -287,13 +285,6 @@ class TestShellTrapsCoverTempFiles(unittest.TestCase):
         # delete-session.sh writes temps but holds no EXIT trap (it uses
         # explicit if/else), so it's covered by its own test below.
         self.assertEqual(found - {"bin/app/delete-session.sh"}, set(self.TRAP_WRITERS))
-
-    def test_usage_sensor_drops_its_temp_on_both_branches(self):
-        text = (_REPO_ROOT / "hooks/usage-sensor.sh").read_text(encoding="utf-8")
-        write_block = text[text.index('tmp="${USAGE_SIDECAR}'):]
-        write_block = write_block[:write_block.index("\nfi\n") + 4]
-        # mv-failure branch and redirect-failure branch.
-        self.assertEqual(write_block.count('rm -f "$tmp"'), 2, write_block)
 
     def test_forget_sessions_temps_are_gc_matchable(self):
         # It leaks only on a kill, so the safety net is the sweep — which

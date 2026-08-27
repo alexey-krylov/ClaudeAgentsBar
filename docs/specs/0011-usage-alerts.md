@@ -15,50 +15,56 @@ adds, behind one master switch (on by default):
    window's `used_percentage` first crosses 50/60/70/80/90 % (template A) and a
    distinct final alert at 95 % (template B).
 
-## Where the data comes from — the background monitor
+## Where the data comes from — the periodic `get_usage` fetch
 
-`rate_limits` is exposed by Claude Code **only** on a `statusLine` stdin, and
-**only inside a real interactive TUI** (not `claude -p`, not headless, not the
-VSCode extension — verified). So we hold a **hidden background `claude`
-session** in a detached `screen` and read its status line. See
-[ADR-0018](../adr/0018-usage-sensor-statusline-chain.md) for the full rationale.
+> **Revised in 1.5.0.** The original design held a hidden background `claude`
+> TUI in a detached `screen` and scraped `rate_limits` off its `statusLine`
+> stdin ([ADR-0018](../adr/0018-usage-sensor-statusline-chain.md)), because that
+> was the only place Claude Code exposed them. It isn't any more — see
+> [ADR-0020](../adr/0020-usage-via-sdk-get-usage.md). The alerts, the snapshot
+> format and the master switch below are unchanged; only the source moved.
+
+The `claude` CLI answers a `get_usage` control request over the SDK control
+protocol with the account's live `rate_limits`:
+
+```bash
+printf '{"type":"control_request","request_id":"r","request":{"subtype":"get_usage"}}' \
+  | claude -p --verbose --input-format stream-json --output-format stream-json
+```
+
+~1.7 s, no inference (`total_cost_usd: 0`), no quota, no transcript, no hooks,
+no folder trust.
 
 `claude_agents_bar/usage_monitor.reconcile(now)` runs on the plugin tick (after
-`usage_alerts`, same crash-isolation), mirroring `keep_awake`'s lifecycle:
+`usage_alerts`, same crash-isolation) and owns no process:
 
-* master `usage_monitor` **off** → kill the session if running; nothing else.
-* **on**, session dead → `screen -dmS cab-usage-mon … claude --model <haiku>`
-  in the trusted folder `~/.claude/cab-usage-monitor` (no window).
-* **on**, alive → **recycle** the session (kill + respawn) every
-  `usage_ping_interval_sec` (default 10 min). A long-lived session's
-  `rate_limits` go stale (the server only refreshes them on a fresh API
-  response, and stuff-pinging a live TUI proved unreliable), so cycling forces a
-  new first response with current `used_percentage` (account-wide — catches
-  VSCode usage too); `refreshInterval` only re-renders between recycles.
+* master `usage_monitor` **off** → nothing at all.
+* **on**, less than `usage_fetch_interval_sec` since the last fetch → nothing.
+* **on**, due → stamp `agent-state.usage.fetch` (**before** spawning, so a hung
+  fetch can't stack) and spawn `claude-agents.5s.py --usage-fetch` detached.
 
-The session is tracked by its unique `screen` **name**, not a PID (no PID-reuse
-ambiguity). `setup` wires the sensor as that session's `statusLine`, sets
-`statusLine.refreshInterval = 8`, creates the trusted folder, and marks it
-trusted in `~/.claude.json`. The sensor `hooks/usage-sensor.sh` writes the
-snapshot and chains any pre-existing user statusLine; `teardown` reverses all of
-it and `--usage-monitor-shutdown` quits the session.
+`usage_monitor.fetch(now)` takes the cheapest source that works: Claude Code's
+own `cachedUsageUtilization` in `~/.claude.json` when it's fresher than the
+fetch interval (no process at all), else the live call, else that same cache up
+to an hour old. When every source fails it writes nothing — the previous
+snapshot ages out and the lines hide themselves.
 
 Snapshot row (`record_ts  five_used  five_resets_at  seven_used  seven_resets_at`):
 `*_resets_at` / `record_ts` are unix epoch seconds; `five_used`/`seven_used` are
-**floored** integer percentages (matching Claude Code's USAGE view — a 50 %
-threshold fires only at a real ≥ 50 %, not 49.6 %).
+**floored** integer percentages (matching Claude Code's own usage view — a 50 %
+threshold fires only at a real ≥ 50 %, not 49.6 %). `resets_at` arrives as an
+ISO-8601 string and is converted here. `record_ts` is when the data was
+*fetched*: a cached payload keeps Claude Code's timestamp, so it can't
+masquerade as fresh.
 
 ## Master switch
 
-`usage_monitor` (`"on"` default / `"off"`) — config knob + sidecar override
-(`agent-state.usage-monitor.mode`, written by *Tools → Usage monitor*) +
-`usage_monitor_enabled()` gate. **On by default** (zero-config — `setup` trusts
-the work folder); it runs a real background `claude` and pings spend a little
-Haiku quota, so flip it off if you'd rather not. Off → background
-session stopped, usage line hidden, alerts silenced. `notify_on_usage` is a
-**sub-flag** under it (alerts on/off while the monitor runs). New knobs:
-`usage_ping_interval_min` (floored at 5), `usage_ping_model` (safe charset, it
-goes into a shell command).
+`usage_monitor` (`"on"` default / `"off"`) — config knob + `usage_monitor_enabled()`
+gate. **On by default** (zero-config, nothing to install). There is no menu
+toggle since 1.5.0: the fetch spends no quota, so there is no background cost
+worth a checkbox. Off → no fetch, usage lines hidden, alerts silenced.
+`notify_on_usage` is a **sub-flag** under it (alerts on/off while the feature
+runs). Interval knob: `usage_fetch_interval_min` (default 3, floored at 1).
 
 "Session" throughout means the 5-hour window — **not** a Claude Code chat or
 the context window.
@@ -124,15 +130,14 @@ an arrow — this is just text.
 Shown only when the **monitor is on** (`usage_monitor_enabled()`),
 `notify_on_usage` notwithstanding, and the snapshot is fresh. Two staleness
 gates hide it gracefully: `now >= five_resets_at` (window expired) and
-`now - record_ts > 2 × usage_ping_interval_sec` (the background session died and
+`now - record_ts > 2 × usage_fetch_interval_sec` (fetches stopped landing and
 the snapshot froze). The string is localized (`menu.usage`) across all 8 locales.
 
 ## Config knobs
 
 * `usage_monitor` (`"on"` default / `"off"`) — **master**; mode string like
   `keep_awake`, with sidecar override + *Tools* toggle.
-* `usage_ping_interval_min` (default 10, floored at 5) → `usage_ping_interval_sec`.
-* `usage_ping_model` (default Haiku) — `[A-Za-z0-9._-]` only (shell-interpolated).
+* `usage_fetch_interval_min` (default 3, floored at 1) → `usage_fetch_interval_sec`.
 * `notify_on_usage` (bool, default true) — alerts sub-flag under the master.
 * `notify_usage_title` / `notify_usage_phrase_threshold` /
   `notify_usage_phrase_threshold_reset` / `notify_usage_phrase_critical` /
@@ -140,39 +145,52 @@ the snapshot froze). The string is localized (`menu.usage`) across all 8 locales
 
 ## Acceptance
 
-1. `bash -n hooks/usage-sensor.sh hooks/notify-usage.sh
-   bin/install/setup.sh bin/install/teardown.sh` exits 0.
-2. `usage-sensor.sh` fed a payload with `rate_limits.five_hour.used_percentage`
-   18 / `seven_day` 17 writes `…\t18\t…\t17\t<seven_reset>`; a dropping fraction
-   floors (`18.6 → 18`, `49.9 → 49`); a payload with no `rate_limits` writes no
-   sidecar; the chain proxies the original statusLine's stdout. *(verified)*
-3. `setup`'s statusLine wrap is idempotent and `teardown` restores the
-   byte-identical original. *(verified via isolated jq round-trip)*
-4. `read_usage` round-trips a valid row and returns `None` on absent / `<5`
+1. `bash -n hooks/notify-usage.sh bin/install/setup.sh bin/install/teardown.sh`
+   exits 0.
+2. The `get_usage` control request returns `rate_limits` with `five_hour` /
+   `seven_day` (`utilization` + ISO `resets_at`) and reports
+   `total_cost_usd: 0` — no inference, no transcript under `~/.claude/projects`,
+   no `session-env` entry, no hook rows in `agent-state.tsv`, and no trust
+   prompt from an untrusted cwd. *(verified 2026-08-27, CLI 2.1.231)*
+3. `snapshot_from_rate_limits` floors percentages (`10.9 → 10`), converts ISO
+   `resets_at` (offset and `Z` forms) to epoch, refuses a payload with no
+   usable 5-hour window, and degrades a missing weekly window to `0\t0`.
+   `rate_limits_from_response` skips noise/error frames and returns `None` for
+   `rate_limits_available: false`.
+4. `fetch`: a cache fresher than the interval short-circuits the CLI entirely
+   and keeps *its own* `fetchedAtMs` as `record_ts`; a stale cache falls through
+   to the call; a failed call falls back to an hour-old cache; with every source
+   dead nothing is written and the previous snapshot is left alone.
+   `reconcile`: first tick fetches, marker written before the spawn, no second
+   fetch inside the interval, another one past it, none at all when off.
+5. `read_usage` round-trips a valid row and returns `None` on absent / `<5`
    columns / non-numeric / empty. `read/write_usage_alerts` round-trip;
    `write(None)` removes the file; corrupt → `None`.
-5. `reconcile`: off → no-op (sidecar untouched); no snapshot → no-op; expired
-   window → no-op; first cross at 52 → `_fire(52,"A")` + writes `(window,50)`;
-   no re-fire at 55 within the same window; boundary 50 fires; 48→72 collapses
-   to a single `_fire(72,"A")` + `(window,70)`; 96 with prior 90 →
-   `_fire(96,"B")` + `(window,95)`; a new `resets_at` resets the counter.
-6. `render._print_usage_line`: snapshot present → one grey `--` line with the
-   substituted `{sess}/{until}/{wk}/{wk_until}` and no bare `|` in the label;
-   absent / expired / monitor off → nothing.
-7. Full `unittest` suite green (372 tests, incl. the above).
-8. **Manual GUI required before release** (automated checks can't exercise the
-   live statusLine, `say`, the banner, or SwiftBar): wire the sensor via
-   `setup`, confirm the Tools line shows the right `%`/time and matches Claude
-   Code's own USAGE view; cross a real threshold and confirm one banner + voice;
-   confirm quiet hours / *Banner only* mute it like the other notifications;
-   confirm the chained original statusLine still renders; run `teardown` and
-   confirm the original statusLine is restored.
+6. `usage_alerts.reconcile`: off → no-op (sidecar untouched); no snapshot →
+   no-op; expired window → no-op; first cross at 52 → `_fire(52,"A")` + writes
+   `(window,50)`; no re-fire at 55 within the same window; boundary 50 fires;
+   48→72 collapses to a single `_fire(72,"A")` + `(window,70)`; 96 with prior
+   90 → `_fire(96,"B")` + `(window,95)`; a new `resets_at` resets the counter.
+7. `render._print_usage_lines`: fresh snapshot → two grey `--` lines whose bars
+   and percentages align in the same columns, zone colours at ≥60/≥85, a
+   non-zero percentage never rendering an empty bar, and no bare `|` in a
+   label; absent / expired / stale / feature off → nothing; no weekly window →
+   session row only.
+8. Full `unittest` suite green (614 tests, incl. the above).
+9. **Manual GUI required before release** (automated checks can't exercise
+   `say`, the banner, or SwiftBar): confirm the two Statistics lines show the
+   right `%`/time and match the IDE extension's usage panel; cross a real
+   threshold and confirm one banner + voice; confirm quiet hours / *Banner
+   only* mute it like the other notifications; on an upgrade from 1.4.x confirm
+   `setup` restored the original `statusLine` and left no `cab-usage-mon`
+   session behind.
 
 ## Out of scope
 
-* Threshold alerts for the **weekly** window — weekly is shown in the Tools
-  line only, never alerted.
+* Threshold alerts for the **weekly** window — weekly gets a line, never an
+  alert.
 * A weekly pacing target — the line shows the raw weekly used-% and reset, like
-  Claude Code's own USAGE view; no self-imposed pacing model.
-* A Tools-menu toggle — the switch is the `notify_on_usage` config knob (like
-  `notify_on_stop` / `notify_on_wait`).
+  the IDE extension's panel; no self-imposed pacing model.
+* Surfacing the rest of the `get_usage` payload (`seven_day_opus/sonnet`,
+  `model_scoped[]`, `extra_usage` credits, the CLI-computed `behaviors`
+  request/session counts). Available, deliberately not shown yet.

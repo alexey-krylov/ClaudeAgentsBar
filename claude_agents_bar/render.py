@@ -1396,18 +1396,66 @@ def _usage_pct_ansi(pct: int) -> str:
     return str(pct)
 
 
-def _print_usage_line() -> None:
-    """One grey, **passive** (non-clickable) line with the subscription usage.
+#: Segments in the pseudo-progress bar on each usage line. Ten reads as
+#: "percent, in tens" at a glance and stays narrow enough that the whole line
+#: fits a menu without wrapping.
+_USAGE_BAR_SEGMENTS = 10
 
-    ``Session: {used}% · {until-reset} · Week: {used}% · {until-reset}``,
-    sourced from the ``agent-state.usage`` sidecar the background session's
-    status line wrote (spec 0011). Printed as a ``--`` sub-item under *Statistics*
-    (next to *Stats today*): a top-level line would get a SwiftBar
-    refresh/about submenu and an arrow — this is just text. Shown only when the
-    usage monitor is **on** and the snapshot is fresh; the session %/week %
-    numbers are coloured by zone (≥60 yellow, ≥85 red). Hidden when the monitor
-    is off, no snapshot exists, the 5-hour window expired, or the snapshot is
-    stale (the background session died) — graceful, just no line.
+#: Filled / empty bar cells. Both are full-width in Menlo (the line already
+#: sets ``font=Menlo``), so the two rows line up under each other.
+_USAGE_BAR_FILLED = "\u2593"
+_USAGE_BAR_EMPTY = "\u2591"
+
+
+def _usage_bar(pct: int) -> str:
+    """A ten-cell bar for a used-percentage, coloured by the same zones.
+
+    Rounds half-up to whole cells, but never rounds a non-zero percentage down
+    to an empty bar — 4 % has to look different from 0 %. The filled run takes
+    the zone colour (≥85 red, ≥60 yellow) via the same ANSI escapes as the
+    number; the empty run stays on the line's grey.
+    """
+    pct = max(0, min(100, pct))
+    filled = (pct * _USAGE_BAR_SEGMENTS + 50) // 100
+    if pct > 0 and filled == 0:
+        filled = 1
+    bar = _USAGE_BAR_FILLED * filled
+    if pct >= 85:
+        bar = f"{core._ANSI_WAITING}{bar}{core._ANSI_RESET}"
+    elif pct >= 60:
+        bar = f"{core._ANSI_WORKING}{bar}{core._ANSI_RESET}"
+    return bar + _USAGE_BAR_EMPTY * (_USAGE_BAR_SEGMENTS - filled)
+
+
+def _usage_row(label: str, width: int, pct: int, until: str) -> str:
+    """One usage line: ``Session   ▓▓░░░░░░░░    7% · 3h``.
+
+    ``label`` is padded to ``width`` (the longer of the two localized labels)
+    and the percentage right-aligned in three columns, so the bars and numbers
+    of the two rows sit in the same columns. Padding is applied **before** the
+    ANSI colour is wrapped around the digits — an escape sequence has no width
+    on screen but plenty in ``len()``.
+    """
+    pad = " " * max(0, 3 - len(str(pct)))
+    text = f"{label.ljust(width)}  {_usage_bar(pct)} {pad}{_usage_pct_ansi(pct)}%"
+    return f"{text} · {until}" if until else text
+
+
+def _print_usage_lines() -> None:
+    """Two grey, **passive** (non-clickable) lines with the subscription usage.
+
+    One row per window — the 5-hour session window and the 7-day one — each
+    with a bar, the used percentage and the time until it resets, mirroring the
+    usage panel in the Claude Code IDE extension. Sourced from the
+    ``agent-state.usage`` sidecar the periodic ``get_usage`` fetch writes
+    (ADR-0020). Printed as ``--`` sub-items under *Statistics*: a top-level
+    line would get a SwiftBar refresh/about submenu and an arrow — this is just
+    text.
+
+    Hidden entirely when the feature is off in the config, no snapshot exists,
+    the 5-hour window has expired, or the snapshot went stale (fetches stopped
+    landing) — graceful, just no lines. The weekly row is additionally skipped
+    when the plan carries no 7-day window.
     """
     if not core.usage_monitor_enabled():
         return
@@ -1421,19 +1469,29 @@ def _print_usage_line() -> None:
         return
     if now >= resets_at:
         return  # window expired; snapshot is stale, don't show it
-    # Staleness gate: if the background session stopped writing (crashed,
-    # killed), the snapshot freezes. Hide it once it's older than two ping
-    # intervals rather than show frozen percentages.
-    if now - usage.record_ts > 2 * core.CONFIG.usage_ping_interval_sec:
+    # Staleness gate: if fetches stopped landing (claude gone, machine offline)
+    # the snapshot freezes. Hide it once it's older than two fetch intervals
+    # rather than show frozen percentages.
+    if now - usage.record_ts > 2 * core.CONFIG.usage_fetch_interval_sec:
         return
     lang = _lang()
-    try:
-        wk_until = _format_until(int(usage.seven_resets_at) - now, lang)
-    except ValueError:
-        wk_until = ""
+    session_label = _t("menu.usage_session")
+    week_label = _t("menu.usage_week")
+    width = max(len(session_label), len(week_label))
+    style = "font=Menlo color=#999999 ansi=true"
     print(
-        f"--{_t('menu.usage', sess=_usage_pct_ansi(usage.five_used), until=_format_until(resets_at - now, lang), wk=_usage_pct_ansi(usage.seven_used), wk_until=wk_until)} | "
-        "font=Menlo color=#999999 ansi=true sfimage=gauge.with.dots.needle.50percent"
+        f"--{_usage_row(session_label, width, usage.five_used, _format_until(resets_at - now, lang))} | "
+        f"{style} sfimage=clock"
+    )
+    try:
+        week_resets_at = int(usage.seven_resets_at)
+    except ValueError:
+        return
+    if week_resets_at <= 0:
+        return  # plan has no 7-day window — session row only
+    print(
+        f"--{_usage_row(week_label, width, usage.seven_used, _format_until(week_resets_at - now, lang))} | "
+        f"{style} sfimage=chart.line.uptrend.xyaxis"
     )
 
 
@@ -1566,8 +1624,10 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
         "sfimage=lightbulb.fill"
     )
 
-    # Stats submenu (its own top-level item) — today's usage dialog, the usage
-    # monitor master toggle, and the passive live-usage line under it.
+    # Stats submenu (its own top-level item) — today's usage dialog plus the
+    # two passive live-usage lines. No master toggle since ADR-0020: the fetch
+    # costs no quota, so there is nothing worth switching off from the menu
+    # (``usage_monitor`` in the config still turns the whole thing off).
     print(f"{_t('menu.stats')} | sfimage=chart.bar.fill")
     stats_script = bin_dir / "stats-today.sh"
     print(
@@ -1576,21 +1636,7 @@ def _print_footer(sessions: list[Session] | None = None) -> None:
         "terminal=false refresh=false "
         "sfimage=calendar sfcolor=systemPurple"
     )
-    # Usage monitor master toggle (spec 0011) — the background claude session,
-    # the live-usage line below, and the threshold alerts, all on/off together.
-    # Same checkbox pattern as multi-workspace (sidecar folds over config).
-    um_on = core.usage_monitor_enabled()
-    um_set_script = bin_dir / "usage-monitor-set.sh"
-    print(
-        f"--{_t('menu.usage_monitor')} | "
-        "shell=/bin/bash "
-        f"param1={_swiftbar_quote(str(um_set_script))} "
-        f"param2={'off' if um_on else 'on'} "
-        f"checked={'true' if um_on else 'false'} "
-        "terminal=false refresh=true "
-        "sfimage=chart.line.uptrend.xyaxis"
-    )
-    _print_usage_line()
+    _print_usage_lines()
 
 
 # --------------------------------------------------------------------------- #

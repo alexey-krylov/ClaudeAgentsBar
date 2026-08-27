@@ -30,7 +30,8 @@ prior one.
 | [0015](./0015-python-as-plugin-language.md) | Python as the plugin language | Accepted |
 | [0016](./0016-multi-workspace-window-focus.md) | Multi-workspace window focus via open-document, not the deeplink alone | Accepted |
 | [0017](./0017-symlink-homebrew-opt-not-cellar.md) | Anchor Homebrew symlinks at `opt`, not the versioned Cellar keg | Accepted |
-| [0018](./0018-usage-sensor-statusline-chain.md) | Source subscription usage from a hidden background `claude` session | Accepted |
+| [0018](./0018-usage-sensor-statusline-chain.md) | Source subscription usage from a hidden background `claude` session | Superseded by 0020 |
+| [0020](./0020-usage-via-sdk-get-usage.md) | Subscription usage via the SDK `get_usage` control request | Accepted |
 
 ## Workflow
 

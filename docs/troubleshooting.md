@@ -329,11 +329,12 @@ want a different language in the *About* dialog specifically, that's
 a SwiftBar limitation — the runtime menu still respects your
 `language` setting.
 
-## Usage line is missing / shows nothing
+## Usage lines are missing / show nothing
 
-The usage line and alerts (spec 0011) come from the **usage monitor**, which is
-**on by default** — it holds a window-less background `claude` (Haiku, in a
-detached `screen`) and reads usage off its status line. **Start with `doctor`:**
+The two usage lines and the alerts (spec 0011) come from a periodic `get_usage`
+call to the `claude` CLI — **on by default**, ~1.7 s every few minutes, no
+quota spent ([ADR-0020](adr/0020-usage-via-sdk-get-usage.md)). **Start with
+`doctor`:**
 
 ```bash
 claude-agents-bar doctor      # look at the [..] usage/ line
@@ -341,34 +342,56 @@ claude-agents-bar doctor      # look at the [..] usage/ line
 
 * `[ok] usage/ live (…)` — working; if the menu still looks off it's a render
   glitch, refresh with `open swiftbar://refreshallplugins`.
-* `[err] usage/ … stuck on Claude Code's first-run prompt …` — **the common
-  one.** On Claude Code v2.1.181+ the background session hangs on the *"Try the
-  new fullscreen renderer?"* upsell and never reaches the ready TUI, so nothing
-  is read. `setup` pre-seeds the `~/.claude.json` keys that suppress it — run
-  `claude-agents-bar setup`, then `open swiftbar://refreshallplugins`.
-* `[warn] usage/ … onboarding keys are seeded …` — peek inside the session with
-  `screen -r cab-usage-mon` (detach with **`Ctrl-A` then `d`** — *don't* `Ctrl-C`
-  or `/quit`, that kills it). Look for a *new* blocking prompt a fresh Claude
-  Code version may have added, or confirm you're not on API-key auth.
-* `[warn] usage/ background session down …` — the plugin respawns it on the next
-  tick (~5 s); re-check.
+* `[err] usage/ no \`claude\` binary found …` — **the one you have to fix.**
+  SwiftBar runs plugins with a stripped `PATH`, so a CLI installed somewhere
+  unusual is invisible to it. `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.claude/local` and `~/.local/bin` are checked explicitly; anywhere else,
+  symlink it: `ln -s "$(which claude)" /usr/local/bin/claude`.
+* `[warn] usage/ no snapshot yet …` — a fetch runs on the next due tick;
+  re-check shortly. To see what actually happens, run it by hand:
+
+  ```bash
+  claude-agents-bar usage
+  ```
 
 Other causes:
 
 * **API-key auth:** `rate_limits` exist only for a Claude.ai subscription
-  (Pro/Max). On API-key auth there's nothing to show — this is not a bug.
-* **Toggled off:** *Statistics → Usage monitor* (or `usage_monitor: "off"`)
-  stops the session, the line, and the alerts together.
-* **Stale → hidden on purpose:** if the background session dies, the line
-  disappears rather than freezing on old numbers (a `record_ts` staleness gate).
-* **Never run `setup` after a `brew upgrade`:** the status-line sensor, the
-  `refreshInterval`, and the trusted folder all live in `~/.claude` and only
-  `setup` writes them. A plain upgrade ships code, not wiring.
+  (Pro/Max). On API-key / Bedrock / Vertex auth the call answers
+  `rate_limits_available: false` and there's nothing to show — not a bug.
+* **Turned off:** `"usage_monitor": "off"` in the config stops the fetch, the
+  lines and the alerts together. (The old *Statistics → Usage monitor*
+  checkbox is gone as of 1.5.0 — there's no background process left to stop.)
+* **Stale → hidden on purpose:** if fetches stop landing, the lines disappear
+  rather than freezing on old numbers (a `record_ts` staleness gate).
+
+### Upgrading from 1.4.x — the old background session
+
+Before 1.5.0 usage came off the `statusLine` of a hidden background `claude`
+session parked in a detached `screen`. **Run `claude-agents-bar setup` after
+the upgrade** — `brew upgrade` ships code, not wiring. `setup` restores the
+`statusLine` you had before (or drops the key if you had none), removes the
+sensor symlink, kills any leftover `cab-usage-mon` session and deletes its
+empty work folder. It's idempotent; a second run does nothing.
+
+Skipping it costs you a dead `statusLine`: `~/.claude/settings.json` still
+points at `usage-sensor.sh`, which this version doesn't ship, so every session
+runs a missing script (usage itself is unaffected — the fetch is independent).
+`doctor` flags exactly that:
+
+```
+[warn] usage/  your ~/.claude/settings.json still runs the retired 1.4 usage
+               sensor as its statusLine … Fix: claude-agents-bar setup
+```
+
+The background session, at least, doesn't wait for you: the first usage fetch
+after the upgrade quits any leftover `cab-usage-mon` and removes its marker,
+`setup` or no `setup`.
 
 ### Usage number jumps around (e.g. 10 % → 20 % → 10 %)
 
-Fixed in 1.3.0. The `statusLine` sensor is global — every interactive session
-fired it — so an old session reopened via resume wrote its **stale cached**
-`rate_limits` over the daemon's live number. The sensor now writes only for the
-monitor's own session (gated on its work-folder cwd). If you still see it, your
-plugin predates the fix — `brew upgrade claude-agents-bar` and re-run `setup`.
+A 1.3.0-era bug of the old `statusLine` sensor: it was global, so an old session
+reopened via resume wrote its **stale cached** `rate_limits` over the live
+number. The sensor is gone entirely as of 1.5.0 — there's a single writer now.
+If you still see it, your plugin predates the fix: `brew upgrade
+claude-agents-bar` and re-run `setup`.

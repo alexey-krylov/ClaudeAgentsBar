@@ -59,10 +59,9 @@ restart needed.
 | `notify_idle_interval_min` | `30` | Idle-session reminders. A finished session that sits 🟢 **green** (unread — you haven't clicked it) past this many minutes gets re-announced on the plugin tick (chime + spoken phrase + banner, like an awaiting prompt). Each subsequent reminder **doubles** the wait: 30, 60, 120, … minutes after the session finished. The number of reminders is bounded by how long the row stays green — `fresh_minutes` (default 60), after which it auto-fades to 🔵 and reminders stop — so the default 30-min start gives one reminder (at 30 min) within the green window; raise `fresh_minutes` for more. Clicking the session (or *Tools → Acknowledge all*) ends the schedule. `0` / `null` turns the feature off. Respects `quiet_hours` and the *Banner only* audio mode. See *Idle reminders* below. |
 | `notify_idle_phrases` | `["Don't forget me", "Still unread", "Pending review", "Your turn"]` | Phrases spoken aloud and shown in the banner for an idle-session reminder. One is chosen at random per reminder. |
 | `notify_sound_idle` | `"Submarine"` | Chime played on an idle-session reminder. Same value shapes as `notify_sound_stop`. Default `"Submarine"` is a soft ping, distinct from `Hero` (done) and `Funk` (awaiting). |
-| `usage_monitor` | `"on"` | **Master switch** for the whole subscription-usage feature (spec 0011): the hidden background `claude` session that sources live `rate_limits`, the usage line, and the threshold alerts. `"on"` (default — works out of the box; `setup` trusts the session's folder so there's nothing to configure) or `"off"`. Claude Code only exposes `rate_limits` to an interactive TUI status line, so the monitor holds a background `claude` session (detached `screen`, no window) and pings it periodically — spending a little Haiku quota. Toggle live from *Tools → Usage monitor*. Off → session stopped, usage line gone, alerts silenced. See *Subscription usage* below. |
-| `usage_ping_interval_min` | `10` | Minutes between recycles of the background session (kill + respawn) — what refreshes `used_percentage` from the server (account-wide, so it catches your VSCode work too). Floored at 5. |
-| `usage_ping_model` | `"claude-haiku-4-5-20251001"` | Model the background session runs under (cheap pings). Restricted to `[A-Za-z0-9._-]` (goes into a shell command). |
-| `notify_on_usage` | `true` | **Sub-flag** of `usage_monitor`: the threshold alerts. With the monitor on and this true (default), a one-shot notification fires when the 5-hour window first crosses 50/60/70/80/90 % (a *"you've hit N%"* banner), plus a distinct critical alert at 95 %. Honors `quiet_hours` and *Banner only*. Set `false` to keep the usage line but silence the alerts. |
+| `usage_monitor` | `"on"` | **Master switch** for the whole subscription-usage feature (spec 0011): the periodic fetch of the account's live `rate_limits`, the two usage lines, and the threshold alerts. `"on"` (default — works out of the box) or `"off"`. The plugin asks the `claude` CLI over the SDK control protocol (`get_usage`); the call runs no inference and spends no quota, which is why there's no menu toggle any more. See *Subscription usage* below. |
+| `usage_fetch_interval_min` | `3` | Minutes between usage fetches. Account-wide numbers on a 5-hour window, so a few minutes is plenty. Floored at 1. A fresher `cachedUsageUtilization` in `~/.claude.json` is used instead, spawning nothing. |
+| `notify_on_usage` | `true` | **Sub-flag** of `usage_monitor`: the threshold alerts. With the feature on and this true (default), a one-shot notification fires when the 5-hour window first crosses 50/60/70/80/90 % (a *"you've hit N%"* banner), plus a distinct critical alert at 95 %. Honors `quiet_hours` and *Banner only*. Set `false` to keep the usage lines but silence the alerts. |
 | `notify_usage_title` | `"Current usage"` | Banner title (line 1) for usage alerts. Override to localize (e.g. `"Текущий расход"`). |
 | `notify_usage_phrase_threshold` | `"Session limit at {pct}%"` | Template for the 50/60 % alert; `{pct}` → current percentage. |
 | `notify_usage_phrase_threshold_reset` | `"Session limit at {pct}%, resets in {until}h"` | Template for the 70/80/90 % alert; `{pct}` → percentage, `{until}` → whole hours until reset. |
@@ -265,59 +264,65 @@ the other notifications. Progress is tracked in the
 
 ## Subscription usage
 
-Tracks the Claude.ai subscription's rolling **5-hour usage window** (and the
-7-day window) — both as escalating alerts and a live menu line. Opt-in via
-`usage_monitor: "on"` (or the *Tools → Usage monitor* toggle). Full design in
+Tracks the Claude.ai subscription's rolling **5-hour usage window** and the
+7-day one — both as escalating alerts and two live menu lines. On by default
+(`usage_monitor: "on"`). Full design in
 [spec 0011](specs/0011-usage-alerts.md) and
-[ADR-0018](adr/0018-usage-sensor-statusline-chain.md).
+[ADR-0020](adr/0020-usage-via-sdk-get-usage.md).
 
-**Where the data comes from — and why it's a background session.** Claude Code
-exposes `rate_limits` **only** on the `statusLine` stdin, and **only inside a
-real interactive TUI** — `claude -p`, headless runs, and the VSCode extension
-never invoke the status line. So there's no way to read live usage from a
-plugin that just watches files. The monitor solves it by holding a **hidden
-background `claude` session** in a detached `screen` (no window — it's a real
-TTY, so the status line fires). A bundled sensor (`hooks/usage-sensor.sh`),
-wired in as that session's `statusLine` by `setup`, writes the usage to a
-sidecar the plugin reads. `setup` also creates a trusted working folder
-(`~/.claude/cab-usage-monitor`, marked trusted in `~/.claude.json`) so the
-session comes up without a trust prompt, and sets `statusLine.refreshInterval`
-so it ticks. The plugin watches the session on its 5-second tick (like
-keep-awake): respawns it if it died, and **recycles** it (kill + fresh spawn)
-every `usage_ping_interval_min` (default 10) — a fresh session's first response
-is what pulls current `used_percentage` from the server, including usage from
-your VSCode work (limits are account-wide). On API-key auth there are no
-`rate_limits`, so nothing shows.
+**Where the data comes from.** Everything ultimately comes from
+`GET /api/oauth/usage`, which the `claude` CLI wraps and exposes over the SDK
+control protocol. The plugin feeds one `get_usage` control request into a
+`claude -p --input-format stream-json --output-format stream-json` process and
+reads the account's live `rate_limits` off its answer. That call takes ~1.7 s,
+runs **no inference**, spends **no quota**, writes no transcript and fires no
+hooks — so it runs detached, every `usage_fetch_interval_min` (default 3),
+never on the 5-second render tick. Before spawning anything the plugin checks
+Claude Code's own cache of that response in `~/.claude.json`
+(`cachedUsageUtilization`, refreshed by any native `claude` you run): when it's
+fresher than the fetch interval, that's used as-is and no process starts. If a
+fetch fails (offline, no `claude` on PATH), the same cache is accepted up to an
+hour old; failing that the previous snapshot ages out and the lines disappear.
 
-Cost: the background session spends a little Haiku quota per ping. It's **off by
-default** for that reason — turn it on only if you want the live numbers. The
-process is visible in `ps` / Activity Monitor (a real `claude`), just window-less.
+On API-key / Bedrock / Vertex auth there are no `rate_limits` at all
+(`rate_limits_available: false`), so nothing shows.
+
+> Before 1.5.0 this worked completely differently: `rate_limits` were scraped
+> off the `statusLine` stdin of a hidden background `claude` TUI parked in a
+> detached `screen`, recycled every 10 minutes ([ADR-0018](adr/0018-usage-sensor-statusline-chain.md)).
+> Upgrading unwires that automatically — the `statusLine` wrapper is removed
+> from `settings.json`, your original status line restored, and any leftover
+> background session killed. `usage_ping_interval_min` and `usage_ping_model`
+> are gone; the replacement knob is `usage_fetch_interval_min`.
 
 **Alerts.** When the 5-hour window's used-% first crosses 50/60/70/80/90 %, you
 get a one-shot banner + chime + spoken phrase (*"Session limit at N%"*); at
 95 % a distinct final alert. Each threshold fires once per window; when the
 window resets, the next one alerts from 50 % again. A jump across several
 thresholds collapses to a single banner at the current percentage. Percentages
-are floored, matching Claude Code's own USAGE view. Silence with
-`notify_on_usage: false` (keeps the line).
+are floored, matching Claude Code's own usage view. Silence with
+`notify_on_usage: false` (keeps the lines).
 
-**The line.** Under *Statistics* in the main menu, a grey passive line that
-mirrors Claude Code's own USAGE view:
+**The lines.** Under *Statistics* in the main menu, two grey passive lines that
+mirror the usage panel in the Claude Code IDE extension:
 
 ```
-Session: 22% · 3h · Week: 8% · 4d
+Session  ▓▓░░░░░░░░   22% · 3h
+Week     ▓▓▓▓░░░░░░   41% · 1d
 ```
 
-`22%` is the 5-hour used-% and `3h` the time until it resets (whole-hour
-precision, half-up, localized); `8%` / `4d` are the weekly used-% and reset. The
-session/week numbers turn **yellow ≥60 %, red ≥85 %**. The line shows only while
-the monitor is on and the snapshot is fresh (it disappears if the background
-session dies).
+Each row is a ten-cell bar, the used-% and the time until that window resets
+(whole-hour precision, half-up, localized). Bar and number turn **yellow
+≥60 %, red ≥85 %**. A non-zero percentage always fills at least one cell, so
+4 % looks different from 0 %. The lines show only while the feature is on and
+the snapshot is fresh; a plan with no 7-day window gets the session row only.
+
+There is **no menu toggle** — the fetch costs nothing worth switching off, so
+`usage_monitor` in the config is the only switch.
 
 Quiet hours and *Banner only* apply to the alerts as for the other
 notifications. State lives in `~/.claude/agent-state.usage`,
-`agent-state.usage-alerts`, `agent-state.usage-monitor.mode`, and
-`agent-state.usage-monitor.ping`.
+`agent-state.usage-alerts` and `agent-state.usage.fetch`.
 
 ## Custom audio
 

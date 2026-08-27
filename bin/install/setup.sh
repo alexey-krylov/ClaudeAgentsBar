@@ -52,10 +52,8 @@ PLUGIN_SRC="${REPO_DIR}/claude-agents.5s.py"
 HOOK_SRC="${REPO_DIR}/hooks/agent-state.sh"
 NOTIFY_HOOK_SRC="${REPO_DIR}/hooks/notify-stop.sh"
 NOTIFY_WAIT_HOOK_SRC="${REPO_DIR}/hooks/notify-wait.sh"
-# Usage sensor (spec 0011): a statusLine wrapper, so unlike the notify hooks
-# it is wired into .statusLine (not .hooks). notify-usage.sh is NOT symlinked —
-# the plugin invokes it from its own hooks dir via /bin/bash, like notify-idle.sh.
-SENSOR_SRC="${REPO_DIR}/hooks/usage-sensor.sh"
+# notify-usage.sh is NOT symlinked — the plugin invokes it from its own hooks
+# dir via /bin/bash, like notify-idle.sh.
 HOOK_PATCH="${REPO_DIR}/hooks/settings-hooks.json"
 
 # Resolve the SwiftBar plugins folder. Override with SWIFTBAR_PLUGINS_DIR=...
@@ -84,6 +82,7 @@ HOOKS_DIR="${HOME}/.claude/hooks"
 HOOK_DST="${HOOKS_DIR}/agent-state.sh"
 NOTIFY_HOOK_DST="${HOOKS_DIR}/notify-stop.sh"
 NOTIFY_WAIT_HOOK_DST="${HOOKS_DIR}/notify-wait.sh"
+# Both are leftovers of the pre-1.5.0 statusLine sensor; step 5b cleans them up.
 SENSOR_DST="${HOOKS_DIR}/usage-sensor.sh"
 STATUSLINE_ORIG_FILE="${HOME}/.claude/agent-state.statusline.orig"
 SETTINGS="${HOME}/.claude/settings.json"
@@ -187,12 +186,6 @@ if [ -L "$NOTIFY_WAIT_HOOK_DST" ] || [ -e "$NOTIFY_WAIT_HOOK_DST" ]; then
 fi
 ln -s "$NOTIFY_WAIT_HOOK_SRC" "$NOTIFY_WAIT_HOOK_DST"
 say "linked: $NOTIFY_WAIT_HOOK_DST -> $NOTIFY_WAIT_HOOK_SRC"
-if [ -L "$SENSOR_DST" ] || [ -e "$SENSOR_DST" ]; then
-    say "existing entry at $SENSOR_DST — replacing"
-    rm -f "$SENSOR_DST"
-fi
-ln -s "$SENSOR_SRC" "$SENSOR_DST"
-say "linked: $SENSOR_DST -> $SENSOR_SRC"
 
 
 step "5. Merge hook registrations into $SETTINGS"
@@ -242,95 +235,55 @@ if publish_if_changed "$SETTINGS" "settings.json"; then
 fi
 
 
-step "5b. Wire usage sensor into statusLine (chain)"
-# rate_limits are only on the statusLine stdin (spec 0011 / ADR-0018), so the
-# sensor has to BE the statusLine command. We wrap whatever the user already
-# had: the sensor writes the usage snapshot, then chains to the original
-# command (passed as its argument) so the user's status line still renders.
-# The original is saved to a sidecar for a clean teardown. Idempotent — a
-# command already wrapping usage-sensor.sh is left untouched.
+step "5b. Retire the pre-1.5.0 usage monitor (ADR-0020)"
+# Until 1.4.x the subscription usage came off the statusLine stdin, scraped by
+# hooks/usage-sensor.sh inside a background `claude` TUI parked in a detached
+# screen session. Since ADR-0020 the plugin asks the CLI directly
+# (`get_usage` over the SDK control protocol), so all of that goes away.
+# Undo it here rather than in teardown only: an upgrade must not leave a
+# statusLine pointing at a script we just deleted, nor a background claude
+# burning quota forever.
 CUR_STATUSLINE=$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || echo "")
 case "$CUR_STATUSLINE" in
     *usage-sensor.sh*)
-        say "statusLine already chains usage-sensor.sh — leaving as is"
-        ;;
-    *)
-        printf '%s' "$CUR_STATUSLINE" > "$STATUSLINE_ORIG_FILE"
-        if [ -n "$CUR_STATUSLINE" ]; then
-            NEW_STATUSLINE="bash \"$SENSOR_DST\" \"$CUR_STATUSLINE\""
-            say "wrapping existing statusLine (saved original for teardown)"
+        # Put back whatever the old setup wrapped, or drop the key entirely if
+        # there was nothing there before. refreshInterval was ours too.
+        SAVED_STATUSLINE=""
+        [ -f "$STATUSLINE_ORIG_FILE" ] && SAVED_STATUSLINE=$(cat "$STATUSLINE_ORIG_FILE" 2>/dev/null || echo "")
+        if [ -n "$SAVED_STATUSLINE" ]; then
+            JQ_PROG='.statusLine.command = $c | del(.statusLine.refreshInterval)'
         else
-            NEW_STATUSLINE="bash \"$SENSOR_DST\""
-            say "no existing statusLine — installing sensor only (blank status line)"
+            JQ_PROG='del(.statusLine)'
         fi
-        if /usr/bin/jq --arg cmd "$NEW_STATUSLINE" \
-            '.statusLine = ((.statusLine // {}) + {type: "command", command: $cmd})' \
+        if /usr/bin/jq --arg c "$SAVED_STATUSLINE" "$JQ_PROG" \
             "$SETTINGS" > "${SETTINGS}.tmp"; then
             if publish_if_changed "$SETTINGS" "statusLine"; then
-                say "statusLine wired"
+                if [ -n "$SAVED_STATUSLINE" ]; then
+                    say "restored your original statusLine (usage sensor retired)"
+                else
+                    say "removed the usage-sensor statusLine (retired)"
+                fi
             fi
+            rm -f "$STATUSLINE_ORIG_FILE"
         else
             rm -f "${SETTINGS}.tmp"
-            say "WARN: couldn't wire statusLine — settings.json left untouched"
+            say "WARN: couldn't unwire statusLine — settings.json left untouched"
         fi
         ;;
 esac
 
-# refreshInterval (seconds) keeps the background session's status line — and
-# thus the usage snapshot's record_ts — ticking on a timer. 8s is comfortably
-# inside the 5-10s band. Set unconditionally when our sensor owns the
-# statusLine (covers the idempotent re-run path above).
-case "$(/usr/bin/jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)" in
-    *usage-sensor.sh*)
-        if /usr/bin/jq '.statusLine.refreshInterval = 8' \
-            "$SETTINGS" > "${SETTINGS}.tmp"; then
-            if publish_if_changed "$SETTINGS" "refreshInterval"; then
-                say "statusLine refreshInterval set to 8s"
-            fi
-        else
-            rm -f "${SETTINGS}.tmp"
-            say "WARN: couldn't set refreshInterval — settings.json left untouched"
-        fi
-        ;;
-esac
-
-
-step "5c. Usage-monitor trusted workdir (spec 0011)"
-# The background claude session (Statistics → Usage monitor) needs a CWD Claude
-# Code already trusts, or the folder-trust prompt blocks its TUI and the status
-# line never fires. It must ALSO clear past the first-run onboarding / upsell
-# prompts — on v2.1.181+ a fresh interactive session blocks on "Try the new
-# fullscreen renderer?" and never reaches the ready TUI, so the sensor stays
-# silent. Claude Code gates that upsell on ~/.claude.json keys, so we pre-seed
-# them: fullscreenUpsellSeenCount past its show-threshold (without lowering an
-# existing higher value) and hasCompletedOnboarding. The ~/.claude.json format
-# is undocumented — we only add additively, with a backup, and skip gracefully
-# if the file is absent. Side effect: you also stop seeing the fullscreen-
-# renderer upsell in your own interactive sessions (a wash). There is no
-# supported flag/env to suppress these prompts — see ADR-0018.
-USAGE_MON_DIR="${HOME}/.claude/cab-usage-monitor"
-mkdir -p "$USAGE_MON_DIR"
-CLAUDE_JSON="${HOME}/.claude.json"
-if [ -f "$CLAUDE_JSON" ]; then
-    # Same skip-if-unchanged + rotation as settings.json: this patch is
-    # idempotent, so a re-run leaves the file byte-identical and there's
-    # nothing to back up (issue #3). Note the backup now happens *after* a
-    # successful jq — the previous order took one even when jq then failed.
-    if /usr/bin/jq --arg p "$USAGE_MON_DIR" \
-        '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})
-         | .fullscreenUpsellSeenCount = ([(.fullscreenUpsellSeenCount // 0), 99] | max)
-         | .hasCompletedOnboarding = true' \
-        "$CLAUDE_JSON" > "${CLAUDE_JSON}.tmp" 2>/dev/null; then
-        if publish_if_changed "$CLAUDE_JSON" "~/.claude.json"; then
-            say "trusted $USAGE_MON_DIR + silenced onboarding prompts in ~/.claude.json"
-        fi
-    else
-        rm -f "${CLAUDE_JSON}.tmp"
-        say "WARN: couldn't update ~/.claude.json — usage monitor may hit a trust/onboarding prompt"
-    fi
-else
-    say "no ~/.claude.json yet — usage monitor will need a one-time trust on first run"
+# The sensor symlink itself, and any background session still holding a TUI.
+if [ -L "$SENSOR_DST" ] || [ -f "$SENSOR_DST" ]; then
+    rm -f "$SENSOR_DST" && say "removed $SENSOR_DST"
 fi
+KILLED=$(/usr/bin/python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from claude_agents_bar import usage_monitor; print(usage_monitor.kill_legacy_screen())' "$REPO_DIR" 2>/dev/null || echo 0)
+if [ "${KILLED:-0}" != "0" ]; then
+    say "stopped ${KILLED} leftover background usage session(s)"
+fi
+# The old session's (empty) work folder. rmdir only — never touch it if the
+# user put something there.
+rmdir "${HOME}/.claude/cab-usage-monitor" 2>/dev/null \
+    && say "removed ~/.claude/cab-usage-monitor"
 
 
 step "6. Notification icon"

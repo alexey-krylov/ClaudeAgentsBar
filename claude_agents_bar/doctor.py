@@ -220,69 +220,72 @@ def _doctor_check_terminal_notifier() -> tuple[str, str]:
     )
 
 
-def _onboarding_preseeded() -> bool:
-    """Did ``setup`` silence Claude Code's first-run prompts in ~/.claude.json?
+def _legacy_statusline_wired() -> bool:
+    """Is the pre-1.5.0 usage sensor still this machine's ``statusLine``?
 
-    ``setup`` lifts ``fullscreenUpsellSeenCount`` past the show-threshold (3 on
-    observed versions) and sets ``hasCompletedOnboarding``. Without that the
-    background TUI can hang on the "fullscreen renderer?" upsell. Fail-soft: an
-    absent / unreadable file reads as "not seeded".
+    Fail-soft: an absent / unreadable / non-dict settings file reads as "no".
     """
     try:
-        data = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
     except (OSError, json.JSONDecodeError, ValueError):
         return False
     if not isinstance(data, dict):
         return False
-    return (
-        isinstance(data.get("fullscreenUpsellSeenCount"), int)
-        and data["fullscreenUpsellSeenCount"] >= 3
-        and data.get("hasCompletedOnboarding") is True
-    )
+    status_line = data.get("statusLine")
+    if not isinstance(status_line, dict):
+        return False
+    command = status_line.get("command")
+    return isinstance(command, str) and "usage-sensor.sh" in command
 
 
-def _doctor_check_usage_monitor(now: int) -> tuple[str, str]:
-    """Is the usage monitor healthy — and if not, is it the onboarding hang?
+def _doctor_check_usage(now: int) -> tuple[str, str]:
+    """Is the subscription-usage snapshot arriving, and from where?
 
-    The telltale of "problem A" (the background session stuck on a first-run
-    prompt) is: the ``screen`` session is alive but no fresh usage snapshot ever
-    lands. We read that state and, when the onboarding keys aren't seeded, point
-    straight at the fix (`setup`). Read-only: we only look, never spawn/kill.
+    Since ADR-0020 there is no daemon to inspect: the plugin spawns a
+    ``get_usage`` fetch every ``usage_fetch_interval_sec`` and the only question
+    is whether a fresh snapshot lands. When it doesn't, the two things that
+    actually break it are a ``claude`` binary the plugin can't find (SwiftBar
+    runs with a stripped PATH) and API-key auth (``rate_limits`` need a
+    Claude.ai plan). Read-only: we look, never fetch.
     """
     if not core.usage_monitor_enabled():
-        return "ok", "off (enable via Statistics → Usage monitor)"
+        return "ok", 'off ("usage_monitor": "off" in the config)'
 
     from . import sidecars, usage_monitor  # lazy: keeps the render path clean
 
-    sessions = usage_monitor._live_sessions()
-    if not sessions:
+    # An upgrade from 1.4.x that never re-ran `setup` leaves the old sensor
+    # wired as the statusLine, pointing at a script this version doesn't ship.
+    # Usage itself still works (the fetch is independent), but every session
+    # runs a dead command, so say so — only `setup` can unwire it safely (it
+    # holds the saved original).
+    if _legacy_statusline_wired():
         return "warn", (
-            "background session down — the plugin respawns it on the next tick; "
-            "re-check in a few seconds"
-        )
-    if len(sessions) > 1:
-        return "warn", (
-            f"{len(sessions)} duplicate background sessions — the plugin "
-            "collapses these to one on the next tick"
+            "your ~/.claude/settings.json still runs the retired 1.4 usage "
+            "sensor as its statusLine — that script is gone, so every session "
+            "runs a dead command. Fix: claude-agents-bar setup (restores the "
+            "status line you had before)"
         )
 
     usage = sidecars.read_usage()
-    interval = core.CONFIG.usage_ping_interval_sec
+    interval = core.CONFIG.usage_fetch_interval_sec
     if usage is not None and now - usage.record_ts <= 2 * interval:
         return "ok", f"live (session {usage.five_used}% used)"
 
-    # Daemon up but no fresh data — the onboarding-hang signature.
-    if not _onboarding_preseeded():
+    binary = usage_monitor._claude_bin()
+    if binary is None:
         return "err", (
-            "background session is up but no usage data is arriving — it is "
-            "most likely stuck on Claude Code's first-run prompt (e.g. \"Try the "
-            "new fullscreen renderer?\"). Fix: claude-agents-bar setup "
-            "(pre-seeds the ~/.claude.json keys that suppress it)"
+            "no `claude` binary found — the usage fetch can't run. SwiftBar "
+            "runs plugins with a stripped PATH, so a CLI installed somewhere "
+            "unusual is invisible to it; symlink it into /usr/local/bin"
         )
+    age = "no snapshot yet" if usage is None else f"snapshot {now - usage.record_ts}s old"
     return "warn", (
-        "background session is up but no fresh usage data — onboarding keys are "
-        "seeded, so check `screen -r cab-usage-mon` for a new blocking prompt, "
-        "or whether you're on API-key auth (rate_limits need a Claude.ai plan)"
+        f"{age} — a fetch runs every {interval}s via {binary}; re-check shortly. "
+        "If it never lands, check you're on Claude.ai auth (rate_limits need a "
+        "plan; API-key / Bedrock / Vertex sessions have none): "
+        "claude-agents-bar usage shows what happens"
     )
 
 
@@ -297,7 +300,7 @@ def _run_doctor() -> int:
         ("litter/", _doctor_check_state_dir_litter()),
         ("editor/", _doctor_check_editor_app()),
         ("notify/", _doctor_check_terminal_notifier()),
-        ("usage/", _doctor_check_usage_monitor(now)),
+        ("usage/", _doctor_check_usage(now)),
     )
     any_err = False
     label_width = max(len(name) for name, _ in checks)
