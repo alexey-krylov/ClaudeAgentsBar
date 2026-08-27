@@ -321,7 +321,11 @@ class TestUsageRenderLine(unittest.TestCase):
         # grey, passive Tools sub-item ("--" prefix — a top-level line would get
         # a SwiftBar refresh/about submenu; this is just text)
         self.assertTrue(out.startswith("--"))
-        self.assertIn("color=#999999", out)
+        # Grey travels as ANSI: a ``color=`` row gets a click action from
+        # SwiftBar and stops being passive.
+        self.assertIn("ansi=true", out)
+        self.assertIn(plugin.core._ANSI_DIM, out)
+        self.assertNotIn("color=", out)
         self.assertIn("63", out)   # session %
         self.assertIn("7", out)    # weekly %
         # weekly reset time present (future → non-empty); no pacing target

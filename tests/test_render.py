@@ -573,3 +573,79 @@ class TestWorktreeClickTargets(unittest.TestCase):
             project="Repo", project_dir="", cwd="/tmp/repo", git_branch="main"
         )
         self.assertIn('param1="/tmp/repo"', project)
+
+
+class TestPassiveRowsAreUnselectable(unittest.TestCase):
+    """Read-only rows must not carry ``color=``.
+
+    SwiftBar hangs a click action on every row with a ``color=`` parameter so
+    it can repaint the custom colour against the selection highlight
+    (``MenuBarItem.configureAction``: ``params.hasAction || params.color !=
+    nil``). A row with an action highlights under the cursor and takes
+    keyboard focus — misleading on a line that does nothing when clicked. Grey
+    therefore travels as ANSI (:func:`render._dim`), which SwiftBar renders
+    without attaching an action.
+    """
+
+    #: Status colours worth the selectable row they cost — a cwd collision, a
+    #: worktree checkout, a subagent still in flight.
+    STATUS_COLOURS = ("#cc0000", "#1f7a1f", "#cc7700")
+
+    def _rows(self, **overrides):
+        session = _make_session(**overrides)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            plugin.render._print_session_row(session)
+        return buf.getvalue().splitlines()
+
+    def _assert_passive_rows_are_colourless(self, rows):
+        for row in rows:
+            params = row.split(" | ", 1)[1] if " | " in row else ""
+            has_action = any(
+                p in params
+                for p in ("shell=", "bash=", "href=", "stdin=", "refresh=true")
+            )
+            colour = params.replace("sfcolor=", "")
+            if has_action or "color=" not in colour:
+                continue
+            self.assertTrue(
+                any(c in params for c in self.STATUS_COLOURS),
+                f"passive row carries color= and would be selectable: {row!r}",
+            )
+
+    def test_plain_session_submenu_has_no_passive_colour(self):
+        self._assert_passive_rows_are_colourless(self._rows(
+            project="Repo", project_dir="/tmp/repo", cwd="/tmp/repo",
+            git_branch="main", model="claude-opus-5", context_used=42_000,
+            ide_group="backend",
+        ))
+
+    def test_branch_line_is_grey_via_ansi(self):
+        rows = self._rows(
+            project="Repo", project_dir="/tmp/repo", cwd="/tmp/repo",
+            git_branch="main",
+        )
+        branch = next(r for r in rows if "arrow.triangle.branch" in r)
+        self.assertIn("ansi=true", branch)
+        self.assertIn(plugin.core._ANSI_DIM, branch)
+        self.assertNotIn("color=", branch)
+
+
+class TestDimHelper(unittest.TestCase):
+    """:func:`render._dim` wraps a label in grey without bleaching its spans."""
+
+    def test_wraps_plain_text(self):
+        out = plugin.render._dim("main")
+        self.assertEqual(
+            out, plugin.core._ANSI_DIM + "main" + plugin.core._ANSI_RESET
+        )
+
+    def test_nested_reset_reopens_the_grey(self):
+        # A coloured span inside a dimmed line (the usage bar, a warn
+        # percentage) closes with a reset. Left alone it would drop the rest
+        # of the line to the default label colour instead of back to grey.
+        inner = f"{plugin.core._ANSI_WORKING}63{plugin.core._ANSI_RESET}%"
+        out = plugin.render._dim(f"Session {inner}")
+        self.assertTrue(out.endswith(plugin.core._ANSI_RESET))
+        self.assertEqual(out.count(plugin.core._ANSI_RESET), 1)
+        self.assertEqual(out.count(plugin.core._ANSI_DIM), 2)

@@ -252,6 +252,12 @@ _ANSI_STALE = "\x1b[2;37m"    # dim white   — abandoned
 _ANSI_ACTIVE_BAR = "\x1b[1;93m"  # bold bright yellow
 _ANSI_FRESH_BAR = "\x1b[1;92m"   # bold bright green
 _ANSI_ACK_BAR = "\x1b[1;94m"     # bold bright blue
+#: Passive (actionless) dropdown rows. Grey has to travel as ANSI rather than
+#: ``color=``: SwiftBar hangs a click action on every row carrying ``color=``
+#: (it needs one to repaint the title on highlight), which makes read-only
+#: rows selectable. ``\x1b[38;5;245m`` is SwiftBar's 256-colour grey ramp —
+#: index 245 resolves to ``#8a8a8a`` (``(245-232)*10+8``).
+_ANSI_DIM = "\x1b[38;5;245m"
 
 #: Session ids we're willing to surface. Claude Code in practice ships
 #: RFC-4122 UUIDs, but we accept the broader ``[A-Za-z0-9_-]{1,64}`` —

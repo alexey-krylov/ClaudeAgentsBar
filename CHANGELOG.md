@@ -7,6 +7,20 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 ## 1.5.0 — 2026-08-27
 
+### Changed
+
+- **Read-only menu rows no longer highlight under the cursor.** Branch,
+  model, context-left, IDE group, subagent trails, the usage lines under
+  *Statistics* and the *Notifications* / *Keep awake* status headers were
+  selectable and took keyboard focus even though clicking them did nothing.
+  Cause: SwiftBar attaches a click action to every row carrying `color=` (it
+  needs one to repaint a custom colour against the selection highlight), so
+  the grey was buying the highlight. They now get their grey from ANSI
+  instead, which costs no action — same colour, no phantom selection. Rows
+  that actually do something (project, cwd, session rows) are unchanged, as
+  are the status colours that mean something: a cwd collision, a worktree
+  checkout, a subagent in flight.
+
 ### Added
 
 - **IDE session groups in the menu.** Claude Code's editor extension
@@ -20,8 +34,7 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
     needs you; a count of one is left off, since the circle already says it.
     Its sessions sit inside as ordinary rows, with every row action intact.
     Ungrouped sessions follow below a plain separator — no label, since
-    SwiftBar has no way to make one non-selectable and it would highlight
-    under the cursor as if it were clickable.
+    the gap already says they belong to no group.
   * `"inline"` (default) — the flat list, with the group name prefixing the row
     title
     (`backend · Release 1.4.2`, dimmed and truncated to 16 characters) plus a

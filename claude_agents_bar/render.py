@@ -390,6 +390,38 @@ def _is_interactive(session: Session) -> bool:
 # --------------------------------------------------------------------------- #
 
 
+#: Style fragment for a passive row: grey text that stays *unselectable*.
+#: Pair it with :func:`_dim` around the label — never with ``color=``.
+PASSIVE = "ansi=true"
+
+#: The "nothing to report" grey :func:`_branch_decoration` falls back to.
+_GREY = "#999999"
+
+
+def _dim(text: str) -> str:
+    """Grey a passive row's label with ANSI instead of SwiftBar's ``color=``.
+
+    SwiftBar attaches a click action to every row that carries ``color=`` —
+    it needs one so ``menu(_:willHighlight:)`` can repaint the custom colour
+    against the selection highlight. The side effect is that our read-only
+    rows (branch, model, context, usage, section headers) become selectable
+    and highlight under the cursor even though clicking them does nothing.
+    Colour delivered through ANSI escapes has no such cost: with ``ansi=true``
+    SwiftBar ignores ``color=`` entirely, the row keeps no action, and AppKit
+    leaves it un-highlightable.
+
+    Nested resets are rewritten to re-open the grey rather than fall back to
+    the default label colour, so a segment that colours itself (the usage bar,
+    a warn percentage) can sit inside a dimmed line without bleaching the rest
+    of it.
+    """
+    return (
+        core._ANSI_DIM
+        + text.replace(core._ANSI_RESET, core._ANSI_DIM)
+        + core._ANSI_RESET
+    )
+
+
 def render(sessions: list[Session]) -> None:
     """Emit the full SwiftBar menu — title line, dropdown, footer."""
     counts = {
@@ -405,7 +437,7 @@ def render(sessions: list[Session]) -> None:
 
     if not sessions:
         duration = core._humanize_age(core.CONFIG.window_sec, core._lang())
-        print(f"{_t('menu.no_sessions', duration=duration)} | color=gray")
+        print(f"{_dim(_t('menu.no_sessions', duration=duration))} | {PASSIVE}")
         print("---")
         _print_footer(sessions)
         return
@@ -476,10 +508,9 @@ def _print_ide_group_blocks(sessions: list[Session]) -> None:
             _print_session_row(session, indent="--")
 
     if ungrouped:
-        # A plain separator, with no "Ungrouped" label: SwiftBar has no
-        # parameter that makes a menu item non-selectable, so a label would
-        # highlight under the cursor as if it were clickable. The gap already
-        # says these sessions belong to no group.
+        # A plain separator, with no "Ungrouped" label — the gap already says
+        # these sessions belong to no group. (A label *could* be rendered
+        # passively now, via :func:`_dim`; it just doesn't earn its row.)
         if grouped:
             print("---")
         _print_flat_list(ungrouped)
@@ -705,7 +736,7 @@ def _branch_decoration(session: Session) -> tuple[str, str, str]:
         return ("#cc0000", session.git_branch, _t("tooltip.cwd_collision"))
     if session.is_worktree:
         return ("#1f7a1f", session.git_branch, _t("tooltip.worktree"))
-    return ("#999999", session.git_branch, "")
+    return (_GREY, session.git_branch, "")
 
 
 def _print_session_row(
@@ -903,8 +934,8 @@ def _print_session_row(
         )
     else:
         print(
-            f"{indent}--{_t('menu.remind_session')} | "
-            "color=#999999 sfimage=speaker.wave.2.fill"
+            f"{indent}--{_dim(_t('menu.remind_session'))} | "
+            f"{PASSIVE} sfimage=speaker.wave.2.fill"
         )
 
     if session.group is RenderGroup.FRESH:
@@ -946,14 +977,14 @@ def _print_session_row(
     _print_tags_picker(session, indent, bin_dir)
     if session.ide_group and core.ide_groups_mode() == "inline":
         # The group's full name, directly under *Tags* — same read-only
-        # ``font=Menlo color=#999999`` style as the project / branch / model
-        # lines further down. Only in ``inline`` mode: under ``submenu`` the
+        # ``font=Menlo`` + :func:`_dim` style as the branch / model lines
+        # further down. Only in ``inline`` mode: under ``submenu`` the
         # enclosing entry already names the group. Read-only on purpose:
         # grouping is owned by the IDE sidebar, the bar only mirrors it
         # (spec 0015, ADR-0019).
         print(
-            f"{indent}--{session.ide_group} | "
-            "font=Menlo color=#999999 sfimage=tray.full"
+            f"{indent}--{_dim(session.ide_group)} | "
+            f"font=Menlo {PASSIVE} sfimage=tray.full"
         )
     if session.git_branch:
         # Project + branch are split across two submenu lines so each
@@ -963,6 +994,14 @@ def _print_session_row(
         # minimal. When the project name is missing we collapse back to
         # a single branch line so the cwd tooltip still surfaces.
         branch_color, branch_text, branch_tooltip = _branch_decoration(session)
+        # The plain grey branch travels as ANSI so the line stays passive; the
+        # red / green status colours keep ``color=`` — a status worth painting
+        # is worth the selectable row it costs (see :func:`_dim`).
+        if branch_color == _GREY:
+            branch_style, branch_label = f"font=Menlo {PASSIVE}", _dim(branch_text)
+        else:
+            branch_style = f"font=Menlo color={branch_color}"
+            branch_label = branch_text
         # The two lines point at two different folders, which only diverge for
         # a worktree: the project line names and opens the owning repository,
         # the branch line names and opens the worktree checkout itself. Each
@@ -978,8 +1017,8 @@ def _print_session_row(
                 project_line += f" tooltip={_swiftbar_quote(project_dir)}"
             print(project_line)
             branch_line = (
-                f"{indent}--{branch_text} | "
-                f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
+                f"{indent}--{branch_label} | "
+                f"{branch_style} sfimage=arrow.triangle.branch"
             )
             if session.is_worktree and session.cwd:
                 branch_line += _reveal_params(session.cwd)
@@ -991,8 +1030,8 @@ def _print_session_row(
                 branch_line += f" tooltip={_swiftbar_quote(branch_tooltip)}"
         else:
             branch_line = (
-                f"{indent}--{branch_text} | "
-                f"font=Menlo color={branch_color} sfimage=arrow.triangle.branch"
+                f"{indent}--{branch_label} | "
+                f"{branch_style} sfimage=arrow.triangle.branch"
             )
             if session.is_worktree and session.cwd:
                 branch_line += _reveal_params(session.cwd)
@@ -1010,12 +1049,12 @@ def _print_session_row(
         )
     if core.CONFIG.model_badge and session.model:
         # Full model string between branch and context — same read-only
-        # `font=Menlo color=#999999` style as its neighbours. The row
+        # ``font=Menlo`` + :func:`_dim` style as its neighbours. The row
         # itself doesn't carry model info, so this submenu line is the
         # only surface that tells the user which model is live; gated by
         # ``model_badge`` config for users who want a quieter menu.
         print(
-            f"{indent}--{session.model} | font=Menlo color=#999999 sfimage=cpu"
+            f"{indent}--{_dim(session.model)} | font=Menlo {PASSIVE} sfimage=cpu"
         )
     if session.context_used is not None:
         label = _format_context_left(session.context_used, core.CONFIG.context_window_tokens)
@@ -1027,7 +1066,7 @@ def _print_session_row(
             # on hover and that win-races the tooltip; leaf rows under
             # the open submenu show their tooltips reliably.
             context_line = (
-                f"{indent}--{label} | font=Menlo color=#999999 sfimage=gauge.medium"
+                f"{indent}--{_dim(label)} | font=Menlo {PASSIVE} sfimage=gauge.medium"
             )
             if session.last_tool_use:
                 context_line += (
@@ -1161,15 +1200,19 @@ def _print_subagent_block(session: Session, *, indent: str = "") -> None:
     live_count = session.live_subagent_count
     header = _t("menu.subagents_header", n=live_count, total=len(visible))
     print(
-        f"{indent}--🤖 {header} | "
-        "font=Menlo color=#888888"
+        f"{indent}--🤖 {_dim(header)} | "
+        f"font=Menlo {PASSIVE}"
     )
     for snap in visible:
         main_label, sub_rows = _subagent_row_parts(
             snap, session, project_dir, now,
         )
-        color = "#cc7700" if snap.is_live else "#999999"
-        print(f"{indent}--{main_label} | color={color}")
+        if snap.is_live:
+            # Amber marks a subagent still in flight; it keeps ``color=`` and
+            # the selectable row that comes with it.
+            print(f"{indent}--{main_label} | color=#cc7700")
+        else:
+            print(f"{indent}--{_dim(main_label)} | {PASSIVE}")
         for sub_row in sub_rows:
             print(f"{indent}----{sub_row}")
 
@@ -1275,7 +1318,7 @@ def _subagent_row_parts(
 
     if model_str:
         sub_rows.append(
-            f"{model_str} | font=Menlo color=#999999 sfimage=cpu"
+            f"{_dim(model_str)} | font=Menlo {PASSIVE} sfimage=cpu"
         )
 
     tool_segments: list[str] = []
@@ -1295,7 +1338,7 @@ def _subagent_row_parts(
     if tool_segments:
         tooltip = f" tooltip={_swiftbar_quote(summary)}" if summary else ""
         sub_rows.append(
-            "↳ " + " · ".join(tool_segments) + f" | font=Menlo color=#999999{tooltip}"
+            _dim("↳ " + " · ".join(tool_segments)) + f" | font=Menlo {PASSIVE}{tooltip}"
         )
 
     return main_label, sub_rows
@@ -1385,9 +1428,10 @@ def _humanize_bookmark_age(seconds: int, lang: str) -> str:
 def _usage_pct_ansi(pct: int) -> str:
     """A used-% number coloured by zone: ≥85 red, ≥60 yellow, else bare.
 
-    A bare number stays grey (the line's base ``color=#999999``); the warn /
-    crit numbers get an ANSI span that overrides it (``ansi=true`` on the line).
-    Reuses the menu's existing bold yellow / red escapes.
+    A bare number inherits the line's grey from :func:`_dim`; the warn / crit
+    numbers get an ANSI span that overrides it, and their reset re-opens the
+    grey rather than dropping to the default label colour. Reuses the menu's
+    existing bold yellow / red escapes.
     """
     if pct >= 85:
         return f"{core._ANSI_WAITING}{pct}{core._ANSI_RESET}"  # bold red
@@ -1478,9 +1522,9 @@ def _print_usage_lines() -> None:
     session_label = _t("menu.usage_session")
     week_label = _t("menu.usage_week")
     width = max(len(session_label), len(week_label))
-    style = "font=Menlo color=#999999 ansi=true"
+    style = f"font=Menlo {PASSIVE}"
     print(
-        f"--{_usage_row(session_label, width, usage.five_used, _format_until(resets_at - now, lang))} | "
+        f"--{_dim(_usage_row(session_label, width, usage.five_used, _format_until(resets_at - now, lang)))} | "
         f"{style} sfimage=clock"
     )
     try:
@@ -1490,7 +1534,7 @@ def _print_usage_lines() -> None:
     if week_resets_at <= 0:
         return  # plan has no 7-day window — session row only
     print(
-        f"--{_usage_row(week_label, width, usage.seven_used, _format_until(week_resets_at - now, lang))} | "
+        f"--{_dim(_usage_row(week_label, width, usage.seven_used, _format_until(week_resets_at - now, lang)))} | "
         f"{style} sfimage=chart.line.uptrend.xyaxis"
     )
 
@@ -1695,12 +1739,12 @@ def _print_notifications_block(bin_dir: Path) -> None:
         bypass_until_dt,
     )
     print(
-        f"--{_t('menu.notifications')} | "
-        "font=Menlo color=#888888 sfimage=bell.fill"
+        f"--{_dim(_t('menu.notifications'))} | "
+        f"font=Menlo {PASSIVE} sfimage=bell.fill"
     )
     print(
-        f"--  {_format_quiet_status(status)} | "
-        "font=Menlo color=#888888"
+        f"--  {_dim(_format_quiet_status(status))} | "
+        f"font=Menlo {PASSIVE}"
     )
 
     pause_script = bin_dir / "quiet-pause.sh"
@@ -1838,10 +1882,10 @@ def _print_keep_awake_block(bin_dir: Path, sessions: list[Session]) -> None:
         status = _t("keep_awake.status_auto_idle")
 
     print(
-        f"--{_t('menu.keep_awake')} | "
-        "font=Menlo color=#888888 sfimage=cup.and.saucer.fill"
+        f"--{_dim(_t('menu.keep_awake'))} | "
+        f"font=Menlo {PASSIVE} sfimage=cup.and.saucer.fill"
     )
-    print(f"--  {status} | font=Menlo color=#888888")
+    print(f"--  {_dim(status)} | font=Menlo {PASSIVE}")
 
     set_script = bin_dir / "keep-awake-set.sh"
     for value, key, icon in (

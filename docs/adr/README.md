@@ -32,6 +32,7 @@ prior one.
 | [0017](./0017-symlink-homebrew-opt-not-cellar.md) | Anchor Homebrew symlinks at `opt`, not the versioned Cellar keg | Accepted |
 | [0018](./0018-usage-sensor-statusline-chain.md) | Source subscription usage from a hidden background `claude` session | Superseded by 0020 |
 | [0020](./0020-usage-via-sdk-get-usage.md) | Subscription usage via the SDK `get_usage` control request | Accepted |
+| [0021](./0021-passive-rows-ansi-grey.md) | Grey passive menu rows with ANSI so they stay unselectable | Accepted |
 
 ## Workflow
 

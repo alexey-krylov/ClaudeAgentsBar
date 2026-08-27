@@ -572,9 +572,9 @@ separator inside a submenu.
 | `param0`, `param1`, … | Positional arguments passed to `shell=`                            |
 | `terminal=false` | Don't open Terminal for the shell action                                |
 | `refresh=true`   | Refresh the plugin after the action completes                           |
-| `color=<hex>`    | Foreground colour of the whole row                                      |
+| `color=<hex>`    | Foreground colour of the whole row — **and a click action with it** (see below) |
 | `font=<name>`    | Font for the row (we use `Menlo` so the timestamps align)               |
-| `ansi=true`      | Honour ANSI SGR escapes inside the text                                 |
+| `ansi=true`      | Honour ANSI SGR escapes inside the text; `color=` is then ignored       |
 | `sfimage=<sym>`  | Leading SF Symbol icon (e.g. `trash.fill`)                              |
 | `sfcolor=<col>`  | Tint colour for the SF Symbol (e.g. `systemRed`)                        |
 | `image=<b64>`    | Leading bitmap icon, base64 PNG — keep small; long titles get truncated |
@@ -587,6 +587,19 @@ because SwiftBar's lexer parses param values before the shell sees
 them. Use `_swiftbar_quote()`.
 
 ### Tips that bit us
+
+* **`color=` makes a row selectable.** SwiftBar's `configureAction` reads
+  `params.hasAction || params.color != nil` — a custom colour needs an action
+  so `menu(_:willHighlight:)` can repaint the title against the selection
+  highlight. The side effect: a read-only grey row highlights under the cursor
+  and takes keyboard focus as if clicking it did something. Colour a passive
+  row with `ansi=true` + `render._dim()` instead — SwiftBar ignores `color=`
+  under `ansi=true`, so the row keeps no action and AppKit's automatic menu
+  enabling leaves it inert. Grey is `\x1b[38;5;245m` (`core._ANSI_DIM`);
+  SwiftBar's 256-colour ramp only computes indices 232–255 correctly, so stay
+  on that grey ramp or the 16 base codes. Escapes must be **real `\x1b`
+  bytes** — a literal `\e` is eaten by SwiftBar's `unescape()`, which runs
+  before the ANSI parser. See [ADR-0021](./docs/adr/0021-passive-rows-ansi-grey.md).
 
 * **A submenu parent needs a `| params` block — and `sfimage=` alone isn't
   enough.** Live-menu findings, in order: no params → doesn't expand;

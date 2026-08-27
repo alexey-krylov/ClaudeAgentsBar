@@ -375,7 +375,11 @@ class TestRowRendering(_ConfigPatch):
         rows = _render_row(_make_session(ide_group=name))
         line = next(r for r in rows if "tray.full" in r)
         self.assertIn(name, line)
-        self.assertIn("color=#999999", line)
+        # Grey via ANSI, not ``color=`` — the latter would make the row
+        # selectable even though it does nothing when clicked.
+        self.assertIn("ansi=true", line)
+        self.assertIn(plugin.core._ANSI_DIM, line)
+        self.assertNotIn("color=", line)
 
     def test_group_line_sits_directly_under_tags(self):
         rows = _render_row(_make_session(ide_group="backend"))
