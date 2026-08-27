@@ -71,7 +71,7 @@ so a collapsed group still says whether anything inside needs you.
 Read-only — creating, renaming and moving stay in the sidebar.
 
 **Terminal sessions** — a session started in a shell rather than in the
-editor is marked with a grey `>` symbol, and clicking it raises the
+editor is marked with a dim `❯` after its state circle, and clicking it raises the
 terminal tab that owns the process (Terminal.app / iTerm2, then `tmux`,
 then `screen`) instead of firing the editor deeplink, which would have
 resumed the same transcript a second time. Falls back to

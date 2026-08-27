@@ -26,12 +26,9 @@ Both are fixed by knowing something we already had in hand: the session's
 1. **Always terminal-aware.** No opt-in knob for the behaviour: the bar
    knows exactly which sessions are terminal ones, so it routes them
    correctly, always. Editor sessions keep the deeplink path unchanged.
-2. **A marker on the row**: the `greaterthan.square` SF Symbol, grey. A
-   shell prompt in a box reads as "terminal" at a glance in a way no letter
-   does. Two text glyphs were tried first: a bare `❯`, which read as
-   punctuation and blended into the middle dots separating the row's
-   segments, and a circled `ⓣ` matching the worktree `ⓦ` and the tag
-   glyphs, which was legible but arbitrary.
+2. **A marker on the row**, directly after the state circle: a dim `❯`. A
+   shell prompt is what a terminal looks like; a circled `ⓣ` was tried in
+   between and was legible but arbitrary.
 3. **The click goes to the running terminal**, with `claude --resume` as the
    fallback when there's nothing running to go to.
 
@@ -48,19 +45,32 @@ filter would never render a row to click.
 ## Rendering
 
 ```
-[>] 🟡 ⓑ infra · Release 1.4.2 · 3m
+🟡 ❯ ⓑ infra · Release 1.4.2 · 3m
 ```
 
-The marker is an `sfimage`, not part of the label, so SwiftBar draws it at
-the head of the row — ahead of the state circle, and not where the other
-markers sit. The label itself keeps the order every row has: state circle,
-tag glyph, group prefix, title. `sfcolor=systemGray` keeps the symbol quiet:
-it's provenance, not status.
+Order on the row: state circle, marker, tag glyph, group prefix, title. The
+`❯` is dimmed (`core._ANSI_STALE`), like the group prefix — it's provenance,
+not status.
 
-The trade-off is alignment. SwiftBar has no way to reserve the image slot on
-rows that carry no image, so a terminal row's text sits slightly to the right
-of its neighbours'. Accepted: the marker has to be visible to be worth
-anything, and terminal sessions are the minority in a list.
+**Position is what makes the glyph work.** An earlier revision put the marker
+between the group prefix and the title, where it read as punctuation and got
+lost among the middle dots separating the row's segments; that's what sent us
+looking for a circled letter instead. Anchored to the state circle it reads
+as a marker, and the shell prompt says "terminal" more directly than a `ⓣ`
+ever did.
+
+Two ways of drawing the real `greaterthan.square` SF Symbol were tried and
+rejected:
+
+* **`sfimage=greaterthan.square`** — SwiftBar always draws an image at the
+  head of the row, ahead of the state circle, and can't reserve that slot on
+  rows carrying no image, so every terminal row sat indented against its
+  neighbours.
+* **SwiftBar's inline `:greaterthan.square:`** — substituted only while
+  building a row *without* `ansi=true` (under that flag SwiftBar takes a
+  separate path that reads SGR escapes instead). The row's colours all ride
+  on ANSI: the tag letter, the green `ⓦ`, the red `⎇`, the state-coloured
+  duration. Trading every one of them for one symbol isn't worth it.
 
 ## The click
 

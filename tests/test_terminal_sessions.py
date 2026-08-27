@@ -55,22 +55,34 @@ class TestIsTerminal(unittest.TestCase):
 
 
 class TestRowMarker(unittest.TestCase):
-    def test_terminal_row_carries_the_marker(self):
-        row = _render_row(_make_session(entrypoint="cli"))[0]
-        self.assertIn("sfimage=greaterthan.square", row)
+    def test_terminal_row_carries_the_marker_after_the_state_circle(self):
+        # Anchored to the state circle, not floating before the title, where
+        # it read as punctuation among the row's middle dots.
+        row = _plain(_render_row(_make_session(entrypoint="cli"))[0])
+        self.assertTrue(
+            row.startswith(f"{plugin.RenderGroup.STALE.icon} ❯ "), row
+        )
 
     def test_editor_row_has_no_marker(self):
         row = _render_row(_make_session(entrypoint="claude-vscode"))[0]
-        self.assertNotIn("greaterthan.square", row)
+        self.assertNotIn("❯", row)
 
     def test_marker_is_dimmed(self):
         # Provenance, not status — it must not compete with the state circle.
         row = _render_row(_make_session(entrypoint="cli"))[0]
-        self.assertIn("sfcolor=systemGray", row)
+        self.assertIn(f"{plugin.core._ANSI_STALE}❯", row)
 
-    def test_marker_leaves_the_label_alone(self):
-        # SwiftBar draws sfimage at the head of the row, so the label keeps
-        # the order it has on every other row — group prefix, then title.
+    def test_marker_is_a_glyph_not_an_image_or_inline_symbol(self):
+        # An sfimage would be drawn at the head of the row, ahead of the state
+        # circle; SwiftBar's inline ``:symbol:`` is substituted only on rows
+        # built without ansi=true, which this row needs for its colours.
+        row = _render_row(_make_session(entrypoint="cli"))[0]
+        self.assertNotIn("sfimage=", row)
+        self.assertNotIn(":greaterthan.square:", row)
+        self.assertIn("ansi=true", row)
+
+    def test_marker_precedes_the_group_prefix(self):
+        # Order on the row: state circle, marker, tag, group prefix, title.
         isolate_mode_sidecars(self)
         original = plugin.core.CONFIG
         plugin.core.CONFIG = replace(plugin.core.CONFIG, ide_groups_mode="inline")
@@ -78,7 +90,7 @@ class TestRowMarker(unittest.TestCase):
         row = _plain(
             _render_row(_make_session(entrypoint="cli", ide_group="infra"))[0]
         )
-        self.assertIn("infra · title", row)
+        self.assertIn("❯ infra · title", row)
 
 
 class TestClickTarget(unittest.TestCase):

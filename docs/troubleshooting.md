@@ -217,7 +217,8 @@ directly (which lands in the frontmost window).
 
 ## Clicking a terminal session does nothing
 
-Rows marked with a grey `>` symbol run in a terminal, not in the editor, so clicking
+Rows carrying a dim `❯` after the state circle run in a terminal, not in
+the editor, so clicking
 one drives Terminal.app or iTerm2 over AppleScript to raise the tab that owns
 the session. macOS gates that behind **Automation** permission and asks once,
 on the first click. If the prompt was dismissed or denied, the click quietly

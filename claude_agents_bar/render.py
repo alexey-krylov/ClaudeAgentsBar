@@ -390,10 +390,8 @@ def _is_interactive(session: Session) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-#: Style fragment for a passive **leaf** row: grey text that stays
-#: *unselectable*. Pair it with :func:`_dim` around the label — never with
-#: ``color=``. A row with a submenu can't use it: SwiftBar needs an action on
-#: the parent to expand it (ADR-0021).
+#: Style fragment for a passive row: grey text that stays *unselectable*.
+#: Pair it with :func:`_dim` around the label — never with ``color=``.
 PASSIVE = "ansi=true"
 
 #: The "nothing to report" grey :func:`_branch_decoration` falls back to.
@@ -411,10 +409,6 @@ def _dim(text: str) -> str:
     Colour delivered through ANSI escapes has no such cost: with ``ansi=true``
     SwiftBar ignores ``color=`` entirely, the row keeps no action, and AppKit
     leaves it un-highlightable.
-
-    Only for **leaf** rows: a row that owns a submenu needs an action for
-    SwiftBar to expand it, and ``color=`` is the cheapest way to supply one —
-    see the subagent rows in :func:`_print_subagent_block`.
 
     Nested resets are rewritten to re-open the grey rather than fall back to
     the default label colour, so a segment that colours itself (the usage bar,
@@ -853,17 +847,27 @@ def _print_session_row(
         right_label = session.right_label_ansi
     else:
         right_label = session.right_label
-    # Terminal marker — the ``greaterthan.square`` SF Symbol, saying "this one
-    # lives in a terminal, not in the editor", and matching where the click
-    # will take you (spec 0016). A shell prompt reads as a terminal at a
-    # glance in a way no letter does; it replaced a dim ``ⓣ``, which in turn
-    # replaced a bare ``❯`` that was mistaken for a separator. Grey, because
-    # it's provenance rather than status. Unlike the other markers this one
-    # can't ride in the label: SwiftBar always draws ``sfimage`` at the head
-    # of the row, ahead of the state circle, so a terminal row sits slightly
-    # indented against its neighbours.
+    # Terminal marker — a dim ``❯`` directly after the state circle, saying
+    # "this one lives in a terminal, not in the editor", and matching where
+    # the click will take you (spec 0016). A shell prompt is what a terminal
+    # looks like; dim, because it's provenance rather than status.
+    #
+    # Position is what makes the glyph work. Sat between the group prefix and
+    # the title it read as punctuation, lost among the middle dots that
+    # separate the row's segments — which is why it was once swapped for a
+    # circled ``ⓣ``. Anchored to the state circle it reads as a marker.
+    #
+    # It stays a text glyph rather than the ``greaterthan.square`` SF Symbol
+    # it looks like, because neither way of drawing one fits this row: an
+    # ``sfimage`` is always drawn at the head of the row, ahead of the state
+    # circle, and indents the row against its neighbours, while SwiftBar's
+    # inline ``:symbol:`` syntax is substituted only on rows built without
+    # ``ansi=true`` — and this row's colours (tag letter, worktree ``ⓦ``,
+    # collision ``⎇``, the state-coloured duration) all ride on ANSI.
+    terminal_segment = f"{_ANSI_STALE}❯{_ANSI_RESET} " if session.is_terminal else ""
     label = (
-        f"{state_segment}{tag_segment}{group_segment}{session.title} · "
+        f"{state_segment}{terminal_segment}{tag_segment}{group_segment}"
+        f"{session.title} · "
         f"{collision_segment}{worktree_segment}{subagent_segment}{waiting_segment}{warning_segment}{right_label}"
     )
     href = f"{core.CONFIG.editor_url_scheme}anthropic.claude-code/open?session={quote(session.id)}"
@@ -912,8 +916,6 @@ def _print_session_row(
     if show_state:
         main_params.append(f"color={session.group.color}")
     main_params += ["font=Menlo", "ansi=true"]
-    if session.is_terminal:
-        main_params += ["sfimage=greaterthan.square", "sfcolor=systemGray"]
     # No bookmark marker on the row itself. An ``sfimage`` always leads, so a
     # bookmark icon couldn't sit after the state circle (SwiftBar can't place an
     # image after text), and an inline emoji was rejected — so a pinned session
@@ -1213,14 +1215,12 @@ def _print_subagent_block(session: Session, *, indent: str = "") -> None:
         main_label, sub_rows = _subagent_row_parts(
             snap, session, project_dir, now,
         )
-        # Amber while in flight, grey once stopped — and both keep ``color=``
-        # rather than the passive ANSI treatment the leaf rows get. This row
-        # owns a submenu (model, tool trail), and SwiftBar only expands a
-        # parent that carries an action; ``color=`` is what supplies one here,
-        # the same job ``shell=/usr/bin/true`` does for a group header. Drop
-        # it and the subagent's submenu stops opening (ADR-0021).
-        colour = "#cc7700" if snap.is_live else "#999999"
-        print(f"{indent}--{main_label} | color={colour}")
+        if snap.is_live:
+            # Amber marks a subagent still in flight; it keeps ``color=`` and
+            # the selectable row that comes with it.
+            print(f"{indent}--{main_label} | color=#cc7700")
+        else:
+            print(f"{indent}--{_dim(main_label)} | {PASSIVE}")
         for sub_row in sub_rows:
             print(f"{indent}----{sub_row}")
 

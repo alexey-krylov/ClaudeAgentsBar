@@ -18,9 +18,8 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   the grey was buying the highlight. They now get their grey from ANSI
   instead, which costs no action — same colour, no phantom selection. Rows
   that actually do something (project, cwd, session rows) are unchanged, as
-  are the status colours that mean something: a cwd collision and a worktree
-  checkout. Subagent rows keep their colour too — they own a submenu, and
-  SwiftBar only expands a row that carries an action.
+  are the status colours that mean something: a cwd collision, a worktree
+  checkout, a subagent in flight.
 
 ### Added
 
@@ -65,8 +64,8 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
 - **Terminal sessions are marked, and clicking one goes to the terminal.** A
   session started in a shell rather than in the editor now carries a grey
-  `greaterthan.square` symbol at the head of its row, and its row click no
-  longer fires the editor deeplink.
+  dim `❯` right after its state circle, and its row click no longer fires
+  the editor deeplink.
   That deeplink resumed the transcript *in the editor* while the terminal
   process kept running — two live sessions appending to one transcript. The
   row now raises the tab that owns the process (matched by tty through

@@ -314,8 +314,11 @@ A few signals ride on top of the bucket colour:
   rather than status: the IDE group name plus a middle dot
   (`Session.ide_group`, spec 0015, in `inline` mode). A session running in a
   terminal (`Session.is_terminal`, spec 0016) is marked instead by the
-  `greaterthan.square` SF Symbol in grey — an `sfimage`, so SwiftBar draws it
-  at the head of the row, ahead of the state circle. That marker also changes where the
+  dim `❯` directly after the state circle. A text glyph rather than the
+  `greaterthan.square` SF Symbol it resembles: an `sfimage` is drawn at the
+  head of the row, ahead of the state circle, and SwiftBar's inline `:symbol:`
+  syntax is substituted only on rows built without `ansi=true`, which this row
+  needs for its colours. That marker also changes where the
   row's click goes — `bin/app/open-terminal-session.sh` instead of
   `open-session.sh`, because the editor deeplink would resume the transcript
   in a second, parallel session. Both survive `show_state=False` (the
@@ -599,10 +602,7 @@ them. Use `_swiftbar_quote()`.
   SwiftBar's 256-colour ramp only computes indices 232–255 correctly, so stay
   on that grey ramp or the 16 base codes. Escapes must be **real `\x1b`
   bytes** — a literal `\e` is eaten by SwiftBar's `unescape()`, which runs
-  before the ANSI parser. **Leaf rows only**: a row with `--` children needs
-  an action for SwiftBar to expand it, so a submenu parent keeps `color=` (or
-  a no-op `shell=/usr/bin/true`, as the group headers do) and stays
-  selectable. See [ADR-0021](./docs/adr/0021-passive-rows-ansi-grey.md).
+  before the ANSI parser. See [ADR-0021](./docs/adr/0021-passive-rows-ansi-grey.md).
 
 * **A submenu parent needs a `| params` block — and `sfimage=` alone isn't
   enough.** Live-menu findings, in order: no params → doesn't expand;
