@@ -12,6 +12,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -587,9 +588,10 @@ class TestPassiveRowsAreUnselectable(unittest.TestCase):
     without attaching an action.
     """
 
-    #: Status colours worth the selectable row they cost — a cwd collision, a
-    #: worktree checkout, a subagent still in flight.
-    STATUS_COLOURS = ("#cc0000", "#1f7a1f", "#cc7700")
+    #: Status colours worth the selectable row they cost — a cwd collision
+    #: and a worktree checkout, both of which sit on rows that open a folder
+    #: anyway or flag a state worth the highlight.
+    STATUS_COLOURS = ("#cc0000", "#1f7a1f")
 
     def _rows(self, **overrides):
         session = _make_session(**overrides)
@@ -649,3 +651,45 @@ class TestDimHelper(unittest.TestCase):
         self.assertTrue(out.endswith(plugin.core._ANSI_RESET))
         self.assertEqual(out.count(plugin.core._ANSI_RESET), 1)
         self.assertEqual(out.count(plugin.core._ANSI_DIM), 2)
+
+
+class TestSubagentBlockRows(unittest.TestCase):
+    """The 🤖 block: passive header, submenu-bearing rows that stay clickable.
+
+    A subagent row owns a submenu (model, tool trail) and SwiftBar only
+    expands a parent that carries an action — ``color=`` is what supplies one
+    here. Rendering it passively (ANSI grey, no ``color=``) reads better but
+    makes the submenu unopenable, so the colour stays. The block's header and
+    the leaf sub-rows underneath carry no action and are dimmed instead.
+    """
+
+    def _rows(self, *snaps):
+        session = _make_session(subagents=tuple(snaps))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            plugin.render._print_subagent_block(session)
+        return buf.getvalue().splitlines()
+
+    def _snap(self, state):
+        now = int(time.time())
+        return plugin.core.SubagentSnapshot(
+            parent_sid="sid",
+            agent_id="a1",
+            agent_type="Explore",
+            state=state,
+            state_since=now - 30,
+            last_event_ts=now - 5,
+            first_event_ts=now - 30,
+        )
+
+    def test_subagent_row_keeps_its_colour_so_the_submenu_opens(self):
+        live, = [r for r in self._rows(self._snap("working")) if "Explore" in r]
+        stopped, = [r for r in self._rows(self._snap("stopped")) if "Explore" in r]
+        self.assertIn("color=#cc7700", live)
+        self.assertIn("color=#999999", stopped)
+
+    def test_header_is_passive(self):
+        header, = [r for r in self._rows(self._snap("working")) if "🤖" in r]
+        self.assertIn("ansi=true", header)
+        self.assertIn(plugin.core._ANSI_DIM, header)
+        self.assertNotIn("color=", header)

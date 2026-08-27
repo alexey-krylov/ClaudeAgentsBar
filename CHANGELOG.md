@@ -18,8 +18,9 @@ Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
   the grey was buying the highlight. They now get their grey from ANSI
   instead, which costs no action — same colour, no phantom selection. Rows
   that actually do something (project, cwd, session rows) are unchanged, as
-  are the status colours that mean something: a cwd collision, a worktree
-  checkout, a subagent in flight.
+  are the status colours that mean something: a cwd collision and a worktree
+  checkout. Subagent rows keep their colour too — they own a submenu, and
+  SwiftBar only expands a row that carries an action.
 
 ### Added
 

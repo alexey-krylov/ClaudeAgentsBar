@@ -599,7 +599,10 @@ them. Use `_swiftbar_quote()`.
   SwiftBar's 256-colour ramp only computes indices 232–255 correctly, so stay
   on that grey ramp or the 16 base codes. Escapes must be **real `\x1b`
   bytes** — a literal `\e` is eaten by SwiftBar's `unescape()`, which runs
-  before the ANSI parser. See [ADR-0021](./docs/adr/0021-passive-rows-ansi-grey.md).
+  before the ANSI parser. **Leaf rows only**: a row with `--` children needs
+  an action for SwiftBar to expand it, so a submenu parent keeps `color=` (or
+  a no-op `shell=/usr/bin/true`, as the group headers do) and stays
+  selectable. See [ADR-0021](./docs/adr/0021-passive-rows-ansi-grey.md).
 
 * **A submenu parent needs a `| params` block — and `sfimage=` alone isn't
   enough.** Live-menu findings, in order: no params → doesn't expand;

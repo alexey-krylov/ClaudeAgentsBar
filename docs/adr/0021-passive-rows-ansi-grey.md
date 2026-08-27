@@ -67,6 +67,19 @@ Menu-bar *title* lines keep `color=` — selection doesn't apply there.
 a rendered row with no action may only carry `color=` if it is one of the
 three status colours.
 
+### Leaf rows only
+
+A row that owns a submenu is out of scope: SwiftBar expands a parent only when
+it carries an action, which is why a group header ships a no-op
+`shell=/usr/bin/true` "so the item is born enabled". Rendering such a row
+passively makes its submenu unopenable — found the hard way on the subagent
+rows, whose model and tool-trail children stopped being reachable. Those rows
+keep `color=` (amber in flight, grey once stopped); their header and their
+leaf children are dimmed as usual.
+
+So: passive treatment applies to leaves. A parent is selectable by necessity,
+and that selection is honest — hovering it does something.
+
 ## Consequences
 
 * Three constraints come with the ANSI route, all load-bearing:
@@ -85,5 +98,6 @@ three status colours.
   `.labelColor`-style adaptation unless we switch to code 39.
 * `#999999` and `#888888` collapsed into one grey (245 ≈ `#8a8a8a`). The two
   were never distinguishable at menu size.
-* Any new read-only row must use `PASSIVE` + `_dim()`; the regression test
-  fails the build otherwise.
+* Any new read-only **leaf** row must use `PASSIVE` + `_dim()`; the
+  regression test fails the build otherwise. A row with `--` children still
+  needs an action — `color=` or a no-op `shell=`.
