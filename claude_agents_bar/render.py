@@ -48,7 +48,6 @@ from .core import (
     _model_badge,
     _project_name,
     _shorten,
-    _shorten_head,
     _t,
     _warn,
 )
@@ -224,6 +223,8 @@ def build_session(
         entrypoint=meta.entrypoint,
         context_used=context_used,
         state_duration_sec=state_duration_sec,
+        state_since=state_since,
+        last_event_kind=last_event_kind,
         last_tool_use=tool_summary,
         model=session_model,
         subagents=subagents,
@@ -330,6 +331,16 @@ def collect_sessions(now: int) -> list[Session]:
             s for s in sessions
             if s.id not in forget or s.last_event_ts > forget[s.id]
         ]
+    # Sessions the user archived in the IDE sidebar (spec 0018). A tag or a
+    # bookmark is the bar's *own* marker — features the extension doesn't
+    # have — so one of those means "keep this one in the menu" and outranks
+    # the archive. Read only when the knob is on: the lookup is the cost.
+    if core.CONFIG.hide_archived_sessions:
+        if archived := sidecars.read_ide_archived():
+            sessions = [
+                s for s in sessions
+                if s.id not in archived or s.id in bookmarks or s.id in tags
+            ]
     _mark_cwd_collisions(sessions)
     if bookmarks or tags:
         for s in sessions:
@@ -1081,8 +1092,6 @@ def _print_session_row(
                     f" tooltip={_swiftbar_quote(session.last_tool_use)}"
                 )
             print(context_line)
-    if session.subagents:
-        _print_subagent_block(session, indent=indent)
 
 
 def _print_session_picker(session: Session, indent: str, bin_dir: Path) -> None:
@@ -1168,188 +1177,6 @@ def _print_tags_picker(session: Session, indent: str, bin_dir: Path) -> None:
             f"checked={'true' if is_current else 'false'} "
             "terminal=false refresh=true ansi=true"
         )
-
-
-def _print_subagent_block(session: Session, *, indent: str = "") -> None:
-    """Render the Subagents info block in a parent's submenu.
-
-    A submenu separator (``-----``) precedes the header so the block
-    reads as its own visual section, distinct from the project / branch /
-    model / context rows above it. Header carries the live count and
-    shares the SF-symbol icon column with its siblings. Two rows per
-    subagent follow — the user explicitly asked for a statically-
-    expanded block rather than a nested submenu, since the list is
-    short and drilling into a sub-popup just to read four words is
-    friction.
-
-    First subagent row carries: status icon (🟡 / 🟢), the parent's
-    ``Task`` description (read from the meta sidecar) or the agent type
-    when the description is missing, and the in-state duration or
-    time-since-stop. The second row carries the freshest ``tool_use``
-    from the subagent's own transcript — split off the main row because
-    long Bash commands pack the single line past readable. Rows aren't
-    clickable; deep-links can't reach a subagent transcript.
-
-    Status / model / tool glyphs travel inline rather than via
-    ``sfimage=`` because SwiftBar's ``color=`` overrides ``sfcolor=``,
-    which would turn every status circle grey instead of yellow/green.
-    Inline emoji carry their own colour and dodge that conflict.
-    """
-    print(f"{indent}-----")
-    project_dir = _project_dir_for(session)
-    now = int(time.time())
-    visible = sorted(
-        (
-            s for s in session.subagents
-            if s.is_live or (now - s.last_event_ts) <= core.CONFIG.fresh_sec
-        ),
-        key=lambda s: (0 if s.is_live else 1, -s.last_event_ts),
-    )
-    live_count = session.live_subagent_count
-    header = _t("menu.subagents_header", n=live_count, total=len(visible))
-    print(
-        f"{indent}--🤖 {_dim(header)} | "
-        f"font=Menlo {PASSIVE}"
-    )
-    for snap in visible:
-        main_label, sub_rows = _subagent_row_parts(
-            snap, session, project_dir, now,
-        )
-        if snap.is_live:
-            # Amber marks a subagent still in flight; it keeps ``color=`` and
-            # the selectable row that comes with it.
-            print(f"{indent}--{main_label} | color=#cc7700")
-        else:
-            print(f"{indent}--{_dim(main_label)} | {PASSIVE}")
-        for sub_row in sub_rows:
-            print(f"{indent}----{sub_row}")
-
-
-def _project_dir_for(session: Session) -> Path | None:
-    """Resolve the Claude Code project directory holding the parent JSONL.
-
-    Claude Code stores transcripts under
-    ``~/.claude/projects/<slugified-cwd>/<session_id>.jsonl``; the slug is
-    not derivable from :class:`Session` alone, so we look for the
-    matching file across project directories. ``None`` means the parent
-    transcript wasn't found on disk (race during deletion) — callers
-    degrade by skipping the per-subagent ``tool_use`` summary.
-    """
-    if not core.PROJECTS_DIR.exists():
-        return None
-    for candidate in core.PROJECTS_DIR.iterdir():
-        if not candidate.is_dir():
-            continue
-        if (candidate / f"{session.id}.jsonl").exists():
-            return candidate
-    return None
-
-
-def _subagent_row_parts(
-    snap: SubagentSnapshot,
-    session: Session,
-    project_dir: Path | None,
-    now: int,
-) -> tuple[str, list[str]]:
-    """Return ``(main_label, [sub_label, ...])`` for a subagent.
-
-    The status glyph (🟡/🟢) travels inline — SwiftBar's ``color=``
-    overrides ``sfcolor=``, so ``sfimage=circle.fill sfcolor=systemYellow``
-    would render grey. Inline emoji carry their own colour. The model
-    sub-row uses ``sfimage=cpu`` (no ``color=``, so sfimage works).
-    The tool sub-row uses inline ``↳``.
-
-    Main label: ``{status-emoji} {agent_type} · {description} · {duration}``.
-    🟡 while the subagent is working, 🟢 once ``SubagentStop``
-    fires — same colour vocabulary as the parent RenderGroup.
-    Description comes from the ``Task`` tool's ``description``
-    field via ``agent-<id>.meta.json``; omitted when missing.
-
-    Sub-rows carry their own SwiftBar params (full "label | params"
-    strings) so each can have a different ``sfimage=``.
-
-    Sub-rows, in order:
-
-    1. ``{model-name} | sfimage=cpu`` — full model string with the
-       CPU SF Symbol. Only shown when the subagent's
-       JSONL has a parseable ``"model":"..."``.
-    2. ``↳ {tool} · 🛠×N · ran Xs`` — inline ``↳`` (U+21B3)
-       carries the "child of" semantics; head-trimmed
-       ``tool_use`` summary so deep paths keep their meaningful
-       tail; cumulative tool count; end-to-end runtime for
-       finished subagents written by the 7-column hook.
-
-    Empty list means "no sub-rows", caller skips printing them.
-    """
-    description = ""
-    model_str: str | None = None
-    summary = ""
-    tool_count = 0
-    if project_dir is not None:
-        subagents_dir = project_dir / session.id / "subagents"
-        meta_path = subagents_dir / f"agent-{snap.agent_id}.meta.json"
-        sub_jsonl = subagents_dir / f"agent-{snap.agent_id}.jsonl"
-        meta = sidecars.read_subagent_meta(meta_path) if meta_path.exists() else None
-        if meta is not None:
-            desc_raw = meta.get("description")
-            if isinstance(desc_raw, str):
-                description = desc_raw.strip()
-        if sub_jsonl.exists():
-            model_str = sidecars.last_session_model(sub_jsonl)
-            summary = sidecars.last_tool_use_summary(sub_jsonl)
-            tool_count = sidecars.count_tool_uses(sub_jsonl)
-
-    # Status emoji travels inline — see the docstring on why an
-    # ``sfimage=circle.fill`` row would have its ``sfcolor`` overridden
-    # by ``color=``.
-    status_icon = (
-        RenderGroup.ACTIVE.icon if snap.is_live else RenderGroup.STALE.icon
-    )
-
-    if snap.is_live:
-        duration = _humanize_age(max(0, now - snap.state_since), _lang())
-    else:
-        duration = _humanize_age(max(0, now - snap.last_event_ts), _lang())
-
-    # Build label: status · type · description (trimmed to 40) · duration
-    type_str = snap.agent_type if snap.agent_type else "Task"
-    label_parts = [status_icon + " " + type_str]
-    if description:
-        desc_trimmed = (description[:40] + "…") if len(description) > 40 else description
-        label_parts.append(desc_trimmed)
-    label_parts.append(duration)
-    main_label = " · ".join(label_parts)
-
-    # Each sub-row is a full "label | params" string so model and tool
-    # rows can carry different SwiftBar params (sfimage=cpu for model).
-    sub_rows: list[str] = []
-
-    if model_str:
-        sub_rows.append(
-            f"{_dim(model_str)} | font=Menlo {PASSIVE} sfimage=cpu"
-        )
-
-    tool_segments: list[str] = []
-    if summary:
-        tool_segments.append(_shorten_head(summary))
-    if tool_count:
-        tool_segments.append(f"🛠×{tool_count}")
-    if not snap.is_live and snap.first_event_ts is not None:
-        runtime_sec = max(0, snap.last_event_ts - snap.first_event_ts)
-        if runtime_sec > 0:
-            tool_segments.append(
-                _t(
-                    "menu.subagent_ran",
-                    duration=_humanize_age(runtime_sec, _lang()),
-                )
-            )
-    if tool_segments:
-        tooltip = f" tooltip={_swiftbar_quote(summary)}" if summary else ""
-        sub_rows.append(
-            _dim("↳ " + " · ".join(tool_segments)) + f" | font=Menlo {PASSIVE}{tooltip}"
-        )
-
-    return main_label, sub_rows
 
 
 #: Longest IDE group name rendered inline as the ``group / title`` prefix.

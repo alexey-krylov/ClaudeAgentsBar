@@ -121,6 +121,7 @@ from .sidecars import (
     read_clicks,
     read_dismiss_ts,
     read_forget,
+    read_blocked_reminders,
     read_idle_reminders,
     read_quiet_bypass_until,
     read_quiet_until,
@@ -128,6 +129,7 @@ from .sidecars import (
     read_transcript_meta,
     read_usage,
     read_usage_alerts,
+    write_blocked_reminders,
     write_idle_reminders,
     write_usage_alerts,
 )
@@ -258,6 +260,14 @@ def main() -> int:
             idle_reminders.reconcile(sessions, now)
         except Exception as exc:
             core._warn(f"idle_reminders: reconcile failed: {exc}")
+        # Blocked-session reminders (spec 0017) — the 🔴 twin of the above,
+        # same tick, same session list, same crash-isolation. Separate call
+        # rather than one pass so either feature can be switched off on its
+        # own interval knob.
+        try:
+            idle_reminders.reconcile_blocked(sessions, now)
+        except Exception as exc:
+            core._warn(f"blocked_reminders: reconcile failed: {exc}")
         # Subscription usage alerts ride the same tick. Account-wide, so no
         # session list needed — just the snapshot the usage fetch wrote.
         # Same crash-isolation. See :mod:`usage_alerts`.

@@ -5,6 +5,67 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.6.0 — 2026-09-20
+
+### Added
+
+- **A blocked session keeps asking.** The permission-prompt notification fires
+  once, on the event; miss that banner and the agent stands on the prompt
+  until you happen to look at the menu bar. Now it repeats while nobody
+  answers, on a doubling schedule — 10, 30, 70, 150 minutes and so on.
+  Deliberately the *same* notification, not a variant: the plugin re-runs
+  `notify-wait.sh` itself, so a repeat carries the same phrases, the same
+  chime and the same banner as the original, and there is no second set of
+  knobs to keep in sync. Nothing bounds this the way the green window bounds
+  the idle reminder, so the doubling is the bound and the repeats fade out on
+  their own. Answering the prompt ends it. Only a real `PermissionRequest`
+  is repeated: `Notification` also puts a row into 🔴 waiting and also fires
+  when the prompt has merely been idle, so repeating it would nag you about
+  sessions nobody is blocked on. One new knob,
+  **`notify_blocked_interval_min`** (default 10; `0` keeps the first
+  announcement and drops the repeats, `notify_on_wait: false` silences both).
+  See [spec 0017](./docs/specs/0017-blocked-reminders.md).
+
+- **Archived sessions leave the menu too.** Archive a session in the Claude
+  Code sidebar and the bar now hides it, the same way it already mirrors the
+  sidebar's groups and manual renames — *except* when the session carries a
+  tag or a bookmark. Those are the bar's own markers, which the extension
+  knows nothing about, so setting one is an explicit "keep this in front of
+  me" and outranks the archive; it is also the escape hatch, one click away
+  and needing no config edit. Read-only, like the groups. New knob:
+  **`hide_archived_sessions`** (default `true`; `false` shows everything and
+  skips the lookup). See
+  [spec 0018](./docs/specs/0018-archived-sessions.md).
+
+### Changed
+
+- **The test suite no longer reads (or rewrites) your real `~/.claude`.**
+  `ack_fresh`'s tests rewrote the developer's own
+  `agent-state.subagents.tsv` on every run, and several render tests read
+  live bookmarks and tags, so the suite's result depended on the machine it
+  ran on. A shared `isolate_state_dir` fixture now redirects the whole state
+  directory. Contributors only.
+
+- **Subagents: the count, not the roster.** A session that fans out through
+  `Task` still carries its `🤖×N` badge and still holds 🟡 until the last
+  subagent returns — that rollup is the part the editor can't give you from
+  the menu bar. The expanded per-subagent block in the row submenu is gone:
+  Claude Code's own extension (2.1.276) lists them with more detail than a
+  submenu can. Dropping it also ends a full scan of every subagent transcript
+  on every 5-second tick. See
+  [spec 0004](./docs/specs/0004-subagent-grouping.md).
+
+### Fixed
+
+- **A session's title no longer drifts away from the editor sidebar.** Claude
+  Code writes its `ai-title` event once. In a session with a large system
+  preamble — many MCP tool schemas, a long `CLAUDE.md` — that event lands past
+  the head-scan window, and once the transcript grows it falls out of the tail
+  window too, leaving the row to fall back on the last user prompt. The plugin
+  now recovers it with a full transcript scan, cached per session in
+  `~/.claude/agent-state.ai-titles.tsv`, so the scan happens once rather than
+  every tick. Pure derived data: delete the file and it rebuilds.
+
 ## 1.5.0 — 2026-08-27
 
 ### Added

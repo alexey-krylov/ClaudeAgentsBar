@@ -10,8 +10,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from _helpers import plugin
+from _helpers import isolate_ai_title_cache, plugin
 
 
 class TestUserPromptText(unittest.TestCase):
@@ -147,6 +148,11 @@ class TestReadTranscriptMetaTailFallback(unittest.TestCase):
     pushed the latest prompt out of the tail window.
     """
 
+    def setUp(self):
+        # read_transcript_meta now ends in a cached full scan; keep it off
+        # the developer's real ~/.claude sidecar.
+        isolate_ai_title_cache(self)
+
     def _write(self, body: str) -> Path:
         import tempfile
         fd, path = tempfile.mkstemp(suffix=".jsonl")
@@ -234,6 +240,187 @@ class TestReadTranscriptMetaTailFallback(unittest.TestCase):
         self.assertEqual(meta.custom_title, "Second name")
         self.assertEqual(meta.display_title, "Second name")
 
+
+class TestCachedAiTitle(unittest.TestCase):
+    """The last-resort full scan and its on-disk cache.
+
+    Claude Code writes ``ai-title`` once, right after the first turn. A
+    session with a large system preamble (MCP tool schemas, a long
+    ``CLAUDE.md``) pushes that event past the head window, and once the
+    transcript grows it drops out of the tail too — leaving both windows
+    blind. One full scan recovers it; the cache makes that a once-per-session
+    cost rather than a per-tick one.
+    """
+
+    def setUp(self):
+        self.cache_path = isolate_ai_title_cache(self)
+
+    def _write(self, body: str, sid: str = "sess-01") -> Path:
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / f"{sid}.jsonl"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def _blind_body(self, title: str = "Deep Topic") -> str:
+        """A transcript where neither the head nor the tail window sees the title."""
+        from claude_agents_bar import core as core_mod
+        head_filler = "x" * (core_mod.JSONL_TITLE_SCAN_BYTES + 4096)
+        tail_filler = "y" * (core_mod.JSONL_USER_TAIL_BYTES + 4096)
+        return (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"assistant","message":{"content":"' + head_filler + '"}}\n'
+            '{"type":"ai-title","aiTitle":"' + title + '"}\n'
+            '{"type":"assistant","message":{"content":"' + tail_filler + '"}}\n'
+        )
+
+    def test_title_recovered_when_both_windows_are_blind(self):
+        path = self._write(self._blind_body())
+        self.assertEqual(plugin.sidecars._latest_tail_ai_title(path), "",
+                         "fixture must be blind to the tail window")
+        meta = plugin.read_transcript_meta(path)
+        self.assertEqual(meta.ai_title, "Deep Topic")
+        self.assertEqual(meta.display_title, "Deep Topic")
+
+    def test_hit_is_served_from_cache_without_rescanning(self):
+        path = self._write(self._blind_body())
+        self.assertEqual(plugin.sidecars.cached_ai_title(path), "Deep Topic")
+        with patch.object(
+            plugin.sidecars, "_full_scan_ai_title",
+            side_effect=AssertionError("must not re-scan a cached hit"),
+        ):
+            self.assertEqual(plugin.sidecars.cached_ai_title(path), "Deep Topic")
+
+    def test_miss_is_not_rescanned_until_the_file_grows_enough(self):
+        from claude_agents_bar import core as core_mod
+        path = self._write('{"type":"user","message":{"content":"hi"}}\n')
+        self.assertEqual(plugin.sidecars.cached_ai_title(path), "")
+        # A small append leaves the miss cached — no second scan.
+        with path.open("a", encoding="utf-8") as f:
+            f.write("z" * 1024 + "\n")
+        with patch.object(
+            plugin.sidecars, "_full_scan_ai_title",
+            side_effect=AssertionError("must not re-scan below the threshold"),
+        ):
+            self.assertEqual(plugin.sidecars.cached_ai_title(path), "")
+        # Past the growth threshold it tries again, and now finds the title.
+        with path.open("a", encoding="utf-8") as f:
+            f.write("z" * core_mod.AI_TITLE_RESCAN_BYTES + "\n")
+            f.write('{"type":"ai-title","aiTitle":"Late Topic"}\n')
+        self.assertEqual(plugin.sidecars.cached_ai_title(path), "Late Topic")
+
+    def test_custom_title_short_circuits_the_full_scan(self):
+        # A manual rename is what the row will show anyway, so the expensive
+        # scan must not run.
+        body = (
+            '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+            '"message":{"content":[{"type":"text","text":"hi"}]}}\n'
+            '{"type":"custom-title","customTitle":"Hand named"}\n'
+        )
+        path = self._write(body)
+        with patch.object(
+            plugin.sidecars, "_full_scan_ai_title",
+            side_effect=AssertionError("must not scan when a rename exists"),
+        ):
+            meta = plugin.read_transcript_meta(path)
+        self.assertEqual(meta.display_title, "Hand named")
+
+    def test_invalid_session_id_is_refused(self):
+        # The stem flows into a TSV field and downstream shell args; a name
+        # outside the allow-list never reaches the cache.
+        path = self._write(self._blind_body(), sid="bad id!")
+        self.assertEqual(plugin.sidecars.cached_ai_title(path), "")
+        self.assertFalse(self.cache_path.exists())
+
+    def test_cache_is_trimmed_to_the_row_ceiling(self):
+        from claude_agents_bar import core as core_mod
+        rows = tuple(
+            (f"s{i}", 0, f"t{i}") for i in range(core_mod.AI_TITLES_MAX_ROWS + 5)
+        )
+        plugin.sidecars._write_ai_titles(rows)
+        plugin.sidecars._read_ai_titles.cache_clear()
+        kept = plugin.sidecars._read_ai_titles()
+        self.assertEqual(len(kept), core_mod.AI_TITLES_MAX_ROWS)
+        # Oldest dropped, newest kept.
+        self.assertEqual(kept[0][0], "s5")
+        self.assertEqual(kept[-1][0], f"s{core_mod.AI_TITLES_MAX_ROWS + 4}")
+
+    def test_corrupt_rows_are_skipped_not_fatal(self):
+        self.cache_path.write_text(
+            "\n".join([
+                "no-tabs-at-all",
+                "bad id!\t0\tRejected",
+                "sess-02\tnotanumber\tRejected",
+                "sess-03\t42\tKept",
+            ]) + "\n",
+            encoding="utf-8",
+        )
+        plugin.sidecars._read_ai_titles.cache_clear()
+        self.assertEqual(
+            plugin.sidecars._read_ai_titles(), (("sess-03", 42, "Kept"),)
+        )
+
+    def test_whitespace_in_a_title_is_collapsed_on_write(self):
+        # The row is line- and tab-delimited, so both characters are folded
+        # to a space before the title ever reaches the file.
+        plugin.sidecars._write_ai_titles((("sess-04", 7, "a\tb  c"),))
+        plugin.sidecars._read_ai_titles.cache_clear()
+        self.assertEqual(
+            plugin.sidecars._read_ai_titles(), (("sess-04", 7, "a b c"),)
+        )
+
+    def test_a_newline_in_a_title_cannot_forge_another_row(self):
+        # Regression: an ai-title is model-generated from conversation
+        # content. Written verbatim, "X\n<other-sid>\t0\tPwned" would end the
+        # row early and the remainder would read back as a cache entry for
+        # <other-sid> — which would then show "Pwned" in that session's row.
+        evil = "Innocent\nvictim-sid\t0\tPwned"
+        plugin.sidecars._write_ai_titles((("sess-05", 7, evil),))
+        plugin.sidecars._read_ai_titles.cache_clear()
+        rows = plugin.sidecars._read_ai_titles()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "sess-05")
+        self.assertNotIn("victim-sid", {r[0] for r in rows})
+        self.assertEqual(self.cache_path.read_text(encoding="utf-8").count("\n"), 1)
+
+    def test_reader_still_rejoins_tabs_written_by_an_older_version(self):
+        # The writer folds them now, but a file left by 1.5.x may hold one;
+        # the row must read back whole rather than truncated at the tab.
+        self.cache_path.write_text("sess-06\t7\ta\tb\n", encoding="utf-8")
+        plugin.sidecars._read_ai_titles.cache_clear()
+        self.assertEqual(
+            plugin.sidecars._read_ai_titles(), (("sess-06", 7, "a\tb"),)
+        )
+
+    def test_failed_write_leaves_the_in_process_cache_alone(self):
+        # Clearing the lru after a write that never landed would make every
+        # title-less session re-scan in full on every tick.
+        path = self._write(self._blind_body())
+        self.assertEqual(plugin.sidecars.cached_ai_title(path), "Deep Topic")
+        with patch.object(
+            plugin.sidecars, "_write_ai_titles", return_value=False
+        ), patch.object(
+            plugin.sidecars, "_read_ai_titles",
+            wraps=plugin.sidecars._read_ai_titles,
+        ) as reader:
+            plugin.sidecars.cached_ai_title(self._write("", sid="sess-07"))
+            reader.cache_clear.assert_not_called()
+
+    def test_rescan_threshold_scales_with_the_file(self):
+        from claude_agents_bar import core as core_mod
+        # Small file: the flat floor applies, so a young session stays cheap.
+        self.assertEqual(
+            plugin.sidecars._rescan_threshold(1024),
+            core_mod.AI_TITLE_RESCAN_BYTES,
+        )
+        # Large file: a quarter of it, so a 100 MB title-less transcript
+        # isn't re-read in full every few minutes.
+        self.assertEqual(
+            plugin.sidecars._rescan_threshold(100 * 1024 * 1024),
+            25 * 1024 * 1024,
+        )
 
 
 class TestSummariseToolUse(unittest.TestCase):

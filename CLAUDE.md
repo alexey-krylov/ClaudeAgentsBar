@@ -21,7 +21,7 @@ titles + `cwd` and joins them with the TSV at render time.
 **Session titles** are sourced in priority order:
 1. **`session_title`** — parsed from the last Claude response marker `*-- Name - Summary*` (the `notify_summary_marker` prefix `-- `, then the name, a `" - "` divider split on the **first** occurrence, then the summary). **Opt-in**: only used when `use_session_titles_for_menubar` is `true` (default `false`). When off, this field is left empty (the per-tick parse is skipped) and the menu falls through to `ai_title` — the same label VSCode shows, so the menu stays consistent with the editor. Prefix and divider are split byte-for-byte the same way in `claude_agents_bar/sidecars.py` and `hooks/_notify-common.sh`.
 2. **`custom_title`** — a manual rename in the IDE. Claude Code writes a `{"type":"custom-title","customTitle":"…"}` event when the user renames a session in VSCode/VSCodium; the editor sidebar then shows that name, so the menu mirrors it by ranking `custom_title` above `ai_title`. Read **latest-from-tail** (not head-first like `ai_title`): a session can be renamed twice and the newest name wins. An empty `customTitle` (rename cleared) falls through to `ai_title`.
-3. **`ai_title`** — Claude Code's auto-generated summary of the conversation (the menu default)
+3. **`ai_title`** — Claude Code's auto-generated summary of the conversation (the menu default). Looked for in three widening steps: head scan, cached tail buffer, and — only when there is no `custom_title` to show instead — a full-file scan cached in `agent-state.ai-titles.tsv`. The third step covers the session whose large system preamble pushes the one-and-only `ai-title` event past the head window and, as the transcript grows, out of the tail too.
 4. **`last_user_message`** — latest user prompt (for fresh sessions)
 5. **`raw_title`** — initial session title (fallback)
 
@@ -102,7 +102,11 @@ to re-run.
 reverses everything except the sidecar files under `~/.claude/`
 (`agent-state.tsv`, `agent-state.subagents.tsv`,
 `agent-state.clicks`, `agent-state.dismiss`, `agent-state.forget`,
-`agent-state.bookmarks`, `agent-state.tags`). If the user wants a truly clean slate, delete
+`agent-state.bookmarks`, `agent-state.tags`,
+`agent-state.ai-titles.tsv`, `agent-state.idle-reminders`,
+`agent-state.blocked-reminders`, and the `agent-state.*.mode`
+preference files). `teardown.sh` prints the full list on exit — keep the
+two in step. If the user wants a truly clean slate, delete
 those manually. After a Homebrew install, finish with
 `brew uninstall claude-agents-bar` to remove the binary itself.
 

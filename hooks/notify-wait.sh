@@ -8,6 +8,14 @@
 # blocked on a tool-approval dialog without having to glance at the menu
 # bar.
 #
+# Called two ways. As a Claude Code hook: JSON payload on stdin, no
+# arguments. As the plugin's blocked-session reminder (spec 0017), which
+# re-announces a prompt nobody answered: `notify-wait.sh <session-id> <cwd>`,
+# no stdin. The second form exists so a repeat travels the same channel as
+# the first announcement — identical phrases, chime and banner — which is
+# also why there are no separate notify_blocked_* phrase/sound knobs. The
+# argument form doubles as the manual smoke test.
+#
 # Requires: terminal-notifier  (brew install terminal-notifier)
 # Optional: jq  (for config/payload parsing); afplay/say are macOS builtins.
 #
@@ -86,18 +94,30 @@ if [ "$(_notify_audio_enabled)" = "false" ]; then
     SUPPRESS_VOICE=true
 fi
 
-# ── Parse hook payload ───────────────────────────────────────────────────────
-INPUT=$(cat)
-SID=$(/usr/bin/jq -r '.session_id // empty' <<<"$INPUT" 2>/dev/null)
-CWD=$(/usr/bin/jq -r '.cwd // empty'        <<<"$INPUT" 2>/dev/null)
+# ── Input: a hook payload on stdin, or (session id, cwd) as arguments ────────
+# Claude Code invokes this as a hook: JSON on stdin, no arguments. The
+# plugin's blocked-session reminder (spec 0017) re-invokes this *same* script
+# with the session id and cwd as positional arguments, so a repeat is the
+# identical notification — same phrase list, same chime, same banner — rather
+# than a near-duplicate with knobs of its own. Arguments are the discriminator
+# because Claude Code never passes any.
+if [ -n "${1:-}" ]; then
+    SID="$1"
+    CWD="${2:-}"
+    TRANSCRIPT=""
+else
+    INPUT=$(cat)
+    SID=$(/usr/bin/jq -r '.session_id // empty' <<<"$INPUT" 2>/dev/null)
+    CWD=$(/usr/bin/jq -r '.cwd // empty'        <<<"$INPUT" 2>/dev/null)
+    # PermissionRequest payloads usually carry transcript_path; the glob below
+    # covers an absent or stale one (same fallback as remind-session.sh), and
+    # is the only path when we were called with arguments.
+    TRANSCRIPT=$(/usr/bin/jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null)
+fi
 
 SESSION_URL=""
 [ -n "$SID" ] && SESSION_URL="${SCHEME}anthropic.claude-code/open?session=${SID}"
 
-# Locate the transcript for the name/summary lookup. PermissionRequest payloads
-# usually carry transcript_path; if absent or stale, glob by session id under
-# ~/.claude/projects/<slug>/<sid>.jsonl (same fallback as remind-session.sh).
-TRANSCRIPT=$(/usr/bin/jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null)
 if { [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; } && [ -n "$SID" ]; then
     case "$SID" in
         "" | *[!A-Za-z0-9_-]* ) : ;;   # ignore ids outside the safe glob alphabet

@@ -16,10 +16,13 @@ import re
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 from dataclasses import replace
 from pathlib import Path
 
-from _helpers import plugin, _make_session, isolate_mode_sidecars
+from _helpers import (
+    plugin, _make_session, isolate_mode_sidecars, isolate_state_dir,
+)
 
 _SID_A = "11111111-2222-3333-4444-555555555555"
 _SID_B = "66666666-7777-8888-9999-000000000000"
@@ -77,6 +80,13 @@ class _ConfigPatch(unittest.TestCase):
         # first — otherwise these tests would follow the developer's own
         # menu state instead of the value under test.
         isolate_mode_sidecars(self)
+        # The globalState parse is cached on (path, size, mtime_ns) so groups
+        # and the archive share one read per tick. Clear it around each test:
+        # two fixtures written a moment apart can otherwise collide.
+        plugin.sidecars._read_ide_globalstate_cached.cache_clear()
+        self.addCleanup(
+            plugin.sidecars._read_ide_globalstate_cached.cache_clear
+        )
         original = plugin.core.CONFIG
         plugin.core.CONFIG = replace(plugin.core.CONFIG, **overrides)
         self.addCleanup(lambda: setattr(plugin.core, "CONFIG", original))
@@ -422,6 +432,12 @@ class TestSubmenuMode(_ConfigPatch):
     """``submenu`` mode: one entry per group, sidebar order, state counters."""
 
     def setUp(self):
+        # These render the WHOLE menu, which reads every sidecar — including
+        # the real ``agent-state.bookmarks``. Without this the count of
+        # nested rows depends on whether the developer happens to have a
+        # session pinned, and the suite fails on their machine and nowhere
+        # else. (It did exactly that, mid-release.)
+        isolate_state_dir(self)
         self._config(ide_groups_mode="submenu")
 
     def _render(self, sessions):
@@ -657,3 +673,165 @@ class TestGroupingMenuNesting(unittest.TestCase):
             self.assertTrue(row.startswith("----"), row)
             # No leading spaces left over from the old flat layout.
             self.assertFalse(row.startswith("----  "), row)
+
+
+class TestReadIdeArchived(_ConfigPatch):
+    """``read_ide_archived`` — the sidebar's archive, mirrored read-only.
+
+    Same globalState file as the groups, a different key, and deliberately
+    *not* gated on ``ide_groups_mode``: grouping and archiving are two
+    features that happen to share one database.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def _db(self, blob, name="state.vscdb"):
+        return _write_db(self.tmp / name, blob)
+
+    def test_reads_archived_ids(self):
+        db = self._db({plugin.core.IDE_ARCHIVED_KEY: [_SID_A, _SID_B]})
+        self._config(ide_state_db_paths=(str(db),))
+        self.assertEqual(
+            plugin.sidecars.read_ide_archived(), {_SID_A, _SID_B}
+        )
+
+    def test_absent_key_yields_empty_set(self):
+        db = self._db(_groups_blob(_group()))
+        self._config(ide_state_db_paths=(str(db),))
+        self.assertEqual(plugin.sidecars.read_ide_archived(), set())
+
+    def test_non_list_value_yields_empty_set(self):
+        db = self._db({plugin.core.IDE_ARCHIVED_KEY: "not-a-list"})
+        self._config(ide_state_db_paths=(str(db),))
+        self.assertEqual(plugin.sidecars.read_ide_archived(), set())
+
+    def test_junk_and_remote_ids_are_dropped(self):
+        # Same allow-list as the groups: path traversal, spaces and the
+        # remote: prefix (cloud sessions with no transcript here) all go.
+        db = self._db({plugin.core.IDE_ARCHIVED_KEY: [
+            "../../etc/passwd", "a b", f"remote:{_SID_B}", 42, None, _SID_A,
+        ]})
+        self._config(ide_state_db_paths=(str(db),))
+        self.assertEqual(plugin.sidecars.read_ide_archived(), {_SID_A})
+
+    def test_capped_at_the_ceiling(self):
+        many = [f"sid-{i:05d}" for i in range(plugin.core.IDE_ARCHIVED_MAX + 25)]
+        db = self._db({plugin.core.IDE_ARCHIVED_KEY: many})
+        self._config(ide_state_db_paths=(str(db),))
+        self.assertEqual(
+            len(plugin.sidecars.read_ide_archived()),
+            plugin.core.IDE_ARCHIVED_MAX,
+        )
+
+    def test_corrupt_database_yields_empty_set(self):
+        db = self.tmp / "broken.vscdb"
+        db.write_bytes(b"this is not a sqlite file at all")
+        self._config(ide_state_db_paths=(str(db),))
+        self.assertEqual(plugin.sidecars.read_ide_archived(), set())
+
+    def test_missing_file_yields_empty_set(self):
+        self._config(ide_state_db_paths=(str(self.tmp / "nope.vscdb"),))
+        self.assertEqual(plugin.sidecars.read_ide_archived(), set())
+
+    def test_not_gated_on_grouping_mode(self):
+        # Turning grouping off must not silently disable the archive mirror.
+        db = self._db({plugin.core.IDE_ARCHIVED_KEY: [_SID_A]})
+        self._config(ide_groups_mode="off", ide_state_db_paths=(str(db),))
+        self.assertEqual(plugin.sidecars.read_ide_groups(), {})
+        self.assertEqual(plugin.sidecars.read_ide_archived(), {_SID_A})
+
+    def test_archives_from_several_editors_are_unioned(self):
+        db_a = self._db({plugin.core.IDE_ARCHIVED_KEY: [_SID_A]}, "a.vscdb")
+        db_b = self._db({plugin.core.IDE_ARCHIVED_KEY: [_SID_B]}, "b.vscdb")
+        self._config(ide_state_db_paths=(str(db_a), str(db_b)))
+        self.assertEqual(
+            plugin.sidecars.read_ide_archived(), {_SID_A, _SID_B}
+        )
+
+
+class TestArchivedSessionsFilter(_ConfigPatch):
+    """``collect_sessions`` hides archived rows — unless the bar's own
+    markers say otherwise (spec 0018)."""
+
+    def setUp(self):
+        import os
+        self._os = os
+        # Whole state directory: collect_sessions also scandirs ~/.claude for
+        # orphaned temp files, so a partial redirect still reaches real state.
+        self._tmpdir = isolate_state_dir(self)
+        self.projects = plugin.core.PROJECTS_DIR
+        self.sidecar = plugin.core.SIDECAR_PATH
+        self.bookmarks = plugin.core.BOOKMARKS_PATH
+        self.tags = plugin.core.TAGS_PATH
+        self.now = 1_700_000_000
+
+    def _transcript(self, sid):
+        project_dir = self.projects / f"-fake-{sid}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        jsonl = project_dir / f"{sid}.jsonl"
+        jsonl.write_bytes(b"")
+        self._os.utime(jsonl, (self.now - 30, self.now - 30))
+        existing = self.sidecar.read_text() if self.sidecar.exists() else ""
+        self.sidecar.write_text(
+            existing + f"{sid}\tidle\t{self.now - 30}\tStop\t/tmp\n",
+            encoding="utf-8",
+        )
+
+    def _archive_db(self, *sids):
+        return _write_db(
+            self._tmpdir / "state.vscdb",
+            {plugin.core.IDE_ARCHIVED_KEY: list(sids)},
+        )
+
+    def _ids(self):
+        return {s.id for s in plugin.collect_sessions(self.now)}
+
+    def test_archived_session_is_hidden(self):
+        self._transcript(_SID_A)
+        self._transcript(_SID_B)
+        db = self._archive_db(_SID_A)
+        self._config(hide_archived_sessions=True, ide_state_db_paths=(str(db),))
+        self.assertEqual(self._ids(), {_SID_B})
+
+    def test_bookmark_keeps_an_archived_session_visible(self):
+        self._transcript(_SID_A)
+        self.bookmarks.write_text(f"{_SID_A}\t{self.now}\n", encoding="utf-8")
+        db = self._archive_db(_SID_A)
+        self._config(hide_archived_sessions=True, ide_state_db_paths=(str(db),))
+        self.assertEqual(self._ids(), {_SID_A})
+
+    def test_tag_keeps_an_archived_session_visible(self):
+        self._transcript(_SID_A)
+        self.tags.write_text(f"{_SID_A}\tblue\n", encoding="utf-8")
+        db = self._archive_db(_SID_A)
+        self._config(hide_archived_sessions=True, ide_state_db_paths=(str(db),))
+        self.assertEqual(self._ids(), {_SID_A})
+
+    def test_knob_off_shows_everything(self):
+        self._transcript(_SID_A)
+        db = self._archive_db(_SID_A)
+        self._config(hide_archived_sessions=False, ide_state_db_paths=(str(db),))
+        self.assertEqual(self._ids(), {_SID_A})
+
+    def test_knob_off_opens_no_database(self):
+        # The knob gates the lookup, not just the filtering.
+        self._transcript(_SID_A)
+        db = self._archive_db(_SID_A)
+        self._config(
+            hide_archived_sessions=False,
+            ide_groups_mode="off",
+            ide_state_db_paths=(str(db),),
+        )
+        opened = []
+        original = sqlite3.connect
+
+        def spy(*args, **kwargs):
+            opened.append(args[0] if args else None)
+            return original(*args, **kwargs)
+
+        with unittest.mock.patch.object(sqlite3, "connect", side_effect=spy):
+            plugin.collect_sessions(self.now)
+        self.assertEqual(opened, [])

@@ -59,6 +59,7 @@ restart needed.
 | `notify_idle_interval_min` | `30` | Idle-session reminders. A finished session that sits 🟢 **green** (unread — you haven't clicked it) past this many minutes gets re-announced on the plugin tick (chime + spoken phrase + banner, like an awaiting prompt). Each subsequent reminder **doubles** the wait: 30, 60, 120, … minutes after the session finished. The number of reminders is bounded by how long the row stays green — `fresh_minutes` (default 60), after which it auto-fades to 🔵 and reminders stop — so the default 30-min start gives one reminder (at 30 min) within the green window; raise `fresh_minutes` for more. Clicking the session (or *Tools → Acknowledge all*) ends the schedule. `0` / `null` turns the feature off. Respects `quiet_hours` and the *Banner only* audio mode. See *Idle reminders* below. |
 | `notify_idle_phrases` | `["Don't forget me", "Still unread", "Pending review", "Your turn"]` | Phrases spoken aloud and shown in the banner for an idle-session reminder. One is chosen at random per reminder. |
 | `notify_sound_idle` | `"Submarine"` | Chime played on an idle-session reminder. Same value shapes as `notify_sound_stop`. Default `"Submarine"` is a soft ping, distinct from `Hero` (done) and `Funk` (awaiting). |
+| `notify_blocked_interval_min` | `10` | **Repeats** of the permission-prompt notification. `notify-wait.sh` announces a prompt once, on the event; miss that banner and the agent stands blocked until you look. While a session stays 🔴 waiting, the plugin re-fires **the same notification** — same `notify_wait_phrases`, same `notify_sound_wait`, same ❓ banner — first after this many minutes, then at doubling intervals: 10, 30, 70, 150, … Nothing bounds this the way `fresh_minutes` bounds the idle reminder, so the doubling is the bound. Answering the prompt ends it. `0` / `null` means "announce once, never repeat"; `notify_on_wait: false` silences the first announcement and the repeats with it. Shorter default than `notify_idle_interval_min` because a blocked agent costs throughput, not just freshness. See *Blocked reminders* below. |
 | `usage_monitor` | `"on"` | **Master switch** for the whole subscription-usage feature (spec 0011): the periodic fetch of the account's live `rate_limits`, the two usage lines, and the threshold alerts. `"on"` (default — works out of the box) or `"off"`. The plugin asks the `claude` CLI over the SDK control protocol (`get_usage`); the call runs no inference and spends no quota, which is why there's no menu toggle any more. See *Subscription usage* below. |
 | `usage_fetch_interval_min` | `3` | Minutes between usage fetches. Account-wide numbers on a 5-hour window, so a few minutes is plenty. Floored at 1. A fresher `cachedUsageUtilization` in `~/.claude.json` is used instead, spawning nothing. |
 | `notify_on_usage` | `true` | **Sub-flag** of `usage_monitor`: the threshold alerts. With the feature on and this true (default), a one-shot notification fires when the 5-hour window first crosses 50/60/70/80/90 % (a *"you've hit N%"* banner), plus a distinct critical alert at 95 %. Honors `quiet_hours` and *Banner only*. Set `false` to keep the usage lines but silence the alerts. |
@@ -73,8 +74,9 @@ restart needed.
 | `keep_awake` | `"off"` | First-launch keep-awake mode. `"off"` (default), `"auto"` (`caffeinate -i` while any session is *working*), `"always"` (until disabled). Once you click a mode in *Tools → Keep awake* the sidecar takes precedence — this knob is only consulted on a clean install. See *Keep awake* below for limits. |
 | `multi_workspace_mode` | `true` | Raise the editor window that owns a clicked session before firing the deeplink, so it lands in the right window even with several windows / a multi-root workspace open. Set to `false` for the snappy single-window path: clicks fire the deeplink directly (instant, no extra tab) but land in whatever window is frontmost. See *Multi-workspace focus* below. |
 | `editor_focus_settle_sec` | `0.1` | Only used when `multi_workspace_mode` is `true`. Seconds to wait after raising the window before firing the deeplink, so the anchor tab renders and the resumed chat lands on top of it. Lower trims latency but risks landing on the file under load; `0` skips the wait. Range `0..5`. |
-| `ide_groups_mode` | `"inline"` | How the session **groups** made in the IDE sidebar (Claude Code extension 2.1.241+) are shown. `"submenu"`: one entry per group, in the sidebar's order, with per-state counters (`🟡 🟢2 · Backend`); its sessions live inside, ungrouped ones follow below. `"inline"` (default): flat list with the group name prefixing the row title. `"off"`: no grouping, and the editor database isn't opened at all. Read-only in every mode — renaming and moving stay in the editor. See *IDE session groups* below. |
-| `ide_state_db_paths` | `[]` | Explicit paths to the editors' `state.vscdb` files, overriding autodetection. Empty (default) probes the known editors, leading with the one matching `editor_url_scheme`. Set it when your editor lives somewhere non-standard, or to pin the lookup to a single install. Ignored when `ide_groups_mode` is `"off"`. |
+| `ide_groups_mode` | `"inline"` | How the session **groups** made in the IDE sidebar (Claude Code extension 2.1.241+) are shown. `"submenu"`: one entry per group, in the sidebar's order, with per-state counters (`🟡 🟢2 · Backend`); its sessions live inside, ungrouped ones follow below. `"inline"` (default): flat list with the group name prefixing the row title. `"off"`: no grouping, and no group lookup. Note this no longer implies the editor database stays shut — `hide_archived_sessions` reads the same file for the sidebar's archive; set both off to leave it alone. Read-only in every mode — renaming and moving stay in the editor. See *IDE session groups* below. |
+| `ide_state_db_paths` | `[]` | Explicit paths to the editors' `state.vscdb` files, overriding autodetection. Empty (default) probes the known editors, leading with the one matching `editor_url_scheme`. Set it when your editor lives somewhere non-standard, or to pin the lookup to a single install. Ignored only when *both* `ide_groups_mode` is `"off"` and `hide_archived_sessions` is `false`, since either feature on its own opens the file. |
+| `hide_archived_sessions` | `true` | Mirror the Claude Code sidebar's **archive**: a session you archived there drops out of the menu too. One exception — a session carrying a **tag** or a **bookmark** stays visible regardless, because those are the bar's own markers and setting one is an explicit "keep this in front of me"; that is also the escape hatch, one click away and needing no config edit. `false` shows everything and skips the lookup. Read-only, like the groups: archive and unarchive in the editor. See *Archived sessions* below. |
 | `terminal_app` | `"auto"` | Terminal emulator used when you click a session that runs **in a terminal** (marked `❯` on the row). `"auto"` drives iTerm2 when it's installed and macOS Terminal otherwise; force one with `"Terminal"` or `"iTerm"`. Editor sessions are unaffected — they still open by deeplink. See *Terminal sessions* below. |
 
 Fractional values are accepted where they make sense — e.g.
@@ -150,14 +152,22 @@ reminder schedule ends).
 
 | | **Stop** (done) | **Awaiting** (blocked) | **Idle** (unread) |
 |---|---|---|---|
-| **Trigger** | `Stop` hook — session finished | `PermissionRequest` hook — tool-approval prompt | plugin tick — green & unread past the interval |
+| **Trigger** | `Stop` hook — session finished | `PermissionRequest` hook — tool-approval prompt, then repeated on the plugin tick while it stands | plugin tick — green & unread past the interval |
 | **Banner line 1** | session `ai-title` | `❓ <phrase>` | `⚠️ <phrase>` |
 | **Banner line 2** | `<project> — <icon> <branch>` | ← same | ← same |
 | **Banner line 3** | summary (else phrase) | `name — summary` | `name — summary` |
 | **Spoken (`say`)** | phrase → summary | phrase → name → summary | phrase → name → summary |
 | **Chime** | `Hero` (`notify_sound_stop`) | `Funk` (`notify_sound_wait`) | `Submarine` (`notify_sound_idle`) |
 | **Phrases** | `notify_phrases` | `notify_wait_phrases` | `notify_idle_phrases` |
-| **Off switch** | `notify_on_stop: false` | `notify_on_wait: false` | `notify_idle_interval_min: 0` |
+| **Off switch** | `notify_on_stop: false` | `notify_on_wait: false` (repeats alone: `notify_blocked_interval_min: 0`) | `notify_idle_interval_min: 0` |
+
+**Awaiting repeats itself.** The permission prompt is the only one that
+fires twice from the same column: once on the hook event, then again from
+the plugin tick while nobody answers. It is deliberately the *same*
+notification — the plugin re-runs `notify-wait.sh` with the session id as
+an argument instead of a payload — so a repeat is indistinguishable from
+the original rather than a near-duplicate with knobs of its own. Cadence
+under *Blocked reminders* below.
 
 Reading across the rows:
 
@@ -175,10 +185,11 @@ Reading across the rows:
   module").
 
 Stop alone has a `notify_threshold_sec` (30 s) floor so quick one-liners
-stay silent; awaiting and idle have none. Idle isn't a Claude Code event —
-it rides the plugin tick on a doubling schedule (20 → 40 → … min); its
-mechanics are under *Idle reminders* below. All three obey `quiet_hours`
-and the *Banner only* mode (`notify_audio`).
+stay silent; the other two have none. The idle reminder and the awaiting
+repeat aren't Claude Code events — they ride the plugin tick on a doubling
+schedule (30 → 60 → … min and 10 → 30 → … min respectively); their
+mechanics are under *Idle reminders* and *Blocked reminders* below. All of
+them obey `quiet_hours` and the *Banner only* mode (`notify_audio`).
 
 **Why two knobs, not one.** Stop notifications are most useful for
 long turns and noisy for quick one-liners — that's what
@@ -261,6 +272,86 @@ The feature is on by default at 30 minutes.
 Quiet hours and the *Banner only* audio mode apply exactly as they do to
 the other notifications. Progress is tracked in the
 `~/.claude/agent-state.idle-reminders` sidecar.
+
+## Blocked reminders
+
+The 🔴 twin of the idle reminder, and the more expensive silence of the
+two. `notify-wait.sh` announces a permission prompt **once**, when Claude
+hits it. Be on another screen at that moment and nothing tells you again —
+the agent stands on the prompt until you happen to glance at the menu bar.
+An unread finished session costs you latency; a blocked one costs you
+throughput.
+
+**It is the same notification, repeated.** Not a variant: the plugin
+re-runs `notify-wait.sh` itself, passing the session id and cwd as
+arguments instead of a hook payload. Same `notify_wait_phrases`, same
+`notify_sound_wait`, same ❓ banner, same click target. There is
+deliberately no second phrase list or chime to configure — a repeat that
+looked different would just be a second thing to tune.
+
+**The schedule.** Doubling, anchored on the moment the session entered
+`waiting`:
+
+| Repeat | Due at (default 10 min) |
+|---|---|
+| 1st | 10 min |
+| 2nd | 30 min |
+| 3rd | 1 h 10 m |
+| 4th | 2 h 30 m |
+| 5th | 5 h 10 m |
+
+**Nothing bounds it but the doubling.** The idle reminder ends when the row
+leaves the green window; a permission prompt has no such ceiling, so the
+schedule has to thin itself out — five repeats cover the first five hours,
+the sixth lands four hours after that.
+
+The default is **10 minutes**, deliberately shorter than the idle
+reminder's 30.
+
+**Only a real prompt counts.** Two Claude Code events put a row into
+🔴 waiting — `PermissionRequest` and `Notification` — and the second one
+also fires when the prompt has merely been idle a while. Only the first
+gets the original announcement, so only the first gets repeats; otherwise
+the bar would nag you about a session nobody is blocked on.
+
+**Stopping them.** Answer the prompt. The session leaves `waiting` and its
+row drops out of the sidecar on the next tick. A session that answers one
+prompt and hits another starts over — the anchor is the start of *this*
+waiting episode, not the session's last event.
+
+**Turning it off.** `notify_blocked_interval_min: 0` keeps the first
+announcement and drops the repeats. `notify_on_wait: false` silences both.
+
+Quiet hours and *Banner only* apply as everywhere else. Progress is tracked
+in `~/.claude/agent-state.blocked-reminders` — a separate file from the idle
+one, so switching either feature off doesn't disturb the other's state. See
+[spec 0017](specs/0017-blocked-reminders.md).
+
+## Archived sessions
+
+Archive a session in the Claude Code sidebar and it leaves the editor's
+list. The bar mirrors that: the row goes too.
+
+**One exception, and it's the escape hatch.** A session carrying a
+**tag** or a **bookmark** stays visible no matter what the sidebar says.
+Those are the bar's own markers — the extension doesn't know they exist —
+so setting one is an explicit *keep this in front of me*, made here. If a
+session vanishes from the menu and you want it back, tag it; no config edit
+needed.
+
+The rule applies to everything else unconditionally, including a session
+that is still 🟡 working or 🔴 waiting. Notifications are unaffected: they
+travel a different path, so a banner still arrives and its click still
+lands in the session.
+
+**Turning it off.** `hide_archived_sessions: false` shows everything and
+skips the lookup entirely.
+
+Read-only, like the groups: archive and unarchive in the editor. The data
+lives in the same globalState database under `hiddenSessionIds`, and it is
+*not* gated on `ide_groups_mode` — the two features merely share a file. A
+missing, locked or corrupt database means nothing is hidden. See
+[spec 0018](specs/0018-archived-sessions.md).
 
 ## Subscription usage
 
@@ -807,8 +898,8 @@ Custom voice lines, no chime on quick turns, banner only on permission prompts:
 
 ## Files on disk
 
-Five sidecar files live under `~/.claude/`, maintained by the plugin
-and its hook/action scripts:
+Sidecar files live under `~/.claude/`, maintained by the plugin and its
+hook/action scripts:
 
 | File | Writer(s) | Purpose |
 |---|---|---|
@@ -817,9 +908,17 @@ and its hook/action scripts:
 | `agent-state.clicks` | `hooks/record-click.sh` (shared writer, via `bin/open-session.sh` row click and `hooks/raise-and-open.sh` banner click), `bin/ack-session.sh`, `bin/ack-fresh.sh` via plugin | `{session_id: click_ts}` — drives 🟢 → 🔵 promotion. |
 | `agent-state.dismiss` | `bin/forget-sessions.sh` | Single timestamp; sessions whose latest activity is at or before it are hidden. |
 | `agent-state.forget` | `bin/forget-session.sh`, plugin (gc) | `{session_id: forget_ts}` — per-row cutoff. Scoped variant of `agent-state.dismiss`. |
+| `agent-state.bookmarks` | `bin/app/bookmark-set.sh`, plugin (gc) | `{session_id: bookmarked_at}` — pinned sessions, which survive the render window and stay visible when archived. |
+| `agent-state.tags` | `bin/app/tag-set.sh`, plugin (gc) | `{session_id: color_key}` — one Finder-style colour per tagged session; like a bookmark, it keeps an archived session visible. |
 | `agent-state.quiet-until` | `bin/quiet-pause.sh`, `bin/quiet-resume.sh` | Single naive ISO-8601 local timestamp — ad-hoc quiet-hours pause deadline. Absent / past / unparseable = not paused. |
 | `agent-state.quiet-bypass-until` | `bin/quiet-bypass.sh`, `bin/quiet-bypass-cancel.sh` | Single naive ISO-8601 local timestamp — opt-in bypass of the scheduled quiet window. Auto-expires at the end of the current window. Pause wins when both are held. |
 | `agent-state.keep-awake.mode` | `bin/keep-awake-set.sh` (via plugin) | One line, `off` / `auto` / `always`. Takes precedence over the `keep_awake` config knob once written. |
+| `agent-state.ai-titles.tsv` | plugin (render tick) | `{session_id: (scanned_size, ai_title)}` — caches the title recovered by a full transcript scan, for sessions whose `ai-title` event sits outside both the head and tail windows. Pure derived data: deleting it costs one re-scan per session, nothing else. |
+| `agent-state.idle-reminders` | plugin (render tick) | `{session_id: (stop_ts, fired_count)}` — escalation progress for the 🟢 idle reminders. Rebuilt each tick; a session that leaves the green group drops out. |
+| `agent-state.blocked-reminders` | plugin (render tick) | Same shape for the 🔴 blocked reminders, keyed on when the session entered `waiting`. Deliberately a separate file so either feature can be switched off without disturbing the other. |
+| `agent-state.usage` | plugin (usage fetch) | One row with the account's 5-hour and 7-day utilization and their reset times. |
+| `agent-state.usage-alerts` | plugin (render tick) | `<window_key>\t<max_threshold_fired>` — which usage threshold has already been announced for the current 5-hour window. |
+| `agent-state.usage.fetch` | plugin (render tick) | Unix timestamp of the last usage fetch, written *before* it starts so a hung fetch can't spawn a second one. |
 | `agent-state.caffeinate` | plugin reconcile loop | Single decimal PID of the detached `caffeinate -i` we hold. Cleared on stop / teardown. |
 
 `uninstall.sh` leaves these in place — delete them manually if you

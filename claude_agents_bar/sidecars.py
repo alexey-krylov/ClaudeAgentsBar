@@ -418,6 +418,15 @@ def _idle_reminders_lock(timeout_sec: float = 2.0):
     return _mkdir_lock(core._IDLE_REMINDERS_LOCK_DIR, timeout_sec)
 
 
+def _blocked_reminders_lock(timeout_sec: float = 2.0):
+    """Mutex on ``agent-state.blocked-reminders`` — the 🔴 twin of
+    :func:`_idle_reminders_lock`, held by
+    :func:`idle_reminders.reconcile_blocked` for the same reason: two
+    overlapping SwiftBar ticks must not both decide the same escalation step
+    is due."""
+    return _mkdir_lock(core._BLOCKED_REMINDERS_LOCK_DIR, timeout_sec)
+
+
 def _usage_alerts_lock(timeout_sec: float = 2.0):
     """Mutex on ``agent-state.usage-alerts``. Only the plugin tick writes it,
     but SwiftBar runs the plugin concurrently (scheduled tick + hook-fired
@@ -819,14 +828,75 @@ def read_ide_groups() -> dict[str, str]:
     return out
 
 
+def read_ide_archived() -> set[str]:
+    """Session ids the user **archived** in the Claude Code sidebar (spec 0018).
+
+    Same globalState blob as :func:`read_ide_groups`, different key
+    (:data:`core.IDE_ARCHIVED_KEY`) — and deliberately *not* gated on
+    :func:`core.ide_groups_mode`: grouping and archiving are two features that
+    happen to share a file. The gate here is
+    :attr:`core.Config.hide_archived_sessions`, checked by the caller in
+    :func:`render.collect_sessions`, which is also where the tag / bookmark
+    exemption lives.
+
+    The list is global rather than per-workspace, so every probed editor's
+    archive folds into one set. Each id is checked against
+    :data:`core._SESSION_ID_RE` — that both drops junk and discards the
+    ``remote:``-prefixed cloud sessions, which have no transcript here — and
+    the total is capped at :data:`core.IDE_ARCHIVED_MAX`.
+
+    Fail-soft at every step, like :func:`read_ide_groups`: the worst case is
+    an empty set and a menu that renders exactly as it did before the feature
+    existed. Never raises.
+    """
+    out: set[str] = set()
+    for db in _ide_state_db_paths():
+        blob = _read_ide_globalstate(db)
+        if not blob:
+            continue
+        ids = blob.get(core.IDE_ARCHIVED_KEY)
+        if not isinstance(ids, list):
+            continue
+        # Slice before iterating: capping the *output* alone would still walk
+        # a ten-million-element list of junk to completion, on the render tick.
+        for sid in ids[: core.IDE_ARCHIVED_MAX]:
+            if len(out) >= core.IDE_ARCHIVED_MAX:
+                return out
+            if isinstance(sid, str) and core._SESSION_ID_RE.match(sid):
+                out.add(sid)
+    return out
+
+
 def _read_ide_globalstate(db: Path) -> dict:
     """Return the extension's globalState blob from one database, or ``{}``.
+
+    Two features read this blob on the same tick — the session groups and the
+    archive — so the parse is cached on the file's identity
+    (:func:`_read_ide_globalstate_cached`) and the second caller pays nothing.
+
+    **Callers must treat the result as read-only.** It is the cached object,
+    not a copy; mutating it would poison the other reader.
+    """
+    try:
+        st = db.stat()
+    except OSError:
+        return {}
+    return _read_ide_globalstate_cached(str(db), st.st_size, st.st_mtime_ns)
+
+
+@functools.lru_cache(maxsize=8)
+def _read_ide_globalstate_cached(
+    db_str: str, size: int, mtime_ns: int
+) -> dict:
+    """Backing store for :func:`_read_ide_globalstate`.
 
     Opened read-only (``mode=ro``) with a short timeout: the editor may hold
     the file while running, and the menu can't afford to block on someone
     else's writer. A missing table or a value that isn't a JSON object is
-    treated the same as a missing file.
+    treated the same as a missing file. Keyed on the filesystem identity, so
+    an edit by the editor invalidates the entry naturally.
     """
+    db = Path(db_str)
     if not db.is_file():
         return {}
     # Percent-encode the path: "Application Support" has a space, and a "?"
@@ -918,18 +988,20 @@ def _parse_ide_groups(blob: dict) -> dict[str, str]:
     return out
 
 
-def read_idle_reminders() -> dict[str, tuple[int, int]]:
-    """Load the idle-reminders sidecar into ``{sid: (stop_ts, fired_count)}``.
+def _read_reminders(path: Path) -> dict[str, tuple[int, int]]:
+    """Load a reminder sidecar into ``{sid: (episode_ts, fired_count)}``.
 
-    Three-column TSV (``sid\tstop_ts\tfired_count``). A row missing a
-    column or with non-integer numbers is dropped silently — same
+    Three-column TSV (``sid\tepisode_ts\tfired_count``), shared by the 🟢
+    idle and 🔴 blocked reminders — the two differ only in which moment
+    ``episode_ts`` pins (the Stop, or the start of the waiting episode). A row
+    missing a column or with non-integer numbers is dropped silently — same
     fail-open stance as :func:`read_clicks`; the worst case is one extra
     reminder, never a crashed menu.
     """
-    if not core.IDLE_REMINDERS_PATH.exists():
+    if not path.exists():
         return {}
     try:
-        raw = core.IDLE_REMINDERS_PATH.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
     out: dict[str, tuple[int, int]] = {}
@@ -939,57 +1011,82 @@ def read_idle_reminders() -> dict[str, tuple[int, int]]:
             continue
         sid = parts[0]
         try:
-            stop_ts = int(parts[1])
+            episode_ts = int(parts[1])
             fired = int(parts[2])
         except ValueError:
             continue
-        out[sid] = (stop_ts, fired)
+        out[sid] = (episode_ts, fired)
     return out
 
 
-def write_idle_reminders(state: dict[str, tuple[int, int]]) -> None:
-    """Atomically replace the idle-reminders sidecar with ``state``.
+def _write_reminders_locked(
+    path: Path, state: dict[str, tuple[int, int]], label: str
+) -> None:
+    """Atomically replace a reminder sidecar — **without** taking its lock.
 
-    Full rewrite (the map is tiny — one row per pending 🟢 session) under
-    :func:`_idle_reminders_lock`, via a tmp file + ``replace`` like
-    :func:`ack_fresh`. An empty ``state`` removes the file so a quiet
-    machine leaves no sidecar behind. Best-effort: any OSError is logged
-    and swallowed so a write failure never takes the menu down.
+    Both reconcilers hold their lock across the whole read→decide→fire→write
+    so two overlapping SwiftBar ticks can't both observe the same ``fired``
+    count and fire the same reminder twice (a double banner + double speech).
+    The mkdir lock is not reentrant, so they write through this unlocked
+    variant rather than the public wrappers.
+
+    An empty ``state`` removes the file, so a quiet machine leaves no sidecar
+    behind. Best-effort: any OSError is logged under ``label`` and swallowed,
+    so a write failure never takes the menu down.
     """
+    if not state:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return
+    lines = [f"{sid}\t{episode}\t{fired}" for sid, (episode, fired) in state.items()]
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        _warn(f"{label} write failed: {exc}")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def read_idle_reminders() -> dict[str, tuple[int, int]]:
+    """Idle-reminder progress as ``{sid: (stop_ts, fired_count)}`` (spec 0008)."""
+    return _read_reminders(core.IDLE_REMINDERS_PATH)
+
+
+def write_idle_reminders(state: dict[str, tuple[int, int]]) -> None:
+    """Atomically replace the idle-reminders sidecar with ``state``."""
     with _idle_reminders_lock():
         _write_idle_reminders_locked(state)
 
 
 def _write_idle_reminders_locked(state: dict[str, tuple[int, int]]) -> None:
-    """Body of :func:`write_idle_reminders` **without** acquiring the lock.
+    """Body of :func:`write_idle_reminders` without acquiring the lock."""
+    _write_reminders_locked(core.IDLE_REMINDERS_PATH, state, "idle-reminders")
 
-    :func:`idle_reminders.reconcile` holds :func:`_idle_reminders_lock` across
-    the whole read→decide→fire→write so two overlapping SwiftBar ticks can't
-    both observe the same ``fired`` count for a 🟢 session and fire the same
-    reminder twice (a double banner + double speech). The mkdir lock is not
-    reentrant, so that caller writes through this unlocked variant rather than
-    :func:`write_idle_reminders`.
-    """
-    if not state:
-        try:
-            core.IDLE_REMINDERS_PATH.unlink()
-        except OSError:
-            pass
-        return
-    lines = [f"{sid}\t{stop_ts}\t{fired}" for sid, (stop_ts, fired) in state.items()]
-    tmp = core.IDLE_REMINDERS_PATH.with_suffix(
-        core.IDLE_REMINDERS_PATH.suffix + f".{os.getpid()}.tmp"
+
+def read_blocked_reminders() -> dict[str, tuple[int, int]]:
+    """Blocked-reminder progress as ``{sid: (waiting_since, fired_count)}``
+    (spec 0017)."""
+    return _read_reminders(core.BLOCKED_REMINDERS_PATH)
+
+
+def write_blocked_reminders(state: dict[str, tuple[int, int]]) -> None:
+    """Atomically replace the blocked-reminders sidecar with ``state``."""
+    with _blocked_reminders_lock():
+        _write_blocked_reminders_locked(state)
+
+
+def _write_blocked_reminders_locked(state: dict[str, tuple[int, int]]) -> None:
+    """Body of :func:`write_blocked_reminders` without acquiring the lock."""
+    _write_reminders_locked(
+        core.BLOCKED_REMINDERS_PATH, state, "blocked-reminders"
     )
-    try:
-        core.IDLE_REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        tmp.replace(core.IDLE_REMINDERS_PATH)
-    except OSError as exc:
-        _warn(f"idle-reminders write failed: {exc}")
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
 
 
 def read_usage() -> core.Usage | None:
@@ -1252,11 +1349,10 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
         pass
     if not ai_title:
         # The first ``ai-title`` sat past the head-scan window (bloated
-        # early events). Claude Code re-emits it every turn, so the tail
-        # almost always still carries a fresh one — far steadier than
-        # letting the row fall through to the sliding user-prompt sources,
-        # which visibly flap as tool output pushes the latest prompt out of
-        # the tail window.
+        # early events). When Claude Code re-emits it on later turns the
+        # tail still carries a fresh one — far steadier than letting the row
+        # fall through to the sliding user-prompt sources, which visibly flap
+        # as tool output pushes the latest prompt out of the tail window.
         ai_title = _latest_tail_ai_title(jsonl_path)
     # Unlike ai-title we take the *latest* custom-title, not the first: a
     # rename is deliberate and can happen twice, and the editor shows the
@@ -1265,6 +1361,13 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     # otherwise pin the *first* rename forever). Cheap: same cached buffer the
     # ai-title fallback and last-user-message reader already walk.
     custom_title = _latest_tail_custom_title(jsonl_path)
+    if not ai_title and not custom_title:
+        # Neither window found the event, and there is no manual rename to
+        # show instead: recover the title with a cached full-file scan. The
+        # event is written once, past the head window, in any session whose
+        # first turn is large — so without this the row falls through to a
+        # user prompt and stops matching the editor sidebar.
+        ai_title = cached_ai_title(jsonl_path)
     # Opt-in (default off): the menu shows ai-title unless the user asks for
     # the marker name. When off we skip the parse entirely — keeps the tick
     # cheap and the title consistent with what VSCode shows.
@@ -1351,6 +1454,154 @@ def _latest_tail_ai_title(jsonl_path: Path) -> str:
         if title is not None and title.strip():
             last = title
     return last
+
+
+def _ai_titles_lock():
+    """Mutex on :data:`core.AI_TITLES_PATH` — same scheme as the other sidecars."""
+    return _mkdir_lock(core._AI_TITLES_LOCK_DIR)
+
+
+@functools.lru_cache(maxsize=1)
+def _read_ai_titles() -> tuple[tuple[str, int, str], ...]:
+    """Load the ai-title cache as ``((sid, scanned_size, title), …)``.
+
+    Insertion order is preserved so :func:`_write_ai_titles` can trim the
+    oldest rows. Returns an empty tuple when the sidecar is absent or
+    unreadable — the caller then pays for a scan, never an error. Cached for
+    the process lifetime: one tick reads the file once.
+    """
+    try:
+        raw = core.AI_TITLES_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    rows: list[tuple[str, int, str]] = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        sid = parts[0]
+        if not _is_valid_session_id(sid):
+            continue
+        try:
+            scanned = int(parts[1])
+        except ValueError:
+            continue
+        rows.append((sid, scanned, "\t".join(parts[2:])))
+    return tuple(rows)
+
+
+def _write_ai_titles(rows: tuple[tuple[str, int, str], ...]) -> bool:
+    """Atomically replace the ai-title cache with ``rows``; ``True`` on success.
+
+    Tmp file + ``replace`` under :func:`_ai_titles_lock`, like
+    :func:`write_idle_reminders`. Trimmed to :data:`core.AI_TITLES_MAX_ROWS`
+    from the tail (newest wins). Best-effort: a write failure is logged and
+    swallowed, costing a re-scan and nothing else — but it is *reported*, so
+    the caller can leave its in-process cache alone rather than invalidate it
+    for a file that never changed.
+
+    Every title is whitespace-collapsed first. The row is line- and
+    tab-delimited and the title is the last field, so an embedded tab is
+    harmless (:func:`_read_ai_titles` rejoins them) but an embedded **newline**
+    would end the row early and let the rest of the string masquerade as a
+    cache entry for a *different* session id — which would then render in that
+    session's menu row. An ``aiTitle`` is model-generated from conversation
+    content, so it is not a string we get to trust.
+    """
+    rows = tuple(
+        (sid, scanned, " ".join(title.split())) for sid, scanned, title in rows
+    )
+    rows = rows[-core.AI_TITLES_MAX_ROWS :]
+    lines = [f"{sid}\t{scanned}\t{title}" for sid, scanned, title in rows]
+    tmp = core.AI_TITLES_PATH.with_suffix(
+        core.AI_TITLES_PATH.suffix + f".{os.getpid()}.tmp"
+    )
+    try:
+        with _ai_titles_lock():
+            core.AI_TITLES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            tmp.replace(core.AI_TITLES_PATH)
+    except OSError as exc:
+        _warn(f"ai-titles write failed: {exc}")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def _full_scan_ai_title(jsonl_path: Path) -> str:
+    """Return the first ``ai-title`` anywhere in the transcript, or ``""``.
+
+    Walks the file line by line with no byte ceiling and stops at the first
+    hit, so the usual cost is the head up to that event. Only reached through
+    :func:`cached_ai_title`, which makes it a once-per-session expense.
+    """
+    try:
+        with jsonl_path.open("rb") as f:
+            for raw in f:
+                if b'"type":"ai-title"' not in raw:
+                    continue
+                title = _parse_ai_title(raw)
+                if title is not None and title.strip():
+                    return title.strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _rescan_threshold(size: int) -> int:
+    """How much a title-less transcript must grow before we scan it again.
+
+    A miss costs a full read, so the flat :data:`core.AI_TITLE_RESCAN_BYTES`
+    floor is the wrong shape on its own: a 100 MB transcript that will never
+    carry an ``ai-title`` would pay 100 MB every time it grew by 512 KB, which
+    on an active session is every few minutes. Scaling with the file keeps the
+    amortised cost roughly constant — a quarter of the file per re-scan — while
+    the floor keeps a young session responsive, since its title usually
+    appears within the first turn or two.
+    """
+    return max(core.AI_TITLE_RESCAN_BYTES, size // 4)
+
+
+def cached_ai_title(jsonl_path: Path) -> str:
+    """Return the transcript's ``ai-title``, scanning the whole file once.
+
+    Last resort behind the head window and the tail fallback: the event sits
+    past :data:`core.JSONL_TITLE_SCAN_BYTES` in any session whose first turn
+    is large, and modern Claude Code writes it exactly once, so neither
+    window sees it and the row would otherwise fall through to a user prompt.
+
+    A hit is cached for the life of the transcript (the title is immutable
+    within a session). A miss is re-scanned only after the file has grown by
+    :func:`_rescan_threshold`, which covers the young session whose title has
+    not been generated yet without paying for a full scan per tick.
+    """
+    sid = jsonl_path.stem
+    if not _is_valid_session_id(sid):
+        return ""
+    try:
+        size = jsonl_path.stat().st_size
+    except OSError:
+        return ""
+    rows = _read_ai_titles()
+    for cached_sid, scanned, title in rows:
+        if cached_sid != sid:
+            continue
+        if title:
+            return title
+        if size - scanned < _rescan_threshold(size):
+            return ""
+        break
+    title = _full_scan_ai_title(jsonl_path)
+    kept = tuple(row for row in rows if row[0] != sid)
+    if _write_ai_titles(kept + ((sid, size, title),)):
+        # Only invalidate when the file actually changed. Clearing after a
+        # failed write would make every title-less session re-scan in full on
+        # every tick — the exact cost this cache exists to avoid.
+        _read_ai_titles.cache_clear()
+    return title
 
 
 #: Divider between the session name and the spoken summary inside a marker
@@ -1714,69 +1965,6 @@ def last_tool_use_summary(jsonl_path: Path) -> str:
             if summary:
                 last_summary = summary
     return last_summary
-
-
-def read_subagent_meta(meta_path: Path) -> dict | None:
-    """Return the parsed ``agent-<id>.meta.json`` for a subagent, or ``None``.
-
-    Claude Code writes a tiny sibling JSON next to every subagent
-    transcript carrying the ``Task`` tool's ``description`` (the short
-    human-readable summary the parent passed) and ``agentType``. Both
-    are pre-resolved by the runtime, so reading the meta file is much
-    cheaper than walking the subagent's JSONL for the first user
-    message. Fail-soft like every other reader in this module.
-    """
-    try:
-        raw = meta_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    return data
-
-
-def count_tool_uses(jsonl_path: Path) -> int:
-    """Return the number of ``tool_use`` chunks across the whole transcript.
-
-    Subagent transcripts are small (typically a few KB — one Task does
-    one job and returns), so a full-file scan is cheap and gives us
-    correct totals rather than the tail-bound approximation
-    :func:`last_tool_use_summary` settles for. Used only for the
-    subagent rollup; the parent's render path stays tail-only.
-
-    Fails soft to ``0`` on missing / unreadable files so the menu still
-    renders something.
-    """
-    count = 0
-    try:
-        with jsonl_path.open("rb") as f:
-            for raw in f:
-                # Cheap pre-filter: skip the JSON parse entirely on lines
-                # that can't possibly carry a tool_use. The string match
-                # is a strict subset of valid tool_use lines, so any line
-                # missing it has zero of them.
-                if b'"type":"tool_use"' not in raw:
-                    continue
-                try:
-                    event = json.loads(raw)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                message = event.get("message")
-                if not isinstance(message, dict):
-                    continue
-                content = message.get("content")
-                if not isinstance(content, list):
-                    continue
-                for chunk in content:
-                    if isinstance(chunk, dict) and chunk.get("type") == "tool_use":
-                        count += 1
-    except OSError:
-        return 0
-    return count
 
 
 def last_session_model(jsonl_path: Path) -> str | None:

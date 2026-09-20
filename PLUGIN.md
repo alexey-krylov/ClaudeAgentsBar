@@ -41,7 +41,8 @@ these sources:
 1. The JSONL transcripts Claude Code already writes (titles, cwd).
    - **Session title sourcing** (priority order):
      - `session_title` — the **name** field of the last response's two-field marker line `*-- Name - Summary*` (prefix = `notify_summary_marker`, default `-- `; name/summary split on the first `" - "`). **Opt-in via `use_session_titles_for_menubar` (default off).** When off, `read_transcript_meta` skips the per-tick parse and leaves this empty, so the menu shows `ai_title` — the same label VSCode displays. When on, the parse runs at render time (still gated on `notify_summary_marker`, byte-prefiltered to assistant lines, so it's cheap). The prefix + divider are split identically in `sidecars._parse_marker_line` and `hooks/_notify-common.sh`. Note: the marker is parsed for the *spoken* notifications regardless of this knob (the hooks do it in Bash) — the toggle only affects the menu title.
-     - `ai_title` — Claude Code's auto-generated conversation summary (event type `ai-title`). The **menu default**; a single-field marker (`*-- Summary*`, no name) or the opt-in being off both fall through to this.
+     - `custom_title` — a manual rename in the IDE (event type `custom-title`). Read **latest-from-tail**, not head-first: a session can be renamed twice and the editor sidebar shows the newest name. An empty `customTitle` (rename cleared) falls through.
+     - `ai_title` — Claude Code's auto-generated conversation summary (event type `ai-title`). The **menu default**; a single-field marker (`*-- Summary*`, no name) or the opt-in being off both fall through to this. Found in three widening steps: the head scan (first `JSONL_TITLE_SCAN_BYTES`), then the cached tail buffer, then — only when there is no `custom_title` to show instead — a **full-file scan cached in `agent-state.ai-titles.tsv`**. The third step exists because Claude Code writes the event once, and a session with a large system preamble (MCP tool schemas, a long `CLAUDE.md`) puts it past the head window and, once the transcript grows, out of the tail as well. A hit is cached for the life of the transcript (the title never changes within a session); a miss is re-scanned only after the file grows by `AI_TITLE_RESCAN_BYTES`, and the file is trimmed to `AI_TITLES_MAX_ROWS`. Pure derived data — deleting it costs one re-scan.
      - `last_user_message` — latest user prompt (for fresh sessions).
      - `raw_title` — initial session title or first message (fallback).
 2. `agent-state.tsv` that `agent-state.sh` maintains (parent state, last
@@ -50,7 +51,10 @@ these sources:
    subagent-side events (events whose payload carries an `agent_id`).
    One row per `(parent_sid, agent_id)`. Drives the `🤖×N` badge and the
    parent state rollup so a row stays 🟡 while subagents are in flight,
-   instead of drifting through 🟢 / 🔵 mid-Task.
+   instead of drifting through 🟢 / 🔵 mid-Task. Those two are all it
+   drives: the per-subagent submenu block was dropped in 1.6.0, because
+   the Claude Code extension shows the same breakdown itself (see
+   [spec 0004](./docs/specs/0004-subagent-grouping.md)).
 4. `agent-state.clicks` that `hooks/record-click.sh` writes — the single ack
    writer shared by both resume paths (`open-session.sh` for a menu-row click,
    `raise-and-open.sh` for a notification-banner click). Records which idle
@@ -66,11 +70,22 @@ these sources:
    IDE sidebar, under one `sessionGroups:<workspace>` key per workspace.
    `sidecars.read_ide_groups()` opens it `mode=ro`, folds every workspace into
    one `{sid → group name}` map, and validates each field against the
-   extension's own limits. Gated by `show_ide_groups` (default on, and the
-   knob gates the *lookup*, not just the rendering); fail-soft to `{}` on
+   extension's own limits. Gated by `ide_groups_mode` (default `inline`, and
+   the knob gates the *lookup*, not just the rendering); fail-soft to `{}` on
    anything unexpected. Read-only by design — see
    [ADR-0019](./docs/adr/0019-ide-groups-read-only-globalstate.md) and
    [spec 0015](./docs/specs/0015-ide-session-groups.md).
+
+   The same blob also carries **`hiddenSessionIds`** — the sessions archived
+   out of the sidebar — read by `sidecars.read_ide_archived()` and mirrored
+   by hiding those rows, *unless* the session carries one of the bar's own
+   markers (a tag or a bookmark), which outranks the sidebar. That list is
+   global rather than per-workspace, and its lookup is gated by
+   `hide_archived_sessions`, **not** by `ide_groups_mode`: grouping and
+   archiving are two features that happen to share one file. Because both
+   want the same blob on the same tick, `_read_ide_globalstate` is cached on
+   `(path, size, mtime_ns)` — callers must treat the returned dict as
+   read-only. See [spec 0018](./docs/specs/0018-archived-sessions.md).
 
 Plus the local classifiers written by menu actions —
 `agent-state.bookmarks` (spec 0012) and `agent-state.tags` (spec 0013).
@@ -416,6 +431,25 @@ happens off the tick). Progress is tracked in `agent-state.idle-reminders`
 (`{sid → (stop_ts, fired_count)}`); the escalation is bounded by the
 green window (`fresh_sec`) because `reconcile` only ever considers
 `RenderGroup.FRESH` sessions.
+
+`reconcile_blocked`, in the same module, is the 🔴 twin (spec 0017): it
+selects sessions whose hook state is `waiting` and re-fires
+`hooks/notify-wait.sh` — the same script the first permission-prompt
+notification came from, given `<sid> <cwd>` positionally instead of a JSON
+payload, so a repeat is indistinguishable from the original and there is no
+second phrase list or chime to keep in sync. Both run on one private
+engine,
+`idle_reminders._reconcile`, parameterised by selector, episode anchor,
+interval, sidecar and fire callback — the doubling, the catch-up collapse
+and the lock-the-whole-section concurrency fix are subtle enough that a
+second copy would drift. Two differences are load-bearing. The anchor is
+`Session.state_since`, not `last_event_ts`: the latter advances while a
+session waits, which would reset the counter every tick. And nothing bounds
+the schedule — a permission prompt can stand for hours, there is no
+`fresh_sec` equivalent — so the doubling itself is the bound. Progress lives
+in its own `agent-state.blocked-reminders`, deliberately not shared with the
+idle sidecar, so either feature can be switched off without disturbing the
+other's state.
 
 ### Subscription usage — a periodic `get_usage` fetch
 

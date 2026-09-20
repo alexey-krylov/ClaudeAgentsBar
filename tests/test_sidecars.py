@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from _helpers import plugin, _make_session
+from _helpers import isolate_state_dir, plugin, _make_session
 
 
 class TestParseSidecar(unittest.TestCase):
@@ -108,44 +108,17 @@ class TestAckFresh(unittest.TestCase):
     """
 
     def setUp(self):
-        import tempfile
-        self._tmpdir = Path(tempfile.mkdtemp())
-        projects = self._tmpdir / "projects"
-        projects.mkdir()
-        sidecar = self._tmpdir / "state.tsv"
-        clicks = self._tmpdir / "clicks.tsv"
-        dismiss = self._tmpdir / "dismiss"
-        self._orig_projects = plugin.PROJECTS_DIR
-        self._orig_sidecar = plugin.SIDECAR_PATH
-        self._orig_clicks = plugin.CLICKS_PATH
-        self._orig_dismiss = plugin.DISMISS_PATH
-        self._orig_sidecar_lock = plugin._SIDECAR_LOCK_DIR
-        self._orig_clicks_lock = plugin._CLICKS_LOCK_DIR
-        plugin.core.PROJECTS_DIR = projects
-        plugin.core.SIDECAR_PATH = sidecar
-        plugin.core.CLICKS_PATH = clicks
-        # Redirect DISMISS_PATH too — without this the user's real cutoff
-        # file (set by *Forget all sessions*) leaks into the test and
-        # filters out every fake session whose synthetic ``now`` predates
-        # the real cutoff.
-        plugin.core.DISMISS_PATH = dismiss
-        plugin.core._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
-        plugin.core._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
+        # ``collect_sessions`` fans out across every sidecar, so redirect the
+        # whole state directory rather than the two files this class writes:
+        # a partial redirect left the real ``agent-state.subagents.tsv`` in
+        # play, and ``ack_fresh`` rewrote the developer's own copy of it.
+        self._tmpdir = isolate_state_dir(self)
+        projects = plugin.core.PROJECTS_DIR
         self.projects = projects
-        self.sidecar = sidecar
-        self.clicks = clicks
+        self.sidecar = plugin.core.SIDECAR_PATH
+        self.clicks = plugin.core.CLICKS_PATH
         self.now = 1_700_000_000
         self.fresh = plugin.CONFIG.fresh_sec
-
-    def tearDown(self):
-        import shutil
-        plugin.core.PROJECTS_DIR = self._orig_projects
-        plugin.core.SIDECAR_PATH = self._orig_sidecar
-        plugin.core.CLICKS_PATH = self._orig_clicks
-        plugin.core.DISMISS_PATH = self._orig_dismiss
-        plugin.core._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
-        plugin.core._CLICKS_LOCK_DIR = self._orig_clicks_lock
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _make_session(self, sid, mtime, sidecar_row=None):
         """Create a JSONL on disk with the given mtime, plus optional sidecar row.
@@ -264,46 +237,14 @@ class TestForgetSidecar(unittest.TestCase):
     """
 
     def setUp(self):
-        import tempfile
-        self._tmpdir = Path(tempfile.mkdtemp())
-        projects = self._tmpdir / "projects"
-        projects.mkdir()
-        sidecar = self._tmpdir / "state.tsv"
-        clicks = self._tmpdir / "clicks.tsv"
-        forget = self._tmpdir / "forget.tsv"
-        dismiss = self._tmpdir / "dismiss"
-        self._orig_projects = plugin.PROJECTS_DIR
-        self._orig_sidecar = plugin.SIDECAR_PATH
-        self._orig_clicks = plugin.CLICKS_PATH
-        self._orig_forget = plugin.FORGET_PATH
-        self._orig_dismiss = plugin.DISMISS_PATH
-        self._orig_sidecar_lock = plugin._SIDECAR_LOCK_DIR
-        self._orig_clicks_lock = plugin._CLICKS_LOCK_DIR
-        self._orig_forget_lock = plugin._FORGET_LOCK_DIR
-        plugin.core.PROJECTS_DIR = projects
-        plugin.core.SIDECAR_PATH = sidecar
-        plugin.core.CLICKS_PATH = clicks
-        plugin.core.FORGET_PATH = forget
-        plugin.core.DISMISS_PATH = dismiss
-        plugin.core._SIDECAR_LOCK_DIR = sidecar.with_suffix(sidecar.suffix + ".lock.d")
-        plugin.core._CLICKS_LOCK_DIR = clicks.with_suffix(clicks.suffix + ".lock.d")
-        plugin.core._FORGET_LOCK_DIR = forget.with_suffix(forget.suffix + ".lock.d")
-        self.projects = projects
-        self.sidecar = sidecar
-        self.forget = forget
+        # Whole state directory, not just the three files this class writes:
+        # ``collect_sessions`` reads a dozen sidecars and would otherwise
+        # pick up the developer's real ones.
+        self._tmpdir = isolate_state_dir(self)
+        self.projects = plugin.core.PROJECTS_DIR
+        self.sidecar = plugin.core.SIDECAR_PATH
+        self.forget = plugin.core.FORGET_PATH
         self.now = 1_700_000_000
-
-    def tearDown(self):
-        import shutil
-        plugin.core.PROJECTS_DIR = self._orig_projects
-        plugin.core.SIDECAR_PATH = self._orig_sidecar
-        plugin.core.CLICKS_PATH = self._orig_clicks
-        plugin.core.FORGET_PATH = self._orig_forget
-        plugin.core.DISMISS_PATH = self._orig_dismiss
-        plugin.core._SIDECAR_LOCK_DIR = self._orig_sidecar_lock
-        plugin.core._CLICKS_LOCK_DIR = self._orig_clicks_lock
-        plugin.core._FORGET_LOCK_DIR = self._orig_forget_lock
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _make_session(self, sid, mtime, sidecar_row=None):
         project_dir = self.projects / f"-fake-{sid}"

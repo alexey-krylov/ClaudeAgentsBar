@@ -273,5 +273,275 @@ class TestIdleRemindersReconcile(unittest.TestCase):
         )
 
 
+class TestBlockedReminderConfig(unittest.TestCase):
+    """``notify_blocked_interval_min`` → ``notify_blocked_interval_sec``.
+
+    Same hand-rolled coercion as the idle interval (an explicit ``null`` has
+    to mean "off", not "keep the default"), so it gets the same coverage.
+    """
+
+    def _cfg(self, **raw):
+        return plugin.Config._from_mapping(raw)
+
+    def test_default_is_ten_minutes(self):
+        self.assertEqual(plugin.Config().notify_blocked_interval_sec, 600)
+
+    def test_minutes_become_seconds(self):
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min=15).notify_blocked_interval_sec,
+            900,
+        )
+
+    def test_fractional_minutes_supported(self):
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min=0.5).notify_blocked_interval_sec,
+            30,
+        )
+
+    def test_zero_turns_the_feature_off(self):
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min=0).notify_blocked_interval_sec,
+            0,
+        )
+
+    def test_null_turns_the_feature_off(self):
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min=None).notify_blocked_interval_sec,
+            0,
+        )
+
+    def test_negative_clamps_to_off(self):
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min=-5).notify_blocked_interval_sec,
+            0,
+        )
+
+    def test_bool_is_rejected_and_default_kept(self):
+        # JSON true/false are bool (a subclass of int) — a config mistake,
+        # not a duration.
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min=True).notify_blocked_interval_sec,
+            600,
+        )
+
+    def test_string_is_rejected_and_default_kept(self):
+        self.assertEqual(
+            self._cfg(notify_blocked_interval_min="soon").notify_blocked_interval_sec,
+            600,
+        )
+
+    def test_idle_interval_still_coerces_independently(self):
+        # The two knobs now share one helper; make sure they don't cross-wire.
+        cfg = self._cfg(notify_idle_interval_min=5, notify_blocked_interval_min=1)
+        self.assertEqual(cfg.notify_idle_interval_sec, 300)
+        self.assertEqual(cfg.notify_blocked_interval_sec, 60)
+
+
+class TestBlockedRemindersReconcile(unittest.TestCase):
+    """The per-tick escalation logic in :func:`idle_reminders.reconcile_blocked`.
+
+    Mirror of :class:`TestIdleRemindersReconcile`, with two differences that
+    matter: the selector is ``hook_state == "waiting"`` rather than the FRESH
+    render group, and the episode anchor is :attr:`Session.state_since` — not
+    ``last_event_ts``, which keeps moving while a session waits and would
+    reset the counter on every tick.
+    """
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        path = self._tmpdir / "blocked-reminders"
+        idle_path = self._tmpdir / "idle-reminders"
+        self._orig_path = plugin.core.BLOCKED_REMINDERS_PATH
+        self._orig_lock = plugin.core._BLOCKED_REMINDERS_LOCK_DIR
+        self._orig_idle_path = plugin.core.IDLE_REMINDERS_PATH
+        self._orig_idle_lock = plugin.core._IDLE_REMINDERS_LOCK_DIR
+        self._orig_config = plugin.core.CONFIG
+        plugin.core.BLOCKED_REMINDERS_PATH = path
+        plugin.core._BLOCKED_REMINDERS_LOCK_DIR = path.with_suffix(
+            path.suffix + ".lock.d"
+        )
+        # The idle sidecar is redirected too — not because these tests write
+        # it, but because one of them asserts it stays empty, and reading the
+        # developer's real ~/.claude would make that assertion depend on
+        # whichever sessions happen to be pending on this machine.
+        plugin.core.IDLE_REMINDERS_PATH = idle_path
+        plugin.core._IDLE_REMINDERS_LOCK_DIR = idle_path.with_suffix(
+            idle_path.suffix + ".lock.d"
+        )
+        self.path = path
+        self.now = 1_700_000_000
+        self.interval = 600  # 10 min
+
+    def tearDown(self):
+        import shutil
+        plugin.core.BLOCKED_REMINDERS_PATH = self._orig_path
+        plugin.core._BLOCKED_REMINDERS_LOCK_DIR = self._orig_lock
+        plugin.core.IDLE_REMINDERS_PATH = self._orig_idle_path
+        plugin.core._IDLE_REMINDERS_LOCK_DIR = self._orig_idle_lock
+        plugin.core.CONFIG = self._orig_config
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _set_interval(self, sec):
+        plugin.core.CONFIG = plugin.Config(notify_blocked_interval_sec=sec)
+
+    def _blocked(self, sid, elapsed, kind="PermissionRequest"):
+        """A 🔴 session that entered ``waiting`` ``elapsed`` seconds ago."""
+        return _make_session(
+            id=sid,
+            hook_state="waiting",
+            group=plugin.RenderGroup.ACTIVE,
+            state_since=self.now - elapsed,
+            last_event_kind=kind,
+            # last_event_ts advances while the session waits; the reconciler
+            # must not key off it.
+            last_event_ts=self.now,
+        )
+
+    def _run(self, sessions):
+        fired = []
+        with patch.object(
+            plugin.idle_reminders, "_fire_blocked",
+            side_effect=lambda s: fired.append(s.id),
+        ):
+            plugin.idle_reminders.reconcile_blocked(sessions, self.now)
+        return fired
+
+    def test_feature_off_does_nothing(self):
+        self._set_interval(0)
+        fired = self._run([self._blocked("a", self.interval * 5)])
+        self.assertEqual(fired, [])
+        self.assertFalse(self.path.exists())
+
+    def test_fires_first_reminder_past_threshold(self):
+        self._set_interval(self.interval)
+        fired = self._run([self._blocked("a", self.interval + 60)])
+        self.assertEqual(fired, ["a"])
+        self.assertEqual(
+            plugin.read_blocked_reminders(),
+            {"a": (self.now - self.interval - 60, 1)},
+        )
+
+    def test_does_not_fire_before_threshold(self):
+        self._set_interval(self.interval)
+        fired = self._run([self._blocked("a", self.interval - 60)])
+        self.assertEqual(fired, [])
+        self.assertEqual(plugin.read_blocked_reminders(), {})
+
+    def test_non_waiting_sessions_are_ignored(self):
+        # Working is just as "active" but nobody is blocked on the user, and a
+        # finished session belongs to the idle reminder.
+        self._set_interval(self.interval)
+        working = _make_session(
+            id="w", hook_state="working", group=plugin.RenderGroup.ACTIVE,
+            state_since=self.now - self.interval * 5,
+            last_event_kind="PostToolUse",
+        )
+        fresh = _make_session(
+            id="f", hook_state="idle", group=plugin.RenderGroup.FRESH,
+            last_event_ts=self.now - self.interval * 5,
+        )
+        self.assertEqual(self._run([working, fresh]), [])
+
+    def test_notification_waiting_is_ignored(self):
+        # Regression: two events map onto the `waiting` state. Claude Code
+        # fires `Notification` when the prompt has merely been idle, and
+        # `notify-wait.sh` is registered on `PermissionRequest` only — so a
+        # `Notification`-induced wait has no first announcement to repeat,
+        # and nagging about it would be a recurring false alarm on an
+        # ordinary session nobody is blocked on.
+        self._set_interval(self.interval)
+        idle_prompt = self._blocked("n", self.interval * 5, kind="Notification")
+        self.assertEqual(self._run([idle_prompt]), [])
+        self.assertEqual(plugin.read_blocked_reminders(), {})
+
+    def test_unknown_event_kind_is_ignored(self):
+        self._set_interval(self.interval)
+        self.assertEqual(self._run([self._blocked("u", self.interval * 5, kind="")]), [])
+
+    def test_session_without_state_since_is_skipped(self):
+        # A legacy TSV row that never stamped a transition reads as 0; treating
+        # that as "blocked since the epoch" would fire instantly and forever.
+        self._set_interval(self.interval)
+        stuck = _make_session(
+            id="legacy", hook_state="waiting",
+            group=plugin.RenderGroup.ACTIVE, state_since=0,
+            last_event_kind="PermissionRequest",
+        )
+        self.assertEqual(self._run([stuck]), [])
+        self.assertEqual(plugin.read_blocked_reminders(), {})
+
+    def test_does_not_refire_within_the_same_step(self):
+        self._set_interval(self.interval)
+        session = self._blocked("a", self.interval + 60)
+        self.assertEqual(self._run([session]), ["a"])
+        self.assertEqual(self._run([session]), [])
+
+    def test_second_reminder_at_double_the_interval(self):
+        self._set_interval(self.interval)
+        self._run([self._blocked("a", self.interval + 60)])
+        fired = self._run([self._blocked("a", self.interval * 2 + 60)])
+        self.assertEqual(fired, ["a"])
+        self.assertEqual(plugin.read_blocked_reminders()["a"][1], 2)
+
+    def test_new_waiting_episode_resets_the_counter(self):
+        # Answered one prompt, hit another: state_since moves, so the schedule
+        # starts over from the first step.
+        self._set_interval(self.interval)
+        plugin.write_blocked_reminders({"a": (self.now - 99_999, 3)})
+        fired = self._run([self._blocked("a", self.interval + 60)])
+        self.assertEqual(fired, ["a"])
+        self.assertEqual(plugin.read_blocked_reminders()["a"][1], 1)
+
+    def test_catch_up_collapses_to_a_single_reminder(self):
+        # Machine slept across several thresholds — advance the counter but
+        # send one nudge, not a burst.
+        self._set_interval(self.interval)
+        fired = self._run([self._blocked("a", self.interval * 16)])
+        self.assertEqual(fired, ["a"])
+        self.assertGreater(plugin.read_blocked_reminders()["a"][1], 2)
+
+    def test_unblocked_session_pruned_from_sidecar(self):
+        self._set_interval(self.interval)
+        plugin.write_blocked_reminders({"gone": (self.now - 5000, 2)})
+        self.assertEqual(self._run([]), [])
+        self.assertEqual(plugin.read_blocked_reminders(), {})
+
+    def test_fire_and_write_happen_under_lock(self):
+        # Same concurrency regression the idle reminder guards against: two
+        # overlapping SwiftBar ticks must not both fire the same step.
+        self._set_interval(self.interval)
+        lock_dir = plugin.core._BLOCKED_REMINDERS_LOCK_DIR
+        held = []
+        with patch.object(
+            plugin.idle_reminders, "_fire_blocked",
+            side_effect=lambda s: held.append(lock_dir.exists()),
+        ):
+            plugin.idle_reminders.reconcile_blocked(
+                [self._blocked("a", self.interval + 100)], self.now
+            )
+        self.assertEqual(held, [True])
+        self.assertFalse(lock_dir.exists())
+
+    def test_repeat_spawns_the_same_script_as_the_first_notification(self):
+        # The whole point of the feature is that a repeat is indistinguishable
+        # from the original, which only holds if it runs notify-wait.sh. Every
+        # other test patches _fire_blocked out, so nothing else would notice a
+        # rename here.
+        spawned = []
+        with patch.object(
+            plugin.idle_reminders, "_spawn",
+            side_effect=lambda script, session, label: spawned.append(script),
+        ):
+            plugin.idle_reminders._fire_blocked(self._blocked("a", 0))
+        self.assertEqual(spawned, ["notify-wait.sh"])
+
+    def test_idle_sidecar_is_untouched(self):
+        # The two features must not share state: a blocked reminder writing
+        # into the idle sidecar would make each cancel the other's progress.
+        self._set_interval(self.interval)
+        self._run([self._blocked("a", self.interval + 60)])
+        self.assertEqual(plugin.read_idle_reminders(), {})
+
+
 if __name__ == "__main__":
     unittest.main()

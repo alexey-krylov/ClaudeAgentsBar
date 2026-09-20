@@ -90,10 +90,17 @@ tooltip (e.g. `Read: main.py`, `Bash: pytest …`) — quick answer to
 *what is this session doing?* without expanding anything.
 
 **Subagent rollup** — sessions that spawn `Task` subagents grow a
-`🤖×N` badge with the live count, and the submenu lists each
-subagent (description, model chip, current tool, runtime). The
-parent row stays 🟡 while any subagent is in flight, so a long
-`Task` doesn't drift the parent into a misleading 🟢.
+`🤖×N` badge with the live count, and the parent row stays 🟡 while
+any subagent is in flight, so a long `Task` doesn't drift the parent
+into a misleading 🟢. The per-subagent breakdown lives in the Claude
+Code extension itself; the menu bar only answers *how many are
+running*.
+
+**Sidebar parity** — sessions you archive in the Claude Code sidebar
+drop out of the menu too, unless you gave one a tag or a bookmark: those
+are the bar's own markers, so setting one keeps the session in view no
+matter what the editor thinks. Turn the whole mirror off with
+`hide_archived_sessions`.
 
 **Subscription limits** — *Statistics* carries your 5-hour and
 weekly windows as two bars, yellow past 60 %, red past 85 %, so you
@@ -117,10 +124,12 @@ for permission), and shows a clickable banner that jumps straight to
 the waiting session. Both phrase lists are config knobs — replace
 them with whatever you find funnier (jokes, your cat's name, a Star
 Wars soundboard). One-liner exchanges are skipped via
-`notify_threshold_sec`. A finished session you never came back to gets
-**re-nudged** at doubling intervals (20, 40, … min) while it sits 🟢
-unread — `notify_idle_interval_min`, off with `0`. Requires
-`terminal-notifier`; see
+`notify_threshold_sec`. Both one-shot announcements are also
+**re-nudged** at doubling intervals if you don't act: a finished session
+left 🟢 unread (`notify_idle_interval_min`, 30 min by default) and — the
+expensive one — a session still 🔴 blocked on its prompt
+(`notify_blocked_interval_min`, 10 min). Either goes quiet with `0`.
+Requires `terminal-notifier`; see
 [docs/configuration.md § Notifications](./docs/configuration.md#notifications)
 to silence one channel without losing the other.
 
@@ -192,7 +201,7 @@ The three fields you're most likely to touch:
 | `ack_minutes` | `60` | How long an acknowledged 🔵 session stays before fading to ⚪. |
 | `menubar_icon` | Claude.app glyph | Plain glyph, `sf:<name>`, `template:<path>`, or `image:<path>`. |
 
-Full reference (~29 fields incl. notification chimes / voice /
+Full reference (~30 fields incl. notification chimes / voice /
 quiet hours / keep-awake, icon formats, compact mode for notched
 MacBooks, refresh cadence, sidecar files on disk):
 [docs/configuration.md](./docs/configuration.md).

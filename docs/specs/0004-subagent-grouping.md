@@ -1,8 +1,19 @@
 # Spec 0004 — Subagent activity & model surface
 
-* Status: **Implemented in 1.1.0** &nbsp;·&nbsp; spike completed 2026-05-26
+* Status: **Implemented in 1.1.0, partly retired in 1.6.0** &nbsp;·&nbsp; spike completed 2026-05-26
 * Date: 2026-05-26
 * Spike notes: see [§ Spike outcome](#spike-outcome) below.
+
+> **Retired in 1.6.0 — the per-subagent submenu block.** The Claude Code
+> extension (2.1.276) shows a subagent breakdown of its own, in more detail
+> than a menu-bar submenu can. ClaudeAgentsBar is there to add what the
+> extension lacks, so it now answers only *how many subagents are running*:
+> the `🤖×N` badge on the parent row and the parent state rollup that holds
+> the row 🟡 until the last one returns. The hook routing, the
+> `agent-state.subagents.tsv` sidecar and the watchdog all stay — they are
+> what the rollup is built on. Everything below about the expanded block
+> (per-agent description, model chip, current tool, runtime) describes the
+> 1.1.0–1.5.0 behaviour and is kept for the record.
 
 ## Why
 

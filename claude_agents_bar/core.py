@@ -91,6 +91,23 @@ _IDLE_REMINDERS_LOCK_DIR = IDLE_REMINDERS_PATH.with_suffix(
     IDLE_REMINDERS_PATH.suffix + ".lock.d"
 )
 
+#: ``{session_id: (waiting_since, fired_count)}`` sidecar for the
+#: blocked-session reminder (spec 0017) — the 🔴 twin of
+#: :data:`IDLE_REMINDERS_PATH`. One row per session the plugin has already
+#: re-nudged about a permission prompt it is blocked on, written by the
+#: per-tick :func:`claude_agents_bar.idle_reminders.reconcile_blocked`.
+#: ``waiting_since`` pins the *episode*: a newer value (the session was
+#: unblocked and later blocked again) resets ``fired_count`` to 0 so the
+#: escalation restarts. Same three tab-separated columns as the idle
+#: sidecar: ``session_id\twaiting_since\tfired_count``.
+BLOCKED_REMINDERS_PATH = HOME / ".claude" / "agent-state.blocked-reminders"
+
+#: Mutex on :data:`BLOCKED_REMINDERS_PATH`. Same reasoning and scheme as
+#: :data:`_IDLE_REMINDERS_LOCK_DIR`.
+_BLOCKED_REMINDERS_LOCK_DIR = BLOCKED_REMINDERS_PATH.with_suffix(
+    BLOCKED_REMINDERS_PATH.suffix + ".lock.d"
+)
+
 #: Subscription usage snapshot (spec 0011), written by the periodic fetch in
 #: :mod:`claude_agents_bar.usage_monitor`, which asks the ``claude`` CLI for
 #: the account's ``rate_limits`` over the SDK control protocol (``get_usage``)
@@ -238,6 +255,35 @@ JSONL_USER_TAIL_BYTES = 128 * 1024
 #: base64 attachments dragging the line count up.
 JSONL_TITLE_SCAN_BYTES = 256 * 1024
 
+#: Sidecar caching the ``ai-title`` recovered by a *full* transcript scan,
+#: keyed by session id: ``sid\tscanned_size\ttitle``. Claude Code emits the
+#: event once, right after the first turn — which in a session carrying a
+#: large system preamble (many MCP tool schemas, a long ``CLAUDE.md``) lands
+#: past :data:`JSONL_TITLE_SCAN_BYTES` and never reappears in the tail, so
+#: neither window finds it. A title never changes within a session, so one
+#: full scan per session is enough and the cached hit stays valid for the
+#: life of the transcript. This is what keeps the menu row showing the same
+#: name the editor sidebar shows (the editor keeps its own in-memory map,
+#: which a per-tick plugin process cannot).
+AI_TITLES_PATH = HOME / ".claude" / "agent-state.ai-titles.tsv"
+
+#: Mutex on :data:`AI_TITLES_PATH`. Same ``mkdir``-based scheme as the other
+#: sidecar locks — two overlapping ticks must not interleave a full rewrite.
+_AI_TITLES_LOCK_DIR = AI_TITLES_PATH.with_suffix(
+    AI_TITLES_PATH.suffix + ".lock.d"
+)
+
+#: A cached *miss* (no ``ai-title`` in the transcript yet — the title is
+#: generated a turn or two in) is re-scanned only once the file has grown by
+#: this much. Bounds the cost of a young or title-less session to one full
+#: scan per this many appended bytes instead of one per tick.
+AI_TITLE_RESCAN_BYTES = 512 * 1024
+
+#: Ceiling on :data:`AI_TITLES_PATH` rows, oldest-written dropped first. The
+#: cache is pure derived data, so a trimmed row costs one re-scan, never
+#: correctness.
+AI_TITLES_MAX_ROWS = 1000
+
 #: ANSI SGR sequences. SwiftBar interprets these when a row carries
 #: ``ansi=true``, letting us colour a single segment independently of the
 #: base ``color=`` parameter.
@@ -270,13 +316,16 @@ _ANSI_DIM = "\x1b[38;5;245m"
 #:   * SwiftBar ``paramN=`` tokens, which break on embedded newlines.
 #:
 #: The set is intentionally narrow: no spaces, no quotes, no shell or
-#: regex metacharacters, no path separators, no control bytes. A session
+#: regex metacharacters, no path separators, no control bytes. Anchored with
+#: ``\A``/``\Z`` rather than ``^``/``$`` on purpose: ``$`` also matches
+#: *before* a trailing newline, which would let ``"<sid>\n"`` validate and
+#: then split a row in every TSV we write. A session
 #: id whose source we don't fully control (TSV row written by a hook,
 #: JSONL filename created by another process under the same uid) is
 #: rejected at the boundary so every downstream consumer stays simple.
 #: See the SECURITY note at the top of ``bin/app/delete-session.sh`` and the
 #: SwiftBar quoting helper for context.
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SESSION_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 
 def _is_valid_session_id(value: str) -> bool:
@@ -343,6 +392,19 @@ IDE_STATE_DB_RELPATH = ("User", "globalStorage", "state.vscdb")
 #: Publisher case matters — the extension writes ``Anthropic``, capitalised.
 IDE_GLOBALSTATE_KEY = "Anthropic.claude-code"
 
+#: ``ItemTable`` key, inside the same blob, holding the sessions the user
+#: **archived** in the sidebar (spec 0018). A flat list of session ids, global
+#: rather than per-workspace — the extension calls it ``hiddenSessionIds`` but
+#: its own API name is ``getArchivedSessionIds()``, and *archived* is what the
+#: sidebar's menu says, so that's the word we use everywhere else.
+IDE_ARCHIVED_KEY = "hiddenSessionIds"
+
+#: Cap on ids taken from :data:`IDE_ARCHIVED_KEY`, mirroring the limits we
+#: apply to the group blob so a huge or hostile value can't stretch the render
+#: tick. Archiving more sessions than this and expecting all of them hidden is
+#: not a case worth carrying.
+IDE_ARCHIVED_MAX = 1000
+
 #: Prefix of the per-workspace group keys inside that blob. The suffix is the
 #: workspace's realpath, which we never need: session ids are unique, so the
 #: groups from every workspace fold into one ``id → name`` map.
@@ -395,6 +457,15 @@ _LEGACY_USAGE_MONITOR_SCREEN = "cab-usage-mon"
 
 #: States that ``hooks/agent-state.sh`` may write to the **parent** sidecar.
 HOOK_STATES = frozenset({"waiting", "working", "idle"})
+
+#: The ``hook_event_name`` that means "Claude is blocked on a tool-approval
+#: dialog". Both ``PermissionRequest`` and ``Notification`` are registered to
+#: write the ``waiting`` state (see ``hooks/settings-hooks.json``), but they
+#: are not the same thing: Claude Code also fires ``Notification`` when the
+#: prompt has simply been idle for a while. Only ``PermissionRequest`` gets
+#: the first ``notify-wait.sh`` announcement, so only it may get the repeats
+#: — see :func:`claude_agents_bar.idle_reminders.reconcile_blocked`.
+PERMISSION_EVENT_KIND = "PermissionRequest"
 
 #: The subset of :data:`HOOK_STATES` that mean "session is in flight" — i.e.
 #: the right-hand label should show duration of the current state rather
@@ -459,7 +530,7 @@ TAG_GLYPH = {k: g for k, g, _ in TAG_PALETTE}
 #: ``a2a96465dfa0eee5d``). Same threat model as :data:`_SESSION_ID_RE` —
 #: keep the allow-list narrow so values from the TSV are safe to drop into
 #: SwiftBar ``paramN=`` slots and shell arguments without further escaping.
-_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_AGENT_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 
 def _is_valid_agent_id(value: str) -> bool:
@@ -746,6 +817,33 @@ class Config:
     #: ``notify_sound_idle`` directly from the config, like the other
     #: notify hooks).
     notify_idle_interval_sec: int = 30 * 60
+    #: Base interval (seconds) between **repeats** of the permission-prompt
+    #: notification (spec 0017) — the 🔴 twin of
+    #: :attr:`notify_idle_interval_sec`. ``hooks/notify-wait.sh`` announces a
+    #: prompt once, on the event; while the session stays in ``waiting`` the
+    #: plugin re-fires **that same script** at doubling intervals, so a
+    #: repeat is indistinguishable from the original — same
+    #: ``notify_wait_phrases``, same ``notify_sound_wait``, same banner — and
+    #: there are no separate phrase/sound knobs to drift out of sync.
+    #: Unlike the idle reminder there is no ``fresh_sec`` ceiling to bound it
+    #: — a permission prompt can stand forever — so the doubling *is* the
+    #: bound: with the default it repeats at 10 min, 30 min, 1 h 10 m,
+    #: 2 h 30 m, … and fades out on its own. Derived from
+    #: ``notify_blocked_interval_min`` (default 10 min → 600 s, on out of the
+    #: box); shorter than the idle default because a blocked agent costs you
+    #: throughput, not just freshness. An explicit ``0`` / ``null`` /
+    #: negative means "announce once, never repeat"; ``notify_on_wait:
+    #: false`` silences the first announcement and the repeats with it.
+    notify_blocked_interval_sec: int = 10 * 60
+    #: Hide sessions the user **archived** in the Claude Code sidebar
+    #: (spec 0018). The editor keeps the archive in its own globalState under
+    #: ``hiddenSessionIds``; mirroring it keeps the menu from showing what the
+    #: sidebar no longer does. ``True`` (default) hides them — *except* a
+    #: session carrying a tag or a bookmark, which are the bar's own markers
+    #: and therefore an explicit "keep this one in the menu". ``False`` shows
+    #: everything and skips the lookup. Read-only, like the IDE groups: the
+    #: archive is the editor's data (see ADR-0019).
+    hide_archived_sessions: bool = True
     #: On/off switch for the subscription usage alerts (spec 0011). When on
     #: (default), the plugin tick fires a one-shot notification each time the
     #: 5-hour window's utilization first crosses 50/60/70/80/90 %
@@ -923,6 +1021,10 @@ class Config:
             data["notify_on_usage"], bool
         ):
             coerced["notify_on_usage"] = data["notify_on_usage"]
+        if "hide_archived_sessions" in data and isinstance(
+            data["hide_archived_sessions"], bool
+        ):
+            coerced["hide_archived_sessions"] = data["hide_archived_sessions"]
         # Grouping mode — a mode string like keep_awake / usage_monitor:
         # it selects a rendering shape, so an unknown value is refused rather
         # than guessed at.
@@ -1059,31 +1161,40 @@ class Config:
                     f"allowed: {sorted(_KEEP_AWAKE_MODES)}"
                 )
 
-        # Idle-reminder base interval (spec 0008). Doubles as the on/off
-        # switch: 0 / null / negative all disable the feature (interval 0 →
-        # reconcile returns early). take() won't do here — an explicit
-        # ``null`` must map to "off", not "keep the default", and a
-        # negative value should clamp to off rather than schedule a
-        # reminder in the past. A non-number is logged and the default
-        # (enabled, 20 min) is kept.
-        if "notify_idle_interval_min" in data:
-            raw_idle = data["notify_idle_interval_min"]
-            if raw_idle is None:
-                coerced["notify_idle_interval_sec"] = 0
-            elif isinstance(raw_idle, bool):
+        # Reminder base intervals (spec 0008 for 🟢 idle, spec 0017 for 🔴
+        # blocked). The value doubles as the on/off switch: 0 / null /
+        # negative all disable the feature (interval 0 → reconcile returns
+        # early). take() won't do here — an explicit ``null`` must map to
+        # "off", not "keep the default", and a negative value should clamp to
+        # off rather than schedule a reminder in the past. A non-number is
+        # logged and the field's default is kept.
+        def take_reminder_interval(json_key: str, field_name: str) -> None:
+            if json_key not in data:
+                return
+            raw = data[json_key]
+            if raw is None:
+                coerced[field_name] = 0
+            elif isinstance(raw, bool):
                 # JSON ``true``/``false`` are bool (a subclass of int); a
                 # boolean here is a config mistake, not a duration.
                 _warn(
-                    f"config: ignoring invalid notify_idle_interval_min="
-                    f"{raw_idle!r} (must be a number of minutes, 0, or null)"
+                    f"config: ignoring invalid {json_key}={raw!r} "
+                    f"(must be a number of minutes, 0, or null)"
                 )
-            elif isinstance(raw_idle, (int, float)):
-                coerced["notify_idle_interval_sec"] = max(0, int(raw_idle * 60))
+            elif isinstance(raw, (int, float)):
+                coerced[field_name] = max(0, int(raw * 60))
             else:
                 _warn(
-                    f"config: ignoring invalid notify_idle_interval_min="
-                    f"{raw_idle!r} (must be a number of minutes, 0, or null)"
+                    f"config: ignoring invalid {json_key}={raw!r} "
+                    f"(must be a number of minutes, 0, or null)"
                 )
+
+        take_reminder_interval(
+            "notify_idle_interval_min", "notify_idle_interval_sec"
+        )
+        take_reminder_interval(
+            "notify_blocked_interval_min", "notify_blocked_interval_sec"
+        )
 
         # Drop unknown keys silently — they're forward-compatibility hooks.
         valid_names = {f.name for f in fields(cls)}
@@ -1578,6 +1689,22 @@ class Session:
     #: stamped a transition yet) — :attr:`right_label` only consults this
     #: for the active states, so the value is meaningless otherwise.
     state_duration_sec: int = 0
+    #: ``hook_event_name`` of the row's latest hook event (``Stop``,
+    #: ``PermissionRequest``, ``Notification``, …), or ``""`` when no hook
+    #: event has been seen. Two events map onto the ``waiting`` state, and
+    #: only one of them means a tool-approval prompt, so
+    #: :func:`claude_agents_bar.idle_reminders.reconcile_blocked` needs the
+    #: kind and not just the state. :func:`_classify` uses the same field to
+    #: refuse the FRESH window to anything but a real ``Stop``.
+    last_event_kind: str = ""
+    #: Unix time at which the session entered its current ``hook_state`` —
+    #: the absolute form of :attr:`state_duration_sec`, which is derived from
+    #: it. Carried separately because the blocked-session reminder
+    #: (:func:`claude_agents_bar.idle_reminders.reconcile_blocked`) keys its
+    #: escalation on *which* waiting episode this is, and a duration that
+    #: grows every tick can't serve as that key. ``0`` when the hook has
+    #: never stamped a transition.
+    state_since: int = 0
     #: One-line summary of the last assistant ``tool_use`` chunk
     #: (e.g. ``"Read: main.py"``, ``"Bash: pytest"``). Empty when the
     #: tail of the transcript has no parseable tool call — used as the
@@ -1815,22 +1942,6 @@ def _shorten(text: str) -> str:
     if len(text) <= CONFIG.title_max:
         return text
     return text[: CONFIG.title_max - 1].rstrip() + "…"
-
-
-def _shorten_head(text: str) -> str:
-    """Collapse whitespace and truncate from the *start* with a leading ellipsis.
-
-    Mirror of :func:`_shorten` but keeps the *tail*. Used for the subagent
-    tool-use summary in the submenu, where the meaningful part of a long
-    string is at the end — a filename in a deep path
-    (``/Users/me/Projects/.../app/src/main/Foo.kt`` → ``…/app/src/main/Foo.kt``)
-    or the last few args of a Bash command. Clipping the end on those values
-    would hide the actual subject.
-    """
-    text = " ".join(text.split())
-    if len(text) <= CONFIG.title_max:
-        return text
-    return "…" + text[-(CONFIG.title_max - 1):].lstrip()
 
 
 def _humanize_age(seconds: int, lang: str = "en") -> str:

@@ -172,28 +172,38 @@
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">🗃️</div>
-        <h3 class="mt-2 font-semibold">Session groups <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <h3 class="mt-2 font-semibold">Session groups</h3>
         <p class="text-sm text-mute mt-1">File sessions into groups in the Claude Code sidebar and the menu mirrors them — either the group name prefixing each row, or one folded entry per group whose header counts the live states inside. Read-only: grouping stays in the IDE.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
+        <div class="text-xl">🔁</div>
+        <h3 class="mt-2 font-semibold">It keeps asking <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <p class="text-sm text-mute mt-1">A permission prompt announces itself once. Miss that banner and the agent just stands there. Now the <em>same</em> notification repeats on a doubling schedule until you answer — 10, 30, 70 minutes — then fades out on its own.</p>
+      </article>
+      <article class="rounded-xl border border-line bg-panel/60 p-5">
+        <div class="text-xl">📥</div>
+        <h3 class="mt-2 font-semibold">Archive, mirrored <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <p class="text-sm text-mute mt-1">Archive a session in the sidebar and its row leaves the menu too — unless you gave it a tag or a bookmark. Those are the bar's own markers, so setting one keeps a session in view no matter what the editor thinks.</p>
+      </article>
+      <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">❯</div>
-        <h3 class="mt-2 font-semibold">Terminal sessions <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <h3 class="mt-2 font-semibold">Terminal sessions</h3>
         <p class="text-sm text-mute mt-1">A session started in a shell is marked <code class="text-mute">❯</code>, and its row raises the terminal tab that owns it — Terminal.app or iTerm2 by tty, then <code>tmux</code>, then <code>screen</code>, then <code>claude --resume</code>. No more resuming the same transcript twice.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">⏳</div>
-        <h3 class="mt-2 font-semibold">Subscription usage <span class="text-brand text-xs font-mono align-middle">· new</span></h3>
+        <h3 class="mt-2 font-semibold">Subscription usage</h3>
         <p class="text-sm text-mute mt-1">Your 5-hour and weekly windows as two bars under <em>Statistics</em> — yellow past 60%, red past 85%. Read straight from Claude Code's own <code>get_usage</code>: no inference, no quota spent, nothing left running.</p>
       </article>
       <article class="rounded-xl border border-brand/40 bg-brand/5 p-5">
         <div class="text-xl">🔔</div>
         <h3 class="mt-2 font-semibold">Audible nudges <span class="text-brand text-xs font-mono align-middle">· most-loved</span></h3>
-        <p class="text-sm text-mute mt-1">Chime + a spoken line via macOS <code>say</code> + a click-to-jump banner when a session finishes, stalls, or sits unread. It speaks <span class="text-text">what the session did and which one needs you</span> — every phrase and the voice yours to set. See below.</p>
+        <p class="text-sm text-mute mt-1">Chime + a spoken line via macOS <code>say</code> + a click-to-jump banner when a session finishes, stalls, or sits unread — and it keeps asking if you leave a prompt standing. It speaks <span class="text-text">what the session did and which one needs you</span> — every phrase and the voice yours to set. See below.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">🤖</div>
         <h3 class="mt-2 font-semibold">Subagent rollup</h3>
-        <p class="text-sm text-mute mt-1">Sessions spawning <code class="text-brand">Task</code> subagents grow a <code class="text-brand">🤖×N</code> badge with a live per-agent breakdown.</p>
+        <p class="text-sm text-mute mt-1">Sessions spawning <code class="text-brand">Task</code> subagents grow a <code class="text-brand">🤖×N</code> badge, and the parent row holds 🟡 until the last one returns.</p>
       </article>
       <article class="rounded-xl border border-line bg-panel/60 p-5">
         <div class="text-xl">⚠️</div>
@@ -258,7 +268,8 @@
           <ul class="mt-5 space-y-2 text-sm text-mute">
             <li>🟢 <strong class="text-text">On finish</strong> — speaks the summary of what the session just did (no marker → a random <code class="text-fresh">notify_phrases</code> line)</li>
             <li>🟡 <strong class="text-text">On a permission prompt</strong> — names the blocked session + what it was doing, after a <code class="text-working">notify_wait_phrases</code> line</li>
-            <li>⏰ <strong class="text-text">Idle nudge</strong> — a finished session you never opened is re-announced on a doubling schedule (20 → 40 → 80 min) with its own <code>notify_idle_phrases</code></li>
+            <li>⏰ <strong class="text-text">Idle nudge</strong> — a finished session you never opened is re-announced after 30 min, then at doubling intervals for as long as the row stays green, with its own <code>notify_idle_phrases</code></li>
+            <li>🔁 <strong class="text-text">It keeps asking</strong> — leave a permission prompt standing and the <em>same</em> notification repeats on a doubling schedule (10 → 30 → 70 min): a blocked agent costs more than an unread one</li>
             <li>🔁 <strong class="text-text">Remind</strong> — any row's submenu re-speaks its last summary on demand, even under <em>Banner only</em></li>
             <li>🔇 One-click <strong class="text-text">Banner only</strong> in <em>Tools → Notifications</em> mutes speech + chime, keeps the banner</li>
             <li>🗣️ Any macOS voice via <code>notify_voice</code>; multi-part lines land as separate beats with a short pause between them</li>
@@ -306,7 +317,7 @@
   <section class="mx-auto max-w-6xl px-5 py-4">
     <div class="rounded-2xl border border-line bg-panel/50 p-7 sm:p-10 grid lg:grid-cols-2 gap-10 items-center">
       <div>
-        <p class="text-brand text-sm font-mono">subagents</p>
+        <p class="text-brand text-sm font-mono">subagent rollup</p>
         <h2 class="mt-3 text-2xl sm:text-3xl font-bold tracking-tight">A long <code class="text-brand">Task</code> won't lie to you.</h2>
         <p class="mt-4 text-mute">
           When a session fans out into <code class="text-brand">Task</code> subagents, the row grows a
@@ -316,12 +327,12 @@
         </p>
         <ul class="mt-5 space-y-2 text-sm text-mute">
           <li>🤖 Live count of in-flight subagents on the parent row</li>
-          <li>🧾 Submenu lists each one — description, model chip, current tool, runtime</li>
+          <li>🧾 Per-agent detail stays in the extension — the bar answers <em>how many</em></li>
           <li>🟡 Parent holds <em>working</em> until the last subagent returns</li>
         </ul>
       </div>
 
-      <!-- subagent submenu mock -->
+      <!-- parent-row mock: the badge is the whole feature now -->
       <div class="rounded-xl bg-panel border border-line overflow-hidden font-mono text-sm glow">
         <div class="px-4 py-2.5 flex items-center gap-3 border-b border-line/70 bg-panel2/40">
           <span class="text-working blink">🟡</span>
@@ -331,19 +342,13 @@
         </div>
         <ul class="divide-y divide-line/60 text-xs">
           <li class="px-4 py-2 flex items-center gap-2">
-            <span class="text-mute">↳</span><span class="flex-1 truncate">Audit token validation paths</span>
-            <span class="rounded bg-panel2 px-1.5 py-0.5 text-ack">sonnet-4-6</span>
-            <span class="text-mute">Grep · 1m04s</span>
+            <span class="text-mute">📁</span><span class="flex-1 truncate">auth-service</span>
           </li>
           <li class="px-4 py-2 flex items-center gap-2">
-            <span class="text-mute">↳</span><span class="flex-1 truncate">Rewrite middleware tests</span>
-            <span class="rounded bg-panel2 px-1.5 py-0.5 text-brand">opus-4-8</span>
-            <span class="text-mute">Edit · 0m41s</span>
+            <span class="text-mute">⑂</span><span class="flex-1 truncate">feat/middleware-rewrite</span>
           </li>
           <li class="px-4 py-2 flex items-center gap-2">
-            <span class="text-mute">↳</span><span class="flex-1 truncate">Check callers across repo</span>
-            <span class="rounded bg-panel2 px-1.5 py-0.5 text-ack">sonnet-4-6</span>
-            <span class="text-mute">Bash · 0m12s</span>
+            <span class="text-mute">◷</span><span class="flex-1 truncate">62% — 380k/1000k</span>
           </li>
         </ul>
       </div>
@@ -411,7 +416,7 @@ brew install alexey-krylov/claude-agents-bar/claude-agents-bar</pre>
   <section id="how" class="mx-auto max-w-6xl px-5 py-14 border-t border-line/60">
     <h2 class="text-2xl font-bold tracking-tight">How it works</h2>
     <div class="mt-6 grid md:grid-cols-2 gap-8 text-mute">
-      <p>A Python script polls every 5 seconds. It reads the JSONL transcripts Claude Code already writes (for titles and <code>cwd</code>) plus a small sidecar TSV that a Claude Code hook updates on every session event — <code>SessionStart</code>, <code>PreToolUse</code>, <code>Stop</code>, and friends.</p>
+      <p>A Python script polls every 5 seconds. It reads the JSONL transcripts Claude Code already writes (for titles and <code>cwd</code>) plus a small sidecar TSV that a Claude Code hook updates on every session event — <code>UserPromptSubmit</code>, <code>PreToolUse</code>, <code>PermissionRequest</code>, <code>Stop</code>, and friends. (Not <code>SessionStart</code>: the editor fires it on every tab switch, which would light up rows nobody is working in.)</p>
       <p>No daemon, no IPC. The plugin is stateless and rebuilds the menu from disk on every tick. Without the hook it still runs, but every session reads as <code>idle</code> — the state TSV is what distinguishes <em>working</em> / <em>waiting</em> from idle.</p>
     </div>
     <div class="mt-6 flex flex-wrap gap-3 text-sm">
