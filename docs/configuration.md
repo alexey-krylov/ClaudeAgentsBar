@@ -53,8 +53,8 @@ restart needed.
 | `notify_voice` | `null` | `say(1)` voice for the spoken phrase. `null` / absent uses the system default voice. A voice name (`"Samantha"`, `"Daniel"`, `"Yuri"`, …) invokes `say -v <name>`. The sentinel `"off"` skips the spoken phrase entirely. Run `say -v '?'` in Terminal to list installed voices. Shared between Stop and PermissionRequest. |
 | `notify_say_gap_sec` | `1` | Speech serialization (only one `say(1)` speaks at a time — see *Speech serialization* below). The pause held **after** each spoken notification before the next may start, in seconds (fractions ok). `0` keeps the serialization but adds no pause. |
 | `notify_say_stale_sec` | `30` | Speech serialization. A spoken notification that has waited for the speech lock longer than this many seconds is **dropped unspoken** — a stale announcement lagging behind reality is noise. See *Speech serialization* below. |
-| `notify_summary_marker` | `"-- "` | Prefix of the assistant's italic closing line `*-- Name - Summary*` (name and summary split on the first `" - "`). Drives the **Stop** speech/banner (the summary), the **awaiting** speech/banner (name + summary), and — only when `use_session_titles_for_menubar` is on — the **menu title** (the name). `null` / `""` disables it everywhere. Matched literally (no regex), last line only. See *Spoken summary* below. |
-| `use_session_titles_for_menubar` | `false` | Whether the menu row title uses the response-marker **name** (`*-- Name - Summary*`). `false` (default): the row shows Claude Code's own `ai-title` — the same English label **VSCode displays**, so the menu stays consistent with the editor. `true`: the marker name takes priority over `ai-title`, surfacing your own wording (e.g. Russian) in the menu. Independent of this knob, the marker is **always** parsed for the spoken notifications (the awaiting hook reads name + summary in Bash) — so the primary reason to write the marker, *voice*, works either way. When off, the per-tick title parse is skipped entirely. See *Spoken summary* below. |
+| `notify_summary_marker` | `"-- "` | Prefix of the assistant's italic closing line `*-- Name - Summary*` (name and summary split on the first `" - "`). Drives the **Stop** speech/banner (the summary), the **awaiting** speech (name + summary) and banner (the summary, next to the menu title), and — only when `use_session_titles_for_menubar` is on — the **menu title** (the name). `null` / `""` disables it everywhere. Matched literally (no regex), last line only. See *Spoken summary* below. |
+| `use_session_titles_for_menubar` | `false` | Whether the menu row title uses the response-marker **name** (`*-- Name - Summary*`). `false` (default): the row shows Claude Code's own `ai-title` — the same English label **VSCode displays**, so the menu stays consistent with the editor. `true`: the marker name takes priority over `ai-title`, surfacing your own wording (e.g. Russian) in the menu. Independent of this knob, the marker is **always** parsed for the spoken notifications (the awaiting hook reads name + summary in Bash) — so the primary reason to write the marker, *voice*, works either way. The notification banners name the session the same way, so this knob changes their title too. When off, the per-tick title parse is skipped entirely. See *Spoken summary* below. |
 | `remind_recap_after_min` | `null` | Controls the *Remind* submenu action. When the time since a session's last output (its transcript mtime) is **≥** this many minutes, a Remind click speaks the session's **opening** summary first, then its **latest** one — so you recall what a cold session was about before where it is now. While you're still in the flow (less time elapsed) it speaks only the latest. `null` / absent (default): always latest only. `0`: always recap. A session with a single summary speaks it once either way. See *Spoken summary* below. |
 | `notify_idle_interval_min` | `30` | Idle-session reminders. A finished session that sits 🟢 **green** (unread — you haven't clicked it) past this many minutes gets re-announced on the plugin tick (chime + spoken phrase + banner, like an awaiting prompt). Each subsequent reminder **doubles** the wait: 30, 60, 120, … minutes after the session finished. The number of reminders is bounded by how long the row stays green — `fresh_minutes` (default 60), after which it auto-fades to 🔵 and reminders stop — so the default 30-min start gives one reminder (at 30 min) within the green window; raise `fresh_minutes` for more. Clicking the session (or *Tools → Acknowledge all*) ends the schedule. `0` / `null` turns the feature off. Respects `quiet_hours` and the *Banner only* audio mode. See *Idle reminders* below. |
 | `notify_idle_phrases` | `["Don't forget me", "Still unread", "Pending review", "Your turn"]` | Phrases spoken aloud and shown in the banner for an idle-session reminder. One is chosen at random per reminder. |
@@ -153,9 +153,9 @@ reminder schedule ends).
 | | **Stop** (done) | **Awaiting** (blocked) | **Idle** (unread) |
 |---|---|---|---|
 | **Trigger** | `Stop` hook — session finished | `PermissionRequest` hook — tool-approval prompt, then repeated on the plugin tick while it stands | plugin tick — green & unread past the interval |
-| **Banner line 1** | session `ai-title` | `❓ <phrase>` | `⚠️ <phrase>` |
+| **Banner line 1** | session title, as in the menu | `❓ <phrase>` | `⚠️ <phrase>` |
 | **Banner line 2** | `<project> — <icon> <branch>` | ← same | ← same |
-| **Banner line 3** | summary (else phrase) | `name — summary` | `name — summary` |
+| **Banner line 3** | summary (else phrase) | `title — summary` | `title — summary` |
 | **Spoken (`say`)** | phrase → summary | phrase → name → summary | phrase → name → summary |
 | **Chime** | `Hero` (`notify_sound_stop`) | `Funk` (`notify_sound_wait`) | `Submarine` (`notify_sound_idle`) |
 | **Phrases** | `notify_phrases` | `notify_wait_phrases` | `notify_idle_phrases` |
@@ -168,6 +168,12 @@ notification — the plugin re-runs `notify-wait.sh` with the session id as
 an argument instead of a payload — so a repeat is indistinguishable from
 the original rather than a near-duplicate with knobs of its own. Cadence
 under *Blocked reminders* below.
+
+**The session title** on a banner (line 1 of Stop, the `title` in line 3
+of the other two) is exactly what the menu row shows — the same priority
+order, including a manual rename in the IDE and
+`use_session_titles_for_menubar`. The *spoken* name is still the marker
+name, whatever the menu shows.
 
 Reading across the rows:
 
@@ -474,10 +480,10 @@ The two fields feed four places:
 
 | Where | Field used |
 |---|---|
-| **Menu title** | the **name** — shown in place of Claude Code's auto-generated English title. |
+| **Menu title** | the **name** — shown in place of Claude Code's auto-generated English title (only with `use_session_titles_for_menubar`; the banners follow the menu). |
 | **Stop** (session finished) | the **summary** — `say` reads the random phrase **then** the summary ("Done. Migrated the auth module"); the banner shows the summary alone. |
-| **Awaiting** (permission prompt) | the **name + summary** — `say` reads the awaiting phrase, then the name, then the summary, so you can tell by ear which session is blocked and what it was doing; the banner shows `name — summary`. At a prompt the current turn hasn't closed with its marker yet, so these come from the last completed turn. |
-| **Idle** (unread reminder) | the **name + summary** — same as awaiting (phrase → name → summary spoken; banner line 3 `name — summary`), re-announcing a finished session you haven't read. |
+| **Awaiting** (permission prompt) | the **name + summary** — `say` reads the awaiting phrase, then the name, then the summary, so you can tell by ear which session is blocked and what it was doing; the banner shows `title — summary`, with the session title as the menu shows it. At a prompt the current turn hasn't closed with its marker yet, so these come from the last completed turn. |
+| **Idle** (unread reminder) | the **name + summary** — same as awaiting (phrase → name → summary spoken; banner line 3 `title — summary`), re-announcing a finished session you haven't read. |
 
 **Backward compatible:** a single-field line (`*-- just a summary*`, no
 `" - "`) still works — there's no name, so the menu falls through to the

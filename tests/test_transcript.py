@@ -739,5 +739,69 @@ class TestReadTranscriptMetaSessionTitle(unittest.TestCase):
         self.assertEqual(meta.display_title, "English Topic")
 
 
+class TestReadDisplayMeta(unittest.TestCase):
+    """:func:`sidecars.read_display_meta` — the one title rule shared by the
+    menu row, the notification banners and the delete dialog.
+
+    Regression: the Stop banner picked its own title (ai-title → first
+    prompt) in Bash, so a session renamed in the IDE showed one name in the
+    menu and its auto-title on the banner.
+    """
+
+    USER = (
+        '{"type":"user","cwd":"/proj","entrypoint":"cli",'
+        '"message":{"content":[{"type":"text","text":"first prompt"}]}}\n'
+    )
+    AI_TITLE = '{"type":"ai-title","aiTitle":"A"}\n'
+    RENAME_1 = '{"type":"custom-title","customTitle":"B1"}\n'
+    RENAME_2 = '{"type":"custom-title","customTitle":"B2"}\n'
+    MARKER_REPLY = (
+        '{"type":"assistant","message":{"content":'
+        '[{"type":"text","text":"Done.\\n\\n*-- C - summary*"}]}}\n'
+    )
+    PLAIN_REPLY = (
+        '{"type":"assistant","message":{"content":'
+        '[{"type":"text","text":"Done."}]}}\n'
+    )
+
+    def setUp(self):
+        isolate_ai_title_cache(self)
+        self._orig_config = plugin.core.CONFIG
+        self.addCleanup(setattr, plugin.core, "CONFIG", self._orig_config)
+
+    def _title(self, body: str, flag: bool) -> str:
+        from dataclasses import replace
+        plugin.core.CONFIG = replace(
+            self._orig_config,
+            use_session_titles_for_menubar=flag,
+            notify_summary_marker="-- ",
+        )
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        path = Path(path)
+        path.write_text(body, encoding="utf-8")
+        self.addCleanup(path.unlink)
+        return plugin.sidecars.read_display_meta(path).display_title
+
+    def _full(self) -> str:
+        return (self.USER + self.AI_TITLE + self.RENAME_1
+                + self.MARKER_REPLY + self.RENAME_2)
+
+    def test_flag_on_marker_name_wins(self):
+        self.assertEqual(self._title(self._full(), flag=True), "C")
+
+    def test_flag_off_latest_rename_wins(self):
+        self.assertEqual(self._title(self._full(), flag=False), "B2")
+
+    def test_no_rename_falls_to_ai_title(self):
+        body = self.USER + self.AI_TITLE + self.MARKER_REPLY
+        self.assertEqual(self._title(body, flag=False), "A")
+
+    def test_nothing_falls_to_user_prompt(self):
+        # Flag on, but no marker line, no rename, no ai-title: the prompt.
+        body = self.USER + self.PLAIN_REPLY
+        self.assertEqual(self._title(body, flag=True), "first prompt")
+
+
 if __name__ == "__main__":
     unittest.main()

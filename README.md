@@ -121,9 +121,10 @@ permission prompt (`PermissionRequest`), the plugin plays a short
 chime, speaks a random phrase via macOS `say` (default sets:
 `"Done"` / `"Your turn"` for stop, `"Awaiting input"` / `"I'm blocked"`
 for permission), and shows a clickable banner that jumps straight to
-the waiting session. Both phrase lists are config knobs — replace
-them with whatever you find funnier (jokes, your cat's name, a Star
-Wars soundboard). One-liner exchanges are skipped via
+the waiting session. The banner names the session and its project
+exactly as the menu row does — a rename in the editor included. Both
+phrase lists are config knobs — replace them with whatever you find
+funnier (jokes, your cat's name, a Star Wars soundboard). One-liner exchanges are skipped via
 `notify_threshold_sec`. Both one-shot announcements are also
 **re-nudged** at doubling intervals if you don't act: a finished session
 left 🟢 unread (`notify_idle_interval_min`, 30 min by default) and — the

@@ -21,7 +21,7 @@
 # in the menu until the next 5 s tick.
 #
 # Security: every value that originates outside this script (the session
-# id passed in by SwiftBar; the on-disk ``aiTitle`` written by an LLM) is
+# id passed in by SwiftBar; the session title, LLM- or user-written) is
 # treated as untrusted. The session id is validated against the UUID
 # shape before we touch anything, and the AppleScript dialogs are invoked
 # via ``osascript /dev/stdin "$arg1" "$arg2" …`` so dynamic values arrive
@@ -147,36 +147,17 @@ if [ -z "$JSONL_PATH" ]; then
 fi
 TOOL_RESULTS_DIR="${JSONL_PATH%.jsonl}"
 
-# Show the AI-generated title in the confirm dialog so the user can tell
-# *which* session they're about to delete. Scan only the first 200 lines —
-# the ai-title event is emitted right after the first turn, anything deeper
-# in the file just slows us down.
+# Show the session's menu title in the confirm dialog so the user can tell
+# *which* session they're about to delete — the same name as the row they
+# clicked (manual rename, ai-title, …), resolved by the plugin itself.
 #
-# Security: ``aiTitle`` is LLM-written and influenced by anything Claude
-# read during the session (file contents, web fetches, tool outputs). A
-# prompt injection in that content can drive the LLM to emit AppleScript
-# metacharacters in the title — quotes, escapes, newlines. By the time
-# the value reaches the dialog it's an argv element, not template source,
-# so those characters are inert. The Python below ignores titles that
-# don't parse as a string.
-TITLE="$(/usr/bin/python3 - "$JSONL_PATH" <<'PYEOF' 2>/dev/null || true
-import json, sys
-
-with open(sys.argv[1], "rb") as f:
-    for i, line in enumerate(f):
-        if i > 200:
-            break
-        if b'"type":"ai-title"' not in line:
-            continue
-        try:
-            value = json.loads(line).get("aiTitle", "")
-        except Exception:
-            continue
-        if isinstance(value, str):
-            print(value.strip())
-        break
-PYEOF
-)"
+# Security: the title is LLM- or user-written (``aiTitle`` is influenced by
+# anything Claude read during the session — file contents, web fetches, tool
+# outputs). A prompt injection in that content can drive the LLM to emit
+# AppleScript metacharacters in the title — quotes, escapes, newlines. By the
+# time the value reaches the dialog it's an argv element, not template
+# source, so those characters are inert.
+TITLE="$(/usr/bin/python3 "$PLUGIN" --session-title "$JSONL_PATH" 2>/dev/null || true)"
 [ -z "$TITLE" ] && TITLE="$SID"
 
 # Collapse the user's home prefix to ``~`` so the dialog stays readable

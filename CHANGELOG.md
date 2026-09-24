@@ -5,6 +5,27 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.6.1 — 2026-09-24
+
+### Fixed
+
+- **A banner names the session the way the menu does.** The "done" banner
+  picked its own title — Claude Code's auto-title, else the first prompt —
+  and ignored a rename you made in the IDE, so a session called one thing
+  in the menu could arrive on a banner as another, and read like a
+  different session. Its title now comes from the plugin itself, by the
+  same rule as the menu row, `use_session_titles_for_menubar` included. The
+  awaiting and idle banners pair the summary with that same title, and the
+  *Delete session…* dialog shows it too. What gets spoken is unchanged:
+  those notifications still say the name from the closing marker line.
+
+- **A banner from a worktree names the project, not the branch twice.**
+  Line 2 of every banner took the project from the name of the session's
+  directory. A worktree's directory is named after its branch, so it read
+  `banner-menu-title — ⓦ fix/banner-menu-title`. It now names the owning
+  repository, the way the menu row already did:
+  `ClaudeAgentsBar — ⓦ fix/banner-menu-title`.
+
 ## 1.6.0 — 2026-09-20
 
 ### Added

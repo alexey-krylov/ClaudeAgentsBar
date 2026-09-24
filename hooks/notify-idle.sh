@@ -33,7 +33,8 @@
 #                                             other notify hooks)
 #   notify_summary_marker  string  "-- "    — closing-line marker; the latest
 #                                             turn's name+summary name the
-#                                             session aloud and in the banner
+#                                             session aloud; the banner pairs
+#                                             the summary with the menu title
 #   quiet_hours / quiet_hours_silences      — same silence window as the other
 #                                             hooks
 #   editor_url_scheme      string  "vscode://" — used to build the deeplink so
@@ -118,18 +119,22 @@ if [ -n "$MARKER" ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     { IFS= read -r NAME; IFS= read -r SUMMARY; } < <(_marker_fields_latest "$TRANSCRIPT" "$MARKER")
 fi
 
-# Speech reads the reminder phrase, then the name, then the summary ("Still
-# unread. Чиню баг. нашёл причину") — the phrase carries no emoji. The banner
-# (spec 0009) splits them: line 1 is the phrase with a ⚠️ type marker, line 3
-# is just name — summary (empty when there is no marker turn, no phrase leak).
+# Speech reads the reminder phrase, then the marker name, then the summary
+# ("Still unread. Чиню баг. нашёл причину") — the phrase carries no emoji. The
+# banner (spec 0009) splits them: line 1 is the phrase with a ⚠️ type marker,
+# line 3 is session title — summary, where the title is the menu row's (so a
+# manual rename shows here too); the marker name only stands in when the
+# plugin can't answer. No phrase leak into line 3.
 SAY_TEXT="$PHRASE"
 [ -n "$NAME" ]    && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$NAME"
 [ -n "$SUMMARY" ] && SAY_TEXT="$SAY_TEXT${_SAY_SEP}$SUMMARY"
+BANNER_NAME=$(_session_menu_title "$TRANSCRIPT")
+BANNER_NAME="${BANNER_NAME:-$NAME}"
 BANNER_MSG=""
-if [ -n "$NAME" ] && [ -n "$SUMMARY" ]; then
-    BANNER_MSG="$NAME — $SUMMARY"
-elif [ -n "$NAME" ]; then
-    BANNER_MSG="$NAME"
+if [ -n "$BANNER_NAME" ] && [ -n "$SUMMARY" ]; then
+    BANNER_MSG="$BANNER_NAME — $SUMMARY"
+elif [ -n "$BANNER_NAME" ]; then
+    BANNER_MSG="$BANNER_NAME"
 elif [ -n "$SUMMARY" ]; then
     BANNER_MSG="$SUMMARY"
 fi

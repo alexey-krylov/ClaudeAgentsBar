@@ -127,23 +127,11 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     fi
 fi
 
-# ── Extract task title from transcript ───────────────────────────────────────
-TASK=""
-if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-    TASK=$(tail -r "$TRANSCRIPT" 2>/dev/null \
-        | /usr/bin/jq -r 'select(.type=="ai-title") | .aiTitle // empty' 2>/dev/null \
-        | head -n 1)
-    if [ -z "$TASK" ]; then
-        TASK=$(tail -r "$TRANSCRIPT" 2>/dev/null \
-            | /usr/bin/jq -r \
-                'select(.type=="user")
-                 | select((.message.content | type) == "array")
-                 | select(.message.content[0].type? == "text")
-                 | .message.content[0].text' 2>/dev/null \
-            | head -n 1)
-    fi
-fi
-TITLE=$(printf '%s' "$TASK" | tr '\n' ' ' | head -c 240)
+# ── Session title — the one the menu row shows ───────────────────────────────
+# Same priority as the menu (see _session_menu_title), so a manual rename or
+# the marker name (when use_session_titles_for_menubar is on) reaches the
+# banner too. No transcript / no title → "Done".
+TITLE=$(_session_menu_title "${TRANSCRIPT:-}")
 TITLE="${TITLE:-Done}"
 
 # ── Pick a random phrase ─────────────────────────────────────────────────────
@@ -165,8 +153,8 @@ BANNER_MSG="$PHRASE"
 [ -n "$SUMMARY" ] && BANNER_MSG="$SUMMARY"
 
 # ── Chime + speech + banner (shared emit) ────────────────────────────────────
-# Banner title is the task title from the transcript; the click jumps to the
-# session in the editor. $BANNER_MSG is the extracted summary when present,
+# Banner title is the session's menu title; the click jumps to the session in
+# the editor. $BANNER_MSG is the extracted summary when present,
 # else the random phrase.
 _emit_notification "$TITLE" "$BANNER_MSG" "$SAY_TEXT" \
     "$SESSION_URL" "$SID" "$CWD"

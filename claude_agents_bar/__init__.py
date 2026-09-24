@@ -183,6 +183,9 @@ def main() -> int:
     Recognised subcommands:
 
     * ``--ack-fresh`` runs the bulk acknowledgement (Tools → Acknowledge all).
+    * ``--session-title <transcript>`` prints the session's menu title, for
+      the notification banners and the delete dialog.
+    * ``--banner-subtitle <cwd>`` prints a banner's ``project — branch`` line.
     * ``--print-strings`` emits localized shell variables for bin/*.sh.
     * ``--doctor`` runs the deeper health checks behind ``claude-agents-bar doctor``.
     * ``--stats-today`` shows today's activity summary in a modal dialog.
@@ -196,6 +199,10 @@ def main() -> int:
     """
     if len(sys.argv) > 1 and sys.argv[1] == "--ack-fresh":
         return actions._run_ack_fresh()
+    if len(sys.argv) > 1 and sys.argv[1] == "--session-title":
+        return actions._run_session_title(sys.argv[2] if len(sys.argv) > 2 else "")
+    if len(sys.argv) > 1 and sys.argv[1] == "--banner-subtitle":
+        return actions._run_banner_subtitle(sys.argv[2] if len(sys.argv) > 2 else "")
     if len(sys.argv) > 1 and sys.argv[1] == "--print-strings":
         actions._print_shell_strings()
         return 0

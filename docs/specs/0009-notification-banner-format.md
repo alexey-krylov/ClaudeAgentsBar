@@ -29,13 +29,14 @@ coloured emoji rather than a wasted label line.
 
 | | **Stop** | **Awaiting** | **Idle** |
 |---|---|---|---|
-| **Line 1** `-title` | `ai-title` → first user message → `Done` *(unchanged)* | `❓ <phrase>` | `⚠️ <phrase>` |
+| **Line 1** `-title` | session title as the menu shows it → `Done` | `❓ <phrase>` | `⚠️ <phrase>` |
 | **Line 2** `-subtitle` | `<project> — <icon> <branch>` | `<project> — <icon> <branch>` | `<project> — <icon> <branch>` |
-| **Line 3** `-message` | `<summary>`, else `<phrase>` *(unchanged)* | `<name> — <summary>` | `<name> — <summary>` |
+| **Line 3** `-message` | `<summary>`, else `<phrase>` *(unchanged)* | `<title> — <summary>` | `<title> — <summary>` |
 
 `<phrase>` is the random pick from `notify_wait_phrases` /
-`notify_idle_phrases`; `<name>` / `<summary>` are the two fields of the
-latest `*-- Name - Summary*` marker turn (spec 0007).
+`notify_idle_phrases`; `<summary>` is the second field of the latest
+`*-- Name - Summary*` marker turn (spec 0007); `<title>` is the session
+title exactly as the menu row shows it (see the amendment below).
 
 ### Line 1 — type indicator
 
@@ -55,16 +56,18 @@ already there; only the `-title` argument gets the prefix. The two
 emoji are **hardcoded constants** in the shims, not config knobs (KISS;
 a knob can be added later if asked).
 
-For Stop, line 1 is untouched: it stays the `ai-title` of the session
-(falling back to the first user message, then `Done`).
+For Stop, line 1 carries no prefix: it is the session title (see the
+amendment below), falling back to `Done`.
 
 ### Line 2 — project / branch
 
 The subtitle is computed inside `_emit_notification` from the session
 `cwd` (already passed as `$6`), uniformly for all three surfaces:
 
-* **project** = `basename "$cwd"` — matches the menu submenu's project
-  line (`core._project_name`, which is `Path(cwd).name`).
+* **project** = labelled like the menu row — the owning repository for a
+  linked worktree (`sidecars.project_path`), else `cwd`'s name. *(Was
+  `basename "$cwd"`, which showed a worktree's branch-named directory;
+  see the amendment below.)*
 * **branch** = read straight from `.git/HEAD` (worktree-aware: a `.git`
   *file* is followed through its `gitdir:` indirection; detached HEAD
   yields the 7-char SHA) — mirroring `sidecars.current_git_branch` so
@@ -79,7 +82,8 @@ to just `"<project>"` when no branch is resolvable, or empty (the
 ` — `; line 3 uses the same dash for `name — summary`, but the two lines
 are never confused in context.
 
-This is a **bash re-read of `.git/HEAD`**, deliberately *not* a new
+This was originally a **bash re-read of `.git/HEAD`** (now computed by the
+plugin, see the amendment below), deliberately *not* a new
 column in `agent-state.tsv`: the notify hooks (`notify-stop.sh`,
 `notify-wait.sh`) run as Claude Code hooks with no access to the Python
 plugin, the read is a couple of small file reads (no `git` subprocess,
@@ -115,7 +119,8 @@ line 1. Stop's message is unchanged (summary, else phrase).
 
 1. `bash -n hooks/_notify-common.sh hooks/notify-stop.sh
    hooks/notify-wait.sh hooks/notify-idle.sh` exits 0.
-2. `_git_branch_from_cwd "<repo>"` echoes the branch checked out in
+2. *(Superseded by the amendment — now `render.banner_subtitle`.)*
+   `_git_branch_from_cwd "<repo>"` echoes the branch checked out in
    `<repo>` (verified against `git -C <repo> rev-parse --abbrev-ref
    HEAD`); a linked worktree echoes the worktree's branch; a non-repo
    path echoes empty.
@@ -138,3 +143,25 @@ line 1. Stop's message is unchanged (summary, else phrase).
 * A JSONL `gitBranch` fallback in bash — see the accepted trade-off.
 * Caching branch in `agent-state.tsv` — rejected (changes the TSV
   schema + Python parser for no measurable gain).
+
+## Amendment (2026-09-24) — the banner names the session like the menu
+
+Originally Stop's line 1 was `ai-title` → first user message, derived in
+Bash, and the awaiting / idle line 3 used the marker `<name>`. Both ignored
+a manual rename in the IDE (`custom-title`) and
+`use_session_titles_for_menubar`, so a banner could name a session
+differently from its menu row — enough to read as a different session.
+Now every banner takes the title from the plugin
+(`claude-agents.5s.py --session-title`, backed by
+`sidecars.read_display_meta`), the same call the menu row uses. The spoken
+text is unchanged: awaiting / idle still *say* the marker name.
+
+Line 2 had the same drift. Its bash `basename "$cwd"` labelled a linked
+worktree by its own directory — named after the branch — so the banner
+read `fix-x — ⓦ fix/x`, the branch twice and no project, while the menu row
+already showed the owning repository. `_banner_subtitle` now asks the
+plugin (`--banner-subtitle <cwd>` → `render.banner_subtitle`), which labels
+the project through `sidecars.project_path` like `build_session` does and
+reads the branch with `sidecars.current_git_branch`; the bash
+`_git_branch_from_cwd` copy is gone. The hooks are registered `async`, so
+the extra interpreter start costs Claude Code nothing.

@@ -31,6 +31,8 @@
 #                                session's cwd, then opens its deeplink.
 #   * `_CAB_HOOK_DIR`          — real (symlink-resolved) hooks directory,
 #                                used to locate the sibling helper scripts.
+#   * `_session_menu_title`    — transcript → the session title the menu
+#                                row shows (asks the plugin; one rule).
 #   * `_compute_quiet_state`   — sets `QUIET_NOW` plus
 #                                `SUPPRESS_SOUND` / `SUPPRESS_VOICE` /
 #                                `SUPPRESS_BANNER` from the scheduled
@@ -258,6 +260,21 @@ _summary_endpoints() {
               last = s
           } }
         END { if (fs) { print first; print last } }'
+}
+
+# ── Session title (same as the menu row) ─────────────────────────────────────
+# Echo the title the menu shows for this transcript, or nothing. The priority
+# order (marker name when use_session_titles_for_menubar is on → latest
+# custom-title → ai-title → latest user prompt → first) lives only in Python
+# (sidecars.read_display_meta), so we ask the plugin rather than re-derive it
+# here — a banner that names a session differently from its row reads as a
+# different session. ~60 ms under /usr/bin/python3. Missing transcript or a
+# failing interpreter → empty; callers fall back.
+_CAB_PLUGIN="${_CAB_HOOK_DIR}/../claude-agents.5s.py"
+_session_menu_title() {
+    local transcript="$1"
+    [ -n "$transcript" ] && [ -f "$transcript" ] && [ -f "$_CAB_PLUGIN" ] || return
+    /usr/bin/python3 "$_CAB_PLUGIN" --session-title "$transcript" 2>/dev/null
 }
 
 # ── Sound resolver ───────────────────────────────────────────────────────────
@@ -497,58 +514,18 @@ _pick_phrase() {
 # here — deliberately a hook constant, not a config knob.
 _SAY_SEP=". [[slnc 100]] "
 
-# ── Banner subtitle: "<project> / <branch>" from the session cwd ─────────────
-# Spec 0009. Recomputed at banner time from the session's working dir so the
-# subtitle matches the menu submenu (project = basename, branch read straight
-# from .git/HEAD — worktree-aware, detached HEAD → short SHA). A couple of
-# small file reads, no `git` subprocess — cheap enough for an event hook. No
-# JSONL fallback: a deleted cwd yields project-only / empty, the accepted
-# trade-off in spec 0009.
-_git_branch_from_cwd() {
-    local cwd="$1" gitmarker head_file indirection gitdir head
-    [ -n "$cwd" ] || return 0
-    gitmarker="$cwd/.git"
-    if [ -d "$gitmarker" ]; then
-        head_file="$gitmarker/HEAD"
-    elif [ -f "$gitmarker" ]; then
-        # Linked worktree: .git is a file "gitdir: <path>"; HEAD lives there.
-        indirection=$(cat "$gitmarker" 2>/dev/null)
-        case "$indirection" in
-            gitdir:*) gitdir="${indirection#gitdir:}"
-                      gitdir="${gitdir# }"
-                      head_file="$gitdir/HEAD" ;;
-            *) return 0 ;;
-        esac
-    else
-        return 0
-    fi
-    head=$(cat "$head_file" 2>/dev/null) || return 0
-    case "$head" in
-        "ref: refs/heads/"*) printf '%s' "${head#ref: refs/heads/}" ;;
-        "") return 0 ;;
-        *) printf '%s' "${head:0:7}" ;;   # detached HEAD → short SHA
-    esac
-}
-
-# "<project> — <icon> <branch>", or just "<project>" outside a repo, or empty
-# when cwd is unknown. The icon before the branch marks the checkout kind: ⓦ
-# for a linked worktree (.git is a file), ⎇ for an ordinary branch — the
-# plain-text banner analogue of the submenu's worktree marker / branch glyph.
+# ── Banner subtitle: "<project> — <icon> <branch>" from the session cwd ──────
+# Spec 0009. Asked of the plugin (render.banner_subtitle) rather than derived
+# here, so the project is labelled exactly like the menu row: a worktree by
+# its owning repository, not by its own directory — which is named after the
+# branch, so a basename here showed the branch twice and the project never.
+# ⓦ marks a linked worktree, ⎇ an ordinary branch; just "<project>" outside a
+# repo; empty when cwd is unknown. No JSONL fallback: a deleted cwd yields
+# project-only / empty, the accepted trade-off in spec 0009.
 _banner_subtitle() {
-    local cwd="$1" project branch icon
-    [ -n "$cwd" ] || return 0
-    project=$(basename "$cwd")
-    branch=$(_git_branch_from_cwd "$cwd")
-    if [ -z "$branch" ]; then
-        printf '%s' "$project"
-        return 0
-    fi
-    if [ -f "$cwd/.git" ]; then
-        icon="ⓦ"   # linked worktree
-    else
-        icon="⎇"   # ordinary branch
-    fi
-    printf '%s — %s %s' "$project" "$icon" "$branch"
+    local cwd="$1"
+    [ -n "$cwd" ] && [ -f "$_CAB_PLUGIN" ] || return 0
+    /usr/bin/python3 "$_CAB_PLUGIN" --banner-subtitle "$cwd" 2>/dev/null
 }
 
 # ── Speech serialization lock (spec 0010) ────────────────────────────────────

@@ -31,6 +31,7 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
@@ -1386,6 +1387,27 @@ def read_transcript_meta(jsonl_path: Path) -> TranscriptMeta:
     )
 
 
+def read_display_meta(jsonl_path: Path) -> TranscriptMeta:
+    """:func:`read_transcript_meta` plus the latest-prompt fallback.
+
+    The one place the session title is resolved: the menu row, the
+    notification banners and the delete dialog all read
+    :attr:`TranscriptMeta.display_title` off this, so a session is called the
+    same thing everywhere. The hooks get it through ``--session-title``.
+
+    ``ai-title`` only appears after the first turn — for a session whose first
+    message hasn't been summarized yet we fall back to the latest *real* user
+    prompt (not the first, since by then the conversation has often moved on).
+    Only worth the extra tail read when ``ai_title`` is missing.
+    """
+    meta = read_transcript_meta(jsonl_path)
+    if not meta.ai_title:
+        last_user = last_user_message_preview(jsonl_path)
+        if last_user:
+            meta = replace(meta, last_user_message=last_user)
+    return meta
+
+
 def _parse_ai_title(raw: bytes) -> str | None:
     """Decode a single ``ai-title`` JSONL line; return ``None`` if unparseable."""
     try:
@@ -1777,6 +1799,16 @@ def worktree_main_repo(cwd: str) -> str:
     if idx <= 0:
         return ""
     return gitdir[:idx]
+
+
+def project_path(cwd: str) -> str:
+    """Directory a session's project label is taken from.
+
+    The owning repository for a linked worktree (see
+    :func:`worktree_main_repo`), else ``cwd`` itself. Shared by the menu row
+    and the notification banner subtitle so both name the same project.
+    """
+    return worktree_main_repo(cwd) or cwd
 
 
 def fallback_git_branch_from_jsonl(jsonl_path: Path) -> str:

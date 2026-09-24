@@ -182,16 +182,7 @@ def build_session(
         interaction_ts = max(interaction_ts, jsonl_mtime, live_subagent_ts)
     age = now - interaction_ts
 
-    meta = sidecars.read_transcript_meta(jsonl)
-    # AI-generated titles only appear after the first turn — for sessions
-    # whose first user message hasn't been summarized yet we fall back to
-    # the latest *real* user prompt (not first, since by then the
-    # conversation has often moved on). Only worth the extra tail-read
-    # when ``ai_title`` is missing.
-    if not meta.ai_title:
-        last_user = sidecars.last_user_message_preview(jsonl)
-        if last_user:
-            meta = replace(meta, last_user_message=last_user)
+    meta = sidecars.read_display_meta(jsonl)
     cwd = sidecar_cwd or meta.cwd
     branch = sidecars.current_git_branch(cwd) or sidecars.fallback_git_branch_from_jsonl(jsonl)
     is_worktree = sidecars.is_worktree_checkout(cwd)
@@ -203,7 +194,7 @@ def build_session(
         max(0, now - state_since) if hook_state in ACTIVE_HOOK_STATES else 0
     )
 
-    project_dir = sidecars.worktree_main_repo(cwd)
+    project_dir = sidecars.project_path(cwd)
     return Session(
         id=jsonl.stem,
         hook_state=hook_state,
@@ -216,8 +207,8 @@ def build_session(
         # which the submenu's branch line already shows, so using it here
         # would repeat the branch and hide the project. Falls back to the
         # plain cwd for a worktree we can't resolve.
-        project=_project_name(project_dir or cwd, jsonl.parent.name),
-        project_dir=project_dir or cwd,
+        project=_project_name(project_dir, jsonl.parent.name),
+        project_dir=project_dir,
         git_branch=branch,
         cwd=cwd,
         entrypoint=meta.entrypoint,
@@ -230,6 +221,27 @@ def build_session(
         subagents=subagents,
         is_worktree=is_worktree,
     )
+
+
+def banner_subtitle(cwd: str) -> str:
+    """Notification banner line 2: ``<project> — <icon> <branch>``.
+
+    Built from the same pieces as the menu row — the project is labelled the
+    way :func:`build_session` labels it (a worktree by its owning repository,
+    not by its own branch-named directory), the branch is
+    :func:`sidecars.current_git_branch`. ``<icon>`` is ``ⓦ`` for a linked
+    worktree, ``⎇`` for an ordinary branch. Just ``<project>`` outside a repo,
+    ``""`` when ``cwd`` is unknown. The hooks get it through
+    ``--banner-subtitle``.
+    """
+    if not cwd:
+        return ""
+    project = _project_name(sidecars.project_path(cwd), "")
+    branch = sidecars.current_git_branch(cwd)
+    if not branch:
+        return project
+    icon = "ⓦ" if sidecars.is_worktree_checkout(cwd) else "⎇"
+    return f"{project} — {icon} {branch}"
 
 
 def collect_sessions(now: int) -> list[Session]:

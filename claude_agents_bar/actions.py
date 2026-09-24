@@ -7,9 +7,10 @@ Three things live here:
 * ``_print_shell_strings`` — emits localized ``MSG_*`` variables for
   ``bin/app/*.sh`` so the AppleScript dialogs stay translated without
   duplicating the string tables on the shell side.
-* The dispatcher wires (``--ack-fresh``) — the heavy lifting still lives
-  in :mod:`claude_agents_bar.sidecars`, this module just owns the CLI
-  surface that ``bin/app/ack-fresh.sh`` calls.
+* The dispatcher wires (``--ack-fresh``, ``--session-title``,
+  ``--banner-subtitle``) — the heavy
+  lifting still lives in :mod:`claude_agents_bar.sidecars`, this module just
+  owns the CLI surface that ``bin/app/*.sh`` and ``hooks/notify-*.sh`` call.
 
 Diagnostics for *claude-agents-bar doctor* live in
 :mod:`claude_agents_bar.doctor` instead; that's a console diagnostic,
@@ -23,7 +24,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import core, sidecars
+from . import core, render, sidecars
 from .core import (
     JSONL_TAIL_BYTES,
     _USAGE_BLOCK_RE,
@@ -400,4 +401,42 @@ def _run_ack_fresh() -> int:
     except Exception as exc:
         _warn(f"ack-fresh failed: {exc}")
         return 1
+    return 0
+
+
+def _run_session_title(arg: str) -> int:
+    """Print the session's menu title for the shell side (``--session-title``).
+
+    The banners (``hooks/notify-*.sh``) and the delete dialog call this so a
+    session carries the same name there as in its menu row — the priority
+    order lives only in :func:`sidecars.read_display_meta` /
+    :attr:`TranscriptMeta.display_title`, never in Bash. ``arg`` is the
+    transcript path. Anything but an existing ``*.jsonl`` prints nothing and
+    exits 1; the callers treat empty output as "no title" and fall back.
+    """
+    path = Path(arg).expanduser()
+    if path.suffix != ".jsonl" or not path.is_file():
+        return 1
+    try:
+        title = sidecars.read_display_meta(path).display_title
+    except Exception as exc:
+        _warn(f"session-title failed: {exc}")
+        return 1
+    if title:
+        print(title)
+    return 0
+
+
+def _run_banner_subtitle(cwd: str) -> int:
+    """Print the notification banner's line 2 for ``cwd`` (``--banner-subtitle``).
+
+    See :func:`render.banner_subtitle`. Empty ``cwd`` prints nothing.
+    """
+    try:
+        subtitle = render.banner_subtitle(cwd)
+    except Exception as exc:
+        _warn(f"banner-subtitle failed: {exc}")
+        return 1
+    if subtitle:
+        print(subtitle)
     return 0

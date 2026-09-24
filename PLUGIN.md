@@ -395,13 +395,23 @@ chime + speech + banner tail and the random-phrase picker are factored
 into `_emit_notification` / `_pick_phrase` in `hooks/_notify-common.sh`,
 so all three notify scripts share one implementation and differ only in
 sound / phrases / title. The shared banner layout (spec 0009): line 1 is
-the title each shim passes (Stop's `ai-title`; the phrase prefixed with a
+the title each shim passes (Stop's session title; the phrase prefixed with a
 type emoji — ❓ awaiting, ⚠️ idle — for the other two), line 2 is the
-session's `<project> — <icon> <branch>` computed by `_banner_subtitle`
-from the cwd (`_git_branch_from_cwd` reads `.git/HEAD` worktree-aware,
-mirroring `sidecars.current_git_branch`; `<icon>` is `ⓦ` for a worktree
-or `⎇` for an ordinary branch), line 3 is the marker `name — summary`.
+session's `<project> — <icon> <branch>`, which `_banner_subtitle` gets
+from the plugin (`--banner-subtitle <cwd>` → `render.banner_subtitle`:
+the project labelled like the menu row, a worktree by its owning repo;
+`<icon>` is `ⓦ` for a worktree or `⎇` for an ordinary branch), line 3 is
+`title — summary`.
 The emoji is banner-only — it's never in the `say` text.
+
+Neither the session title nor the project label is derived in Bash:
+`_session_menu_title` asks
+the plugin (`claude-agents.5s.py --session-title <transcript>`, ~60 ms),
+which prints `sidecars.read_display_meta(...).display_title` — the same
+call `render.build_session` makes for the menu row. The delete dialog
+uses the same flag. Keep both rules in Python only; a second copy in a
+hook is how the banner and the row drifted apart before. The *spoken*
+name on awaiting / idle stays the marker name (`_marker_fields_latest`).
 
 The `say` step is serialized across processes by `_say_lock_acquire` /
 `_say_lock_release` (an atomic `mkdir` mutex at
