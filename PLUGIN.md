@@ -387,7 +387,7 @@ side effects (sound, banner) rather than touching the TSV:
 | Hook | Fires on | What it does |
 |---|---|---|
 | `hooks/notify-stop.sh` | `Stop` | Plays `Hero.aiff`, speaks a phrase from `notify_phrases`, shows a `terminal-notifier` banner. Has a `notify_threshold_sec` knob so quick one-liners don't beep. With `notify_summary_marker` set (default `"-- "`), when the assistant's closing line starts with the marker, `say` appends that line's text to the phrase and the banner shows it alone — see [spec 0005](./docs/specs/0005-voice-summary.md). |
-| `hooks/notify-wait.sh` | `PermissionRequest` | Plays `Funk.aiff`, speaks a phrase from `notify_wait_phrases`, shows a banner whose click jumps straight to the waiting session. No threshold — every approval prompt is intentional. |
+| `hooks/notify-wait.sh` | `PermissionRequest` | Plays `Funk.aiff`, speaks a phrase from `notify_wait_phrases`, shows a banner whose click jumps straight to the waiting session. No threshold — every approval prompt is intentional — except in auto mode, where the event precedes the classifier's verdict: there the announcement waits `notify_wait_auto_grace_sec` and is dropped if `agent-state.tsv` shows the request resolved. |
 
 Both read the same JSON config the plugin uses and degrade gracefully
 when `terminal-notifier` / `jq` / the icon asset isn't present. The

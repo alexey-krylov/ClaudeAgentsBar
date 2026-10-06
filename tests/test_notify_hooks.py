@@ -161,6 +161,69 @@ class TestBannerNamesSessionLikeMenu(unittest.TestCase):
         self.assertEqual((out.returncode, out.stdout), (1, ""))
 
 
+    # ── Auto-mode grace: PermissionRequest fires before the classifier rules ──
+
+    def _wait_hook(self, mode: str, parent_row: tuple = (), subagent_row: tuple = (),
+                   agent_id: str = "") -> bool:
+        """Run notify-wait.sh as a hook with a 1 s grace; True if it bannered."""
+        env = self._env(flag=False)
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["notify_wait_auto_grace_sec"] = 1
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        claude = self.home / ".claude"
+        if parent_row:
+            (claude / "agent-state.tsv").write_text(
+                "\t".join(str(c) for c in (_SID,) + parent_row) + "\n")
+        if subagent_row:
+            (claude / "agent-state.subagents.tsv").write_text(
+                "\t".join(str(c) for c in (_SID, agent_id) + subagent_row) + "\n")
+        payload = {"session_id": _SID, "cwd": str(self.home),
+                   "transcript_path": str(self.transcript), "permission_mode": mode}
+        if agent_id:
+            payload["agent_id"] = agent_id
+        subprocess.run(["/bin/bash", str(_REPO / "hooks" / "notify-wait.sh")],
+                       input=json.dumps(payload), env=env, text=True, check=True,
+                       capture_output=True, timeout=30)
+        deadline = time.time() + 2
+        while not self.args_file.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        return self.args_file.exists()
+
+    def test_auto_mode_drops_request_the_classifier_approved(self):
+        now = int(time.time())
+        self.assertFalse(self._wait_hook(
+            "auto", parent_row=("working", now, "PostToolUse", "/proj", now)))
+
+    def test_auto_mode_announces_prompt_still_standing(self):
+        now = int(time.time())
+        self.assertTrue(self._wait_hook(
+            "auto", parent_row=("waiting", now, "PermissionRequest", "/proj", now)))
+
+    def test_auto_mode_leaves_newer_waiting_episode_to_its_own_hook(self):
+        later = int(time.time()) + 60
+        self.assertFalse(self._wait_hook(
+            "auto", parent_row=("waiting", later, "PermissionRequest", "/proj", later)))
+
+    def test_auto_mode_announces_when_state_is_unknown(self):
+        self.assertTrue(self._wait_hook("auto"))
+
+    def test_other_modes_announce_at_once(self):
+        now = int(time.time())
+        self.assertTrue(self._wait_hook(
+            "default", parent_row=("working", now, "PostToolUse", "/proj", now)))
+
+    def test_auto_mode_subagent_request_followed_by_an_event_is_dropped(self):
+        now = int(time.time())
+        self.assertFalse(self._wait_hook(
+            "auto", agent_id="abc123",
+            subagent_row=("Explore", "working", now, now + 60, now)))
+
+    def test_auto_mode_subagent_request_with_no_later_event_is_announced(self):
+        now = int(time.time())
+        self.assertTrue(self._wait_hook(
+            "auto", agent_id="abc123",
+            subagent_row=("Explore", "working", now, now, now)))
+
 
 class TestBannerSubtitle(unittest.TestCase):
     """:func:`render.banner_subtitle` — banner line 2, labelled like the menu."""

@@ -69,6 +69,9 @@
   "// notify_on_wait": "Play a chime, speak a phrase, and show a macOS notification banner when Claude is blocked on a tool-approval dialog (PermissionRequest event). Requires terminal-notifier. Default: true.",
   "notify_on_wait": true,
 
+  "// notify_wait_auto_grace_sec": "Auto mode only. Claude Code fires PermissionRequest before its auto-mode classifier rules on the call, so most of these events are approved seconds later with nobody asked. In an auto-mode session the announcement is held this many seconds and dropped if the request is resolved by then; a prompt that really reached you is announced late by the same amount. Other permission modes announce at once. 0 announces at once in every mode. Default: 15.",
+  "notify_wait_auto_grace_sec": 15,
+
   "// notify_wait_phrases": "Phrases spoken aloud via 'say' and shown in the notification banner when Claude is waiting for permission. One is chosen at random on each PermissionRequest. Default is a short built-in list.",
   "notify_wait_phrases": ["Need instructions", "Awaiting input", "Decision needed", "I'm blocked"],
 

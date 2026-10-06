@@ -25,6 +25,11 @@
 #   notify_wait_phrases    array   [...]    — phrases spoken aloud and shown
 #                                             in the banner; one chosen at
 #                                             random per event
+#   notify_wait_auto_grace_sec int 15       — auto mode only: hold the
+#                                             announcement this many seconds
+#                                             and drop it if the request is
+#                                             resolved by then; 0 announces
+#                                             at once
 #   notify_sound_wait      string  "Funk"   — built-in /System/Library/Sounds
 #                                             name, absolute path, ~-path, or
 #                                             null to skip the chime entirely
@@ -101,18 +106,60 @@ fi
 # identical notification — same phrase list, same chime, same banner — rather
 # than a near-duplicate with knobs of its own. Arguments are the discriminator
 # because Claude Code never passes any.
+MODE=""
+AGENT_ID=""
 if [ -n "${1:-}" ]; then
     SID="$1"
     CWD="${2:-}"
     TRANSCRIPT=""
 else
     INPUT=$(cat)
+    REQUEST_TS=$(date +%s)
     SID=$(/usr/bin/jq -r '.session_id // empty' <<<"$INPUT" 2>/dev/null)
     CWD=$(/usr/bin/jq -r '.cwd // empty'        <<<"$INPUT" 2>/dev/null)
     # PermissionRequest payloads usually carry transcript_path; the glob below
     # covers an absent or stale one (same fallback as remind-session.sh), and
     # is the only path when we were called with arguments.
     TRANSCRIPT=$(/usr/bin/jq -r '.transcript_path // empty' <<<"$INPUT" 2>/dev/null)
+    MODE=$(/usr/bin/jq -r '.permission_mode // empty'       <<<"$INPUT" 2>/dev/null)
+    AGENT_ID=$(/usr/bin/jq -r '.agent_id // empty'          <<<"$INPUT" 2>/dev/null)
+fi
+
+# ── Auto-mode grace ──────────────────────────────────────────────────────────
+# In auto mode Claude Code fires PermissionRequest *before* its classifier
+# rules on the call, so nearly every such event is approved a moment later
+# with nobody asked — announcing it on the spot reports a block that is not
+# one. Hold the announcement for notify_wait_auto_grace_sec and drop it when
+# the request is gone by then; a prompt that really reached the user is still
+# standing and gets announced, late by the grace. Other modes announce at
+# once, and so does the reminder form (no payload, hence no mode).
+#
+# "Gone" is read from the state the sibling agent-state.sh hook keeps. A
+# parent session sits in `waiting` from the request until its next event, so
+# any other state — or a `waiting` episode that began after this request,
+# which has a hook invocation of its own — means resolved. Subagent requests
+# never enter `waiting` (agent-state.sh drops it for them), so there any
+# event newer than the request counts. The 1 s slack absorbs the two hooks
+# stamping the same moment on either side of a second boundary. Known gap:
+# the next event is PostToolUse, so an approved call that itself runs longer
+# than the grace is still announced. An unreadable or rowless sidecar fails
+# towards announcing.
+_request_resolved() {
+    local file="${HOME}/.claude/agent-state.tsv"
+    [ -n "$AGENT_ID" ] && file="${HOME}/.claude/agent-state.subagents.tsv"
+    [ -r "$file" ] || return 1
+    /usr/bin/awk -F'\t' -v sid="$SID" -v aid="$AGENT_ID" -v ts="$REQUEST_TS" '
+        function later(v) { return v ~ /^[0-9]+$/ && v + 0 > ts + 1 }
+        aid == "" && $1 == sid             { if ($2 != "waiting" || later($6)) hit = 1 }
+        aid != "" && $1 == sid && $2 == aid { if (later($6)) hit = 1 }
+        END { exit hit ? 0 : 1 }
+    ' "$file" 2>/dev/null
+}
+
+GRACE=$(_cfg_int "notify_wait_auto_grace_sec" "15")
+if [ "$MODE" = "auto" ] && [ -n "$SID" ] && [ "$GRACE" -gt 0 ]; then
+    sleep "$GRACE"
+    _request_resolved && exit 0
 fi
 
 SESSION_URL=""

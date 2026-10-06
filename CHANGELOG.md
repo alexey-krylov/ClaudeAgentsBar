@@ -5,6 +5,20 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.6.2 — 2026-10-06
+
+### Fixed
+
+- **Auto mode no longer announces requests nobody was asked about.** In
+  auto mode Claude Code fires `PermissionRequest` before its classifier
+  rules on the call, so a `WebFetch` to a new domain produced the full
+  "I'm blocked" chime, phrase and banner and was then approved on its own
+  a few seconds later. In an auto-mode session the announcement now waits
+  `notify_wait_auto_grace_sec` (default 15) and is dropped if the request
+  is resolved by then. A prompt that really reaches you is announced that
+  much later; other permission modes are unchanged. An approved call that
+  itself runs longer than the grace is still announced.
+
 ## 1.6.1 — 2026-09-24
 
 ### Fixed
