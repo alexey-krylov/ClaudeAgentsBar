@@ -59,11 +59,7 @@ from .core import (
 
 def iter_active_jsonls(now: int) -> Iterator[Path]:
     """Yield JSONL transcripts touched within the last :attr:`Config.window_sec`."""
-    if not core.PROJECTS_DIR.exists():
-        return
-    for project_dir in core.PROJECTS_DIR.iterdir():
-        if not project_dir.is_dir():
-            continue
+    for project_dir in sidecars.iter_project_dirs():
         for jsonl in project_dir.glob("*.jsonl"):
             try:
                 mtime = int(jsonl.stat().st_mtime)

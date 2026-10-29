@@ -125,9 +125,7 @@ def _collect_stats_today(now: int) -> dict:
             "subagent_model_counts": subagent_model_counts,
         }
 
-    for project_dir in core.PROJECTS_DIR.iterdir():
-        if not project_dir.is_dir():
-            continue
+    for project_dir in sidecars.iter_project_dirs():
         for jsonl in project_dir.glob("*.jsonl"):
             try:
                 mtime = int(jsonl.stat().st_mtime)

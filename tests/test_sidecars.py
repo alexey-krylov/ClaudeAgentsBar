@@ -453,5 +453,43 @@ class TestLiveSessionIdsSecurity(unittest.TestCase):
         self.assertEqual(live, {"abcd1234-ab12-4cd3-9ef0-abcdef012345"})
 
 
+class TestProjectDirAliases(unittest.TestCase):
+    """A renamed project kept reachable through a symlinked alias dir must
+    not surface its transcripts twice (duplicate menu rows)."""
+
+    SID = "abcd1234-ab12-4cd3-9ef0-abcdef012345"
+
+    def setUp(self):
+        self._tmpdir = Path(tempfile.mkdtemp())
+        self._original = plugin.PROJECTS_DIR
+        plugin.core.PROJECTS_DIR = self._tmpdir
+        real = self._tmpdir / "-Users-me-NewName"
+        real.mkdir()
+        (real / f"{self.SID}.jsonl").write_bytes(b"")
+        (self._tmpdir / "-Users-me-OldName").symlink_to(real.name)
+
+    def tearDown(self):
+        import shutil
+        plugin.core.PROJECTS_DIR = self._original
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_alias_yields_real_dir_once(self):
+        dirs = list(plugin.sidecars.iter_project_dirs())
+        self.assertEqual([d.name for d in dirs], ["-Users-me-NewName"])
+
+    def test_active_jsonls_not_duplicated(self):
+        found = list(plugin.iter_active_jsonls(int(time.time())))
+        self.assertEqual([p.stem for p in found], [self.SID])
+        self.assertEqual(found[0].parent.name, "-Users-me-NewName")
+
+    def test_transcript_for_prefers_real_path(self):
+        hit = plugin.sidecars.transcript_for(self.SID)
+        self.assertEqual(hit.parent.name, "-Users-me-NewName")
+
+    def test_missing_projects_dir(self):
+        plugin.core.PROJECTS_DIR = self._tmpdir / "nope"
+        self.assertEqual(list(plugin.sidecars.iter_project_dirs()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

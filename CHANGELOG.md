@@ -5,6 +5,16 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.6.3 — 2026-10-29
+
+### Fixed
+
+- **A renamed project no longer shows its sessions twice.** When the old
+  `~/.claude/projects/-…-OldName` directory is kept as a symlink to the
+  new one, every transcript was found through both paths: each session got
+  two identical rows, the counters and *Today's stats* counted it twice.
+  Project directories are now deduplicated by their resolved path.
+
 ## 1.6.2 — 2026-10-06
 
 ### Fixed

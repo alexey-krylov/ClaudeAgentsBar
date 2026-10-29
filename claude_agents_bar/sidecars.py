@@ -181,6 +181,34 @@ def _parse_sidecar(raw: str) -> dict[str, HookSnapshot]:
     return snapshots
 
 
+def iter_project_dirs() -> Iterator[Path]:
+    """Yield each project directory under ``~/.claude/projects`` exactly once.
+
+    A renamed project is sometimes kept reachable by aliasing its old
+    ``-Users-…-OldName`` directory with a symlink to the new one. Globbing
+    through both would surface every transcript twice — duplicate menu rows,
+    double-counted stats — so directories are deduplicated by resolved path.
+    Real directories come before symlinks, so the yielded path is the
+    canonical one rather than the alias.
+    """
+    try:
+        entries = sorted(core.PROJECTS_DIR.iterdir(), key=lambda p: p.is_symlink())
+    except OSError:
+        return
+    seen: set[Path] = set()
+    for project_dir in entries:
+        try:
+            if not project_dir.is_dir():
+                continue
+            real = project_dir.resolve()
+        except OSError:
+            continue
+        if real in seen:
+            continue
+        seen.add(real)
+        yield project_dir
+
+
 def _live_session_ids() -> set[str]:
     """Return the set of session ids that still have a JSONL on disk.
 
@@ -191,18 +219,15 @@ def _live_session_ids() -> set[str]:
     one started before the hooks were installed).
     """
     live_ids: set[str] = set()
-    if core.PROJECTS_DIR.exists():
-        for project_dir in core.PROJECTS_DIR.iterdir():
-            if not project_dir.is_dir():
+    for project_dir in iter_project_dirs():
+        for jsonl in project_dir.glob("*.jsonl"):
+            sid = jsonl.stem
+            if not _is_valid_session_id(sid):
+                # Names with stray newlines/quotes/regex-metachars would
+                # later flow into shell args and grep regexes; refuse to
+                # surface them at all. See ``core._SESSION_ID_RE``.
                 continue
-            for jsonl in project_dir.glob("*.jsonl"):
-                sid = jsonl.stem
-                if not _is_valid_session_id(sid):
-                    # Names with stray newlines/quotes/regex-metachars would
-                    # later flow into shell args and grep regexes; refuse to
-                    # surface them at all. See ``core._SESSION_ID_RE``.
-                    continue
-                live_ids.add(sid)
+            live_ids.add(sid)
     return live_ids
 
 
@@ -216,11 +241,9 @@ def transcript_for(sid: str) -> Path | None:
     row. Ids that fail :func:`_is_valid_session_id` are rejected — they'd
     otherwise flow into shell args and grep regexes downstream.
     """
-    if not _is_valid_session_id(sid) or not core.PROJECTS_DIR.exists():
+    if not _is_valid_session_id(sid):
         return None
-    for project_dir in core.PROJECTS_DIR.iterdir():
-        if not project_dir.is_dir():
-            continue
+    for project_dir in iter_project_dirs():
         hit = project_dir / f"{sid}.jsonl"
         try:
             if hit.exists():
