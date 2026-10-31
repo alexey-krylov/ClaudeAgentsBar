@@ -33,7 +33,7 @@ restart needed.
 | `window_minutes` | `180` | How far back the dropdown lists sessions. Anything older is hidden. |
 | `fresh_minutes` | `60` | An idle session stays 🟢 fresh this long after `Stop`. A click before the timer expires promotes it to 🔵 immediately; otherwise it auto-promotes when the window elapses. |
 | `ack_minutes` | `60` | An acknowledged 🔵 session fades to ⚪ stale after this long without a new click. Each click restarts the timer. |
-| `watchdog_seconds` | `90` | `working` entries whose last event is older than this get demoted to `idle` — covers sessions that crashed mid-tool and never emitted `Stop`. |
+| `watchdog_seconds` | `90` | `working` entries whose last event is older than this get demoted to `idle` — covers sessions that crashed mid-tool and never emitted `Stop`. A session or subagent whose transcript still shows a tool call without its result (a long `WebFetch`, `Bash`, MCP call — none of them fire hook events until they return) is left alone for up to 30 minutes. |
 | `title_max` | `60` | Max length of a session title shown on a row, with an ellipsis appended on overflow. |
 | `menubar_icon` | Claude.app tray icon (`template:` PNG) | Icon drawn before the counters. See *Menu-bar icon* below for the four accepted shapes. |
 | `menubar_icon_fallback` | `"🤖"` | Glyph used when `menubar_icon` points at a missing file (e.g. Claude.app not installed). |

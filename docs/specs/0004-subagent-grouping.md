@@ -272,6 +272,12 @@ no semantics to flip between.
   mid-execution). Sidecar's `last_event_ts` stops advancing.
   Watchdog demotes that subagent's row to `state=stopped` after
   `watchdog_sec` of no activity, same as the parent watchdog.
+  Exception: while the subagent's transcript
+  (`<parent_sid>/subagents/agent-<agent_id>.jsonl`) ends with a
+  `tool_use` that has no `tool_result`, the tool is still running
+  (a long `WebFetch` fires no hook events until it returns) and the
+  demotion waits, capped at `TOOL_IN_FLIGHT_MAX_SEC` (30 min). The
+  parent watchdog applies the same check to the parent transcript.
 - **`model` absent from older JSONL.** Badge falls back to ⓜ;
   submenu row is omitted entirely (better than showing
   `claude-unknown`).

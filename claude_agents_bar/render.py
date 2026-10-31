@@ -69,8 +69,21 @@ def iter_active_jsonls(now: int) -> Iterator[Path]:
                 yield jsonl
 
 
+def _tool_in_flight(jsonl: Path, last_ts: int, now: int) -> bool:
+    """True iff the watchdog should wait: a tool call is still running.
+
+    A ``tool_use`` without its ``tool_result`` in the tail means Claude Code
+    is waiting on the tool, and a long one (``WebFetch``, ``Bash``, MCP)
+    fires no hook events until it returns. Bounded by
+    :data:`core.TOOL_IN_FLIGHT_MAX_SEC` so a session killed mid-tool still
+    gets demoted eventually. The age check runs first: the transcript is only
+    read for rows the watchdog is about to demote.
+    """
+    return (now - last_ts) <= core.TOOL_IN_FLIGHT_MAX_SEC and sidecars.has_pending_tool_use(jsonl)
+
+
 def _apply_subagent_watchdog(
-    raw: tuple[SubagentSnapshot, ...], now: int
+    raw: tuple[SubagentSnapshot, ...], now: int, parent_jsonl: Path
 ) -> tuple[SubagentSnapshot, ...]:
     """Demote ``working`` subagent rows whose ``last_event_ts`` is stale.
 
@@ -78,11 +91,20 @@ def _apply_subagent_watchdog(
     subagent stopped emitting hook events for more than
     :attr:`Config.watchdog_sec` seconds without a `SubagentStop`, the
     Task has almost certainly crashed and we treat it as stopped so the
-    parent rollup doesn't pin the row 🟡 forever.
+    parent rollup doesn't pin the row 🟡 forever. A subagent waiting on a
+    tool call (see :func:`_tool_in_flight`) is left alone.
     """
     out: list[SubagentSnapshot] = []
     for s in raw:
-        if s.state == "working" and (now - s.last_event_ts) > core.CONFIG.watchdog_sec:
+        if (
+            s.state == "working"
+            and (now - s.last_event_ts) > core.CONFIG.watchdog_sec
+            and not _tool_in_flight(
+                sidecars.subagent_transcript(parent_jsonl, s.agent_id),
+                s.last_event_ts,
+                now,
+            )
+        ):
             out.append(replace(s, state="stopped"))
         else:
             out.append(s)
@@ -120,7 +142,7 @@ def build_session(
         last_event_kind = ""
 
     subagents = _apply_subagent_watchdog(
-        subagents_by_sid.get(jsonl.stem, ()), now
+        subagents_by_sid.get(jsonl.stem, ()), now, jsonl
     )
     live_subagents = tuple(s for s in subagents if s.is_live)
     has_live_subagent = bool(live_subagents)
@@ -138,6 +160,7 @@ def build_session(
         hook_state == "working"
         and not has_live_subagent
         and (now - liveness_ts) > core.CONFIG.watchdog_sec
+        and not _tool_in_flight(jsonl, liveness_ts, now)
     ):
         hook_state = "idle"
         last_ts = liveness_ts

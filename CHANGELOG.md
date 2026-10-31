@@ -5,6 +5,18 @@ All notable changes to ClaudeAgentsBar are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 Architectural rationale for each piece below lives in [docs/adr/](./docs/adr/).
 
+## 1.6.4 — 2026-10-31
+
+### Fixed
+
+- **A session waiting on a long tool call no longer looks finished.** A
+  `WebFetch`, `Bash` or MCP call fires no hook events until it returns, so
+  after `watchdog_seconds` (90 s) the plugin took the silence for a crash:
+  a backgrounded subagent stuck in a 5-minute `WebFetch` was marked done and
+  its session turned 🔵 while the work went on. The watchdog now checks the
+  transcript first — a tool call with no result yet keeps the row 🟡, for at
+  most 30 minutes. Applies to the session itself and to its subagents.
+
 ## 1.6.3 — 2026-10-29
 
 ### Fixed

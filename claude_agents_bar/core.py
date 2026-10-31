@@ -249,6 +249,14 @@ JSONL_TAIL_BYTES = 64 * 1024
 #: pasted code or large tool outputs) can easily fill 64 KB on its own.
 JSONL_USER_TAIL_BYTES = 128 * 1024
 
+#: How long the watchdog defers to a tool call still in flight (a
+#: ``tool_use`` with no ``tool_result`` yet in the transcript tail). A long
+#: ``WebFetch`` / ``Bash`` / MCP call emits no hook events while it runs, so
+#: without this a busy session reads as crashed after ``watchdog_sec``. The
+#: cap bounds the other case: a session that died mid-tool stops showing as
+#: working at most this long after its last event.
+TOOL_IN_FLIGHT_MAX_SEC = 30 * 60
+
 #: Upper bound for the per-tick scan that hunts for ``ai-title``. AI titles
 #: are emitted within the first few hundred lines (right after the first turn),
 #: so capping the scan keeps us cheap even when a transcript has megabytes of
@@ -604,6 +612,8 @@ class Config:
     ``watchdog_sec``
         A sidecar row marked ``working`` but older than this is treated as
         ``idle`` — handles crashed sessions that never emitted ``Stop``.
+        Deferred while a tool call is still in flight, up to
+        :data:`TOOL_IN_FLIGHT_MAX_SEC`.
     ``title_max``
         Maximum title length on a row, with an ellipsis appended on overflow.
     ``menubar_icon``

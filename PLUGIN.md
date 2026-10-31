@@ -381,6 +381,14 @@ many times per Task. With it, the plugin can both:
   for the spike that confirmed subagents share the parent's
   `session_id`.
 
+A single long tool call (`WebFetch`, `Bash`, MCP) fires no hook events
+until it returns, so `last_event_ts` alone can't tell it from a crash.
+Both watchdogs (parent and subagent) therefore also check the transcript
+tail: a `tool_use` with no `tool_result` yet keeps the row 🟡, up to
+`core.TOOL_IN_FLIGHT_MAX_SEC` (30 min). Only `assistant` / `user` events
+count — subagent transcripts also carry `api-request-blob` rows that echo
+old `tool_use` chunks.
+
 Two sibling Bash hooks ship alongside `agent-state.sh` and produce
 side effects (sound, banner) rather than touching the TSV:
 

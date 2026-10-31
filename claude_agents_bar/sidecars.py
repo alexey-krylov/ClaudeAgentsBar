@@ -1986,6 +1986,64 @@ def _summarise_tool_use(name: str, input_obj: object) -> str:
     return f"{name}: {preview}"
 
 
+def _has_pending_tool_use(raw: bytes) -> bool:
+    """True iff ``raw`` holds an assistant ``tool_use`` with no ``tool_result`` yet.
+
+    Pure helper behind :func:`has_pending_tool_use`. Only ``assistant``
+    events contribute calls and only ``user`` events contribute results:
+    subagent transcripts also carry ``api-request-blob`` rows that echo the
+    request payload, earlier ``tool_use`` chunks included, and counting
+    those would mark every finished subagent as still running.
+    """
+    if b'"tool_use"' not in raw:
+        return False
+    calls: set[str] = set()
+    results: set[str] = set()
+    for line in raw.splitlines():
+        if b'"tool_' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind not in ("assistant", "user"):
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for chunk in content:
+            if not isinstance(chunk, dict):
+                continue
+            if kind == "assistant" and chunk.get("type") == "tool_use":
+                call_id = chunk.get("id")
+                if isinstance(call_id, str):
+                    calls.add(call_id)
+            elif kind == "user" and chunk.get("type") == "tool_result":
+                result_id = chunk.get("tool_use_id")
+                if isinstance(result_id, str):
+                    results.add(result_id)
+    return bool(calls - results)
+
+
+def has_pending_tool_use(jsonl_path: Path) -> bool:
+    """True iff the transcript's tail ends with a tool call still in flight.
+
+    Lets the watchdog tell a long ``WebFetch`` / ``Bash`` (no hook events
+    until it returns) from a crashed session. Reads the shared cached tail;
+    a missing or empty file returns ``False``, i.e. the plain watchdog.
+    """
+    return _has_pending_tool_use(_read_jsonl_tail(jsonl_path))
+
+
+def subagent_transcript(parent_jsonl: Path, agent_id: str) -> Path:
+    """Path of a subagent's transcript: ``<parent sid>/subagents/agent-<id>.jsonl``."""
+    return parent_jsonl.with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+
+
 def last_tool_use_summary(jsonl_path: Path) -> str:
     """Return a one-line summary of the freshest assistant ``tool_use``, or ``""``.
 
